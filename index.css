@@ -1,6 +1,6 @@
 body {
     margin: 0;
-    background: #111;
+    background: #ffe7cf;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -10,8 +10,8 @@ body {
 }
 
 canvas {
-    background: #222;
-    border: 3px solid #eee;
+    background: #fff;
+    border: 3px solid #000;
 }
 
 .col {
