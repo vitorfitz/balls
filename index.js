@@ -1,7 +1,14 @@
-const GRAVITY = 0.3;
+"use strict"
+
+// const d = new Date().getTime();
+// console.log(d);
+// Math.seedrandom(1771283349443);
+
+const GRAVITY = 0.1;
 const ELASTICITY = 1.0; // restitution for collisions (1.0 = perfectly elastic)
 const SUBSTEPS = 1;
 const EPS = 1e-9;
+const flashDur = 20;
 
 let spriteReqs = {};
 
@@ -27,13 +34,7 @@ class Weapon {
         this.updateFns = [];
         this.weaponColFns = [];
         this.ballColFns = [];
-        this._collidingWith = new Set();
-    }
-
-    _key(other) {
-        return other instanceof Weapon
-            ? "w" + other.ball.id + ":" + other.theta
-            : "b" + other.id;
+        this._collidingWith = {};
     }
 
     getHitSegment() {
@@ -84,15 +85,25 @@ class Weapon {
 
     addParry() {
         this.flipped = this.angVel < 0;
-        this.weaponColFns.push((me, other, side) => {
-            me.angVel = -side * me.angVel;
+        this.weaponColFns.push((me, other) => {
+            // Reverse if rotating toward the other weapon
+            const toOther = Math.atan2(other.ball.y - me.ball.y, other.ball.x - me.ball.x);
+            const approaching = Math.sin(toOther - me.theta) * me.angVel > 0;
+            if (approaching) {
+                me.angVel = -me.angVel;
+                me.ball.freezeTime = other.ball.freezeTime = 15;
+            }
             me.flipped = me.angVel < 0;
         });
     }
 
-    addDamage(dmg) {
+    addDamage(dmg, iframes = 15, freeze = 20) {
         this.dmg = dmg;
-        this.ballColFns.push((me, b) => b.damage(me.dmg));
+        this.iframes = iframes;
+        this.ballColFns.push((me, b) => {
+            b.damage(me.dmg);
+            me.ball.freezeTime = b.freezeTime = b instanceof DuplicatorBall ? Math.round(freeze / 2) : freeze;
+        });
     }
 }
 
@@ -109,6 +120,7 @@ class Ball {
         this.weapons = [];
         this.parryWeapons = [];
         this.dmgWeapons = [];
+        this.freezeTime = 0;
     }
 
     addWeapon(w) {
@@ -118,67 +130,27 @@ class Ball {
         if (w.weaponColFns.length > 0) this.parryWeapons.push(w);
     }
 
-    updatePhysics(dt = 1) {
-        let remaining = dt;
-        while (remaining > EPS) {
-            let tMin = remaining;
-            let wall = null;
-            const LEFT = 0, RIGHT = 1, TOP = 2, BOTTOM = 3;
-
-            // Time to hit left wall: x + vx*t = radius
-            if (this.vx < 0) {
-                const t = (this.radius - this.x) / this.vx;
-                if (t >= 0 && t < tMin) { tMin = t; wall = LEFT; }
-            }
-            // Time to hit right wall: x + vx*t = width - radius
-            if (this.vx > 0) {
-                const t = (this.battle.width - this.radius - this.x) / this.vx;
-                if (t >= 0 && t < tMin) { tMin = t; wall = RIGHT; }
-            }
-            // Time to hit top wall: y + vy*t + 0.5*g*t^2 = radius
-            // Solve: 0.5*g*t^2 + vy*t + (y - radius) = 0
-            if (this.vy < 0 || this.y < this.radius) {
-                const a = 0.5 * GRAVITY, b = this.vy, c = this.y - this.radius;
-                const disc = b * b - 4 * a * c;
-                if (disc >= 0) {
-                    const t = (-b - Math.sqrt(disc)) / (2 * a);
-                    if (t > EPS && t < tMin) { tMin = t; wall = TOP; }
-                }
-            }
-            // Time to hit bottom wall: y + vy*t + 0.5*g*t^2 = height - radius
-            {
-                const a = 0.5 * GRAVITY, b = this.vy, c = this.y - (this.battle.height - this.radius);
-                const disc = b * b - 4 * a * c;
-                if (disc >= 0) {
-                    const t = (-b + Math.sqrt(disc)) / (2 * a);
-                    if (t > EPSs && t < tMin) { tMin = t; wall = BOTTOM; }
-                }
-            }
-
-            // Advance to collision or end of timestep
-            this.x += this.vx * tMin;
-            this.y += this.vy * tMin + 0.5 * GRAVITY * tMin * tMin;
-            this.vy += GRAVITY * tMin;
-            remaining -= tMin;
-
-            // Reflect velocity on collision
-            if (wall == LEFT || wall == RIGHT) this.vx = -this.vx * ELASTICITY;
-            if (wall == TOP || wall == BOTTOM) this.vy = -this.vy * ELASTICITY;
-        }
-    }
-
     damage(dmg) {
-        this.hp -= dmg;
+        this.hp = Math.max(0, this.hp - dmg);
+        this.flashTime = flashDur;
     }
 
     draw() {
         this.weapons.forEach((w) => w.draw());
 
         const ctx = this.battle.ctx;
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 2;
+
         ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-        ctx.fillStyle = this.color;
+        ctx.arc(this.x, this.y, this.radius - ctx.lineWidth / 2, 0, Math.PI * 2);
+        const flashPct = Math.max(0, this.flashTime / flashDur);
+        ctx.fillStyle = this.flashTime > 0
+            ? `color-mix(in srgb, white ${flashPct * 100}%, ${this.color})`
+            : this.color;
+        ctx.stroke();
         ctx.fill();
+        if (this.flashTime > 0) this.flashTime--;
 
         ctx.fillStyle = "#000";
         ctx.font = `bold ${this.radius}px Arial`;
@@ -196,6 +168,8 @@ class Ball {
     }
 
     onCollision(b) { }
+
+    onUpdate() { }
 }
 
 const LEFT = 0, RIGHT = 1, TOP = 2, BOTTOM = 3;
@@ -208,13 +182,13 @@ function timeToWallCollision(b, dt) {
     // Left wall
     if (b.vx < 0) {
         const t = (b.radius - b.x) / b.vx;
-        if (t > EPS && t <= dt) { tMin = t; wall = LEFT; }
+        if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = LEFT; }
     }
 
     // Right wall
     if (b.vx > 0) {
         const t = (b.battle.width - b.radius - b.x) / b.vx;
-        if (t > EPS && t <= dt) { tMin = t; wall = RIGHT; }
+        if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = RIGHT; }
     }
 
     // Top wall
@@ -225,7 +199,7 @@ function timeToWallCollision(b, dt) {
         const disc = bq * bq - 4 * a * c;
         if (disc >= 0) {
             const t = (-bq - Math.sqrt(disc)) / (2 * a);
-            if (t > EPS && t <= dt) { tMin = t; wall = TOP; }
+            if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = TOP; }
         }
     }
 
@@ -237,7 +211,7 @@ function timeToWallCollision(b, dt) {
         const disc = bq * bq - 4 * a * c;
         if (disc >= 0) {
             const t = (-bq + Math.sqrt(disc)) / (2 * a);
-            if (t > EPS && t <= dt) { tMin = t; wall = BOTTOM; }
+            if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = BOTTOM; }
         }
     }
 
@@ -265,8 +239,32 @@ function resolveImmediateWallContact(b) {
 }
 
 
+function ballsOverlap(b1, b2) {
+    return Math.hypot(b2.x - b1.x, b2.y - b1.y) < b1.radius + b2.radius;
+}
+
+// Find time of collision with a stationary circle
+function timeToStationaryCollision(moving, stationary, dt) {
+    const dx = stationary.x - moving.x;
+    const dy = stationary.y - moving.y;
+    const R = moving.radius + stationary.radius;
+
+    const a = moving.vx ** 2 + moving.vy ** 2;
+    const b = -2 * (dx * moving.vx + dy * moving.vy);
+    const c = dx * dx + dy * dy - R * R;
+
+    if (a < EPS) return Infinity;
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return Infinity;
+
+    const t = (-b - Math.sqrt(disc)) / (2 * a);
+    if (t > EPS && t <= dt) return t;
+    return Infinity;
+}
+
 // Find time of collision between two balls (returns Infinity if no collision in dt)
 function timeToCollision(b1, b2, dt) {
+    if (b1.inert || b2.inert) return Infinity;
     // Positions: p1(t) = p1 + v1*t + 0.5*g*t^2, p2(t) = p2 + v2*t + 0.5*g*t^2
     // Distance squared: |p2(t) - p1(t)|^2 = (r1+r2)^2
     // Since gravity affects both equally in y, it cancels out!
@@ -295,8 +293,12 @@ function timeToCollision(b1, b2, dt) {
 
 // Elastic collision response (no positional correction needed with exact timing)
 function resolveCollision(b1, b2) {
+    // const key = b1.id < b2.id ? `${b1.id}-${b2.id}` : `${b2.id}-${b1.id}`;
+    // if (!b1.battle._lastCollisions.has(key)) {
     b1.onCollision(b2);
     b2.onCollision(b1);
+    // }
+    // b1.battle._currentCollisions.add(key);
 
     const dx = b2.x - b1.x;
     const dy = b2.y - b1.y;
@@ -305,14 +307,19 @@ function resolveCollision(b1, b2) {
     const nx = dx / dist;
     const ny = dy / dist;
 
-    const dvx = b2.vx - b1.vx;
-    const dvy = b2.vy - b1.vy;
+    const v1x = b1.freezeTime > 0 ? 0 : b1.vx;
+    const v1y = b1.freezeTime > 0 ? 0 : b1.vy;
+    const v2x = b2.freezeTime > 0 ? 0 : b2.vx;
+    const v2y = b2.freezeTime > 0 ? 0 : b2.vy;
+
+    const dvx = v2x - v1x;
+    const dvy = v2y - v1y;
     const velAlongNormal = dvx * nx + dvy * ny;
 
     if (velAlongNormal > 0) return; // Already separating
 
-    const invMass1 = 1 / b1.mass;
-    const invMass2 = 1 / b2.mass;
+    const invMass1 = b1.freezeTime > 0 ? 0 : 1 / b1.mass;
+    const invMass2 = b2.freezeTime > 0 ? 0 : 1 / b2.mass;
     const j = -(1 + ELASTICITY) * velAlongNormal / (invMass1 + invMass2);
 
     b1.vx -= j * invMass1 * nx;
@@ -352,32 +359,16 @@ function weaponHitsBall(w, b) {
 function weaponWeaponContact(w1, w2) {
     const a = w1.getHitSegment();
     const b = w2.getHitSegment();
-
-    // midpoint of w2
     const cx = (b.x1 + b.x2) * 0.5;
     const cy = (b.y1 + b.y2) * 0.5;
-
-    // direction of w1
-    const dx = a.x2 - a.x1;
-    const dy = a.y2 - a.y1;
-
-    // vector from w1 base to contact
-    const rx = cx - a.x1;
-    const ry = cy - a.y1;
-
-    const d = distToSegment(cx, cy, a.x1, a.y1, a.x2, a.y2);
-    if (d > a.r + b.r) return null;
-
-    const cross = dx * ry - dy * rx;
-    const side = Math.sign(cross);
-
-    return side;
+    return distToSegment(cx, cy, a.x1, a.y1, a.x2, a.y2) <= a.r + b.r;
 }
 
 class BallBattle {
     constructor(balls) {
         this.balls = [];
         this.nextID = 0;
+        this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -397,17 +388,38 @@ class BallBattle {
     }
 
     updatePhysics(dt = 1) {
+        // this._lastCollisions = this._currentCollisions || new Set();
+        // this._currentCollisions = new Set();
+
+        const toUpdate = this.balls.filter((b) => b.freezeTime == 0);
+        const frozen = this.balls.filter((b) => b.freezeTime > 0);
+
+        // Reactivate inert balls that have escaped overlap
+        for (const b of toUpdate) {
+            if (b.inert && this.balls.every(o => o.inert || !ballsOverlap(b, o))) {
+                b.inert = false;
+            }
+        }
+
         while (dt > EPS) {
             // --- Find earliest ball-ball collision ---
             let tBall = Infinity;
             let pair = null;
 
-            for (let i = 0; i < this.balls.length; i++) {
-                for (let j = i + 1; j < this.balls.length; j++) {
-                    const t = timeToCollision(this.balls[i], this.balls[j], dt);
+            for (let i = 0; i < toUpdate.length; i++) {
+                for (let j = i + 1; j < toUpdate.length; j++) {
+                    const t = timeToCollision(toUpdate[i], toUpdate[j], dt);
                     if (t < tBall) {
                         tBall = t;
-                        pair = [this.balls[i], this.balls[j]];
+                        pair = [toUpdate[i], toUpdate[j]];
+                    }
+                }
+                // Check collisions with frozen balls
+                for (const f of frozen) {
+                    const t = timeToStationaryCollision(toUpdate[i], f, dt);
+                    if (t < tBall) {
+                        tBall = t;
+                        pair = [toUpdate[i], f];
                     }
                 }
             }
@@ -416,7 +428,7 @@ class BallBattle {
             let tWall = Infinity;
             let wallEvents = [];
 
-            for (const b of this.balls) {
+            for (const b of toUpdate) {
                 const res = timeToWallCollision(b, dt);
                 if (res.t < tWall - EPS) {
                     tWall = res.t;
@@ -430,11 +442,11 @@ class BallBattle {
             const tNext = Math.min(tBall, tWall);
 
             if (tNext === Infinity) {
-                advanceAll(this.balls, dt);
+                advanceAll(toUpdate, dt);
                 return;
             }
 
-            advanceAll(this.balls, tNext);
+            advanceAll(toUpdate, tNext);
             dt -= tNext;
 
             // Ball-ball
@@ -452,12 +464,48 @@ class BallBattle {
     }
 
     updateWeapons(dt = 1) {
-        const balls = this.balls;
-        balls.forEach(
-            (b) => b.weapons.forEach(
-                (w) => w.updateFns.forEach((f) =>
-                    f(w, dt))));
+        let toUpdate = [];
+        for (let i = 0; i < this.balls.length; i++) {
+            if (this.balls[i].freezeTime > 0) {
+                this.balls[i].freezeTime--;
+            }
+            else if (!this.balls[i].inert) {
+                toUpdate.push(this.balls[i]);
+            }
+        }
 
+        // Subdivide based on max angular velocity to avoid tunneling
+        const maxAngVel = Math.max(...toUpdate.flatMap(b => b.weapons.map(w => Math.abs(w.angVel || 0))), 0.01);
+        const substeps = Math.ceil(maxAngVel * dt / 0.1); // ~0.1 rad per substep
+        const subDt = dt / substeps;
+
+        const hitThisFrame = new Set(); // tracks "weaponIdx-ballId" pairs that hit
+
+        for (let step = 0; step < substeps; step++) {
+            toUpdate.forEach(
+                (b) => b.weapons.forEach(
+                    (w) => w.updateFns.forEach((f) =>
+                        f(w, subDt))));
+            if (this._checkWeaponCollisions(toUpdate, hitThisFrame)) break;
+        }
+
+        // Decrement iframes for pairs that didn't hit during any substep
+        for (const b of toUpdate) {
+            for (const w of b.dmgWeapons) {
+                for (const id of Object.keys(w._collidingWith)) {
+                    if (!hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
+                        w._collidingWith[id]--;
+                        if (w._collidingWith[id] <= 0) delete w._collidingWith[id];
+                    }
+                }
+            }
+        }
+
+        this.balls.forEach((b) => b.onUpdate());
+        this.balls = this.balls.filter((b) => b.hp > 0);
+    }
+
+    _checkWeaponCollisions(balls, hitThisFrame) {
         for (let i = 0; i < balls.length; i++) {
             for (let j = i + 1; j < balls.length; j++) {
                 const A = balls[i];
@@ -466,47 +514,30 @@ class BallBattle {
                 // weapon - ball
                 for (const w of A.dmgWeapons) {
                     if (weaponHitsBall(w, B)) {
-                        const k = w._key(B);
-                        if (!w._collidingWith.has(k)) {
-                            w._collidingWith.add(k);
+                        hitThisFrame.add(A.id + "-" + w.theta + "-" + B.id);
+                        if (!(B.id in w._collidingWith)) {
+                            w._collidingWith[B.id] = w.iframes;
                             w.ballColFns.forEach(fn => fn(w, B));
                         }
-                    } else {
-                        w._collidingWith.delete(w._key(B));
                     }
                 }
 
                 for (const w of B.dmgWeapons) {
                     if (weaponHitsBall(w, A)) {
-                        const k = w._key(A);
-                        if (!w._collidingWith.has(k)) {
-                            w._collidingWith.add(k);
+                        hitThisFrame.add(B.id + "-" + w.theta + "-" + A.id);
+                        if (!(A.id in w._collidingWith)) {
+                            w._collidingWith[A.id] = w.iframes;
                             w.ballColFns.forEach(fn => fn(w, A));
                         }
-                    } else {
-                        w._collidingWith.delete(w._key(A));
                     }
                 }
 
                 // weapon - weapon
                 for (const w1 of A.parryWeapons) {
                     for (const w2 of B.parryWeapons) {
-
-                        const side = weaponWeaponContact(w1, w2);
-                        const k1 = w1._key(w2);
-                        const k2 = w2._key(w1);
-
-                        if (side) {
-                            if (!w1._collidingWith.has(k1)) {
-                                w1._collidingWith.add(k1);
-                                w2._collidingWith.add(k2);
-
-                                w1.weaponColFns.forEach(fn => fn(w1, w2, side));
-                                w2.weaponColFns.forEach(fn => fn(w2, w1, -side));
-                            }
-                        } else {
-                            w1._collidingWith.delete(k1);
-                            w2._collidingWith.delete(k2);
+                        if (weaponWeaponContact(w1, w2)) {
+                            w1.weaponColFns.forEach(fn => fn(w1, w2));
+                            w2.weaponColFns.forEach(fn => fn(w2, w1));
                         }
                     }
                 }
@@ -516,7 +547,26 @@ class BallBattle {
 
     render() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        balls.forEach((b) => b.draw());
+        if (this.debug) {
+            this.ctx.globalAlpha = 0.4;
+            for (const b of this.balls) {
+                for (const w of b.weapons) {
+                    if (w.range) {
+                        const seg = w.getHitSegment();
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(seg.x1, seg.y1);
+                        this.ctx.lineTo(seg.x2, seg.y2);
+                        this.ctx.strokeStyle = "red";
+                        this.ctx.lineWidth = seg.r * 2;
+                        this.ctx.lineCap = "round";
+                        this.ctx.stroke();
+                    }
+                }
+            }
+            this.ctx.globalAlpha = 1;
+        }
+        this.balls.filter(b => b.inert).forEach(b => b.draw());
+        this.balls.filter(b => !b.inert).forEach(b => b.draw());
     }
 
     async run() {
@@ -532,11 +582,23 @@ class BallBattle {
         );
         spriteReqs = {};
 
+        // if (k < 2000) {
         this.updatePhysics();
         // console.log(this.balls.reduce((b) => b.potentialEnergy() + b.kineticEnergy()));
         this.updateWeapons();
         this.render();
         requestAnimationFrame(this.run.bind(this));
+        // k++;
+        // }
+        // else {
+        //     const step = () => {
+        //         this.updatePhysics();
+        //         this.updateWeapons();
+        //         this.render();
+        //         setTimeout(() => requestAnimationFrame(step), 100); // 100ms delay
+        //     };
+        //     step();
+        // }
     }
 
     bug() {
@@ -550,9 +612,32 @@ class BallBattle {
             this.updatePhysics();
             t++;
         }
-        console.log(this.balls[0].x, this.balls[0].y);
-        console.log(this.balls[1].x, this.balls[1].y);
-        console.log(t);
+    }
+}
+// let k = 0;
+
+class DuplicatorBall extends Ball {
+    constructor(x, y, vx, vy, hp = 50, radius = 20, color = "#d26ffa", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        this.inert = false;
+        this.cooldown = 0;
+    }
+
+    onCollision(b) {
+        if (this.inert || b instanceof DuplicatorBall || b.freezeTime > 0 || this.cooldown > 0) return;
+
+        b.damage(1);
+        this.cooldown = 30;
+        // if (this.hp == 1) return;
+
+        const child = new DuplicatorBall(this.x, this.y, ...randomVel(5), Math.ceil(this.hp / 2));
+        child.inert = true;
+        child.cooldown = 30;
+        this.battle.addBall(child);
+    }
+
+    onUpdate() {
+        this.cooldown--;
     }
 }
 
@@ -560,12 +645,12 @@ class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#5fbf00", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         const dagger = new Weapon(theta, "sprites/dagger.png", 2, -6);
-        dagger.addCollider(28, 6);
-        dagger.addSpin(0.1);
+        dagger.addCollider(20, 4);
+        dagger.addSpin(0.1257);
         dagger.addParry();
-        dagger.addDamage(1);
+        dagger.addDamage(1, 0, 6);
         dagger.ballColFns.push((me, b) => {
-            me.angVel = (Math.abs(me.angVel) + 0.02) * Math.sign(me.angVel);
+            me.angVel = (Math.abs(me.angVel) + 0.0628) * Math.sign(me.angVel);
         });
         this.addWeapon(dagger);
     }
@@ -574,23 +659,29 @@ class DaggerBall extends Ball {
 class SwordBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "tomato", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        const dagger = new Weapon(theta, "sprites/sword.png", 3, -16);
-        dagger.addCollider(46, 9);
-        dagger.addSpin(0.05);
-        dagger.addParry();
-        dagger.addDamage(1);
-        dagger.ballColFns.push((me, b) =>
+        const sword = new Weapon(theta, "sprites/sword.png", 3.333, -18);
+        sword.addCollider(50, 7);
+        sword.addSpin(0.0628);
+        sword.addParry();
+        sword.addDamage(1);
+        sword.ballColFns.push((me, b) =>
             me.dmg++
         );
-        this.addWeapon(dagger);
+        this.addWeapon(sword);
     }
 }
 
+function randomVel(abs) {
+    const theta = Math.random(2 * Math.PI);
+    return [Math.cos(theta) * abs, Math.sin(theta) * abs];
+}
+
 const balls = [
-    new DaggerBall(50, 100, 2, 0, 0),
-    new SwordBall(350, 100, -2, 0, Math.PI)
+    // new DaggerBall(50, 200, ...randomVel(5), 0, 100),
+    new DaggerBall(350, 200, ...randomVel(5), Math.PI, 100),
+    new DuplicatorBall(50, 200, ...randomVel(5), 100)
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));
-battle.bug();
-// battle.run();    
+// battle.bug();
+battle.run();    
