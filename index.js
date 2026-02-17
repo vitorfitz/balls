@@ -2,7 +2,6 @@
 
 const d = new Date().getTime();
 console.log(d);
-Math.seedrandom(1771341836727);
 
 const GRAVITY = 0.1;
 const ELASTICITY = 1.0; // restitution for collisions (1.0 = perfectly elastic)
@@ -251,47 +250,23 @@ function ballsOverlap(b1, b2) {
     return Math.hypot(b2.x - b1.x, b2.y - b1.y) < b1.radius + b2.radius;
 }
 
-// Find time of collision with a stationary circle (accounts for gravity)
+// Find time of collision with a stationary circle
 function timeToStationaryCollision(moving, stationary, dt) {
     const dx = stationary.x - moving.x;
     const dy = stationary.y - moving.y;
     const R = moving.radius + stationary.radius;
-    const g = GRAVITY;
 
-    // Position: p(t) = p0 + v*t + 0.5*g*t^2 (gravity only in y)
-    // |stationary - p(t)|^2 = R^2
-    // (dx - vx*t)^2 + (dy - vy*t - 0.5*g*t^2)^2 = R^2
-    // Expanding gives a quartic, but we can solve iteratively or use the quadratic approx
-    // For small dt, iterate with Newton's method on distance^2 - R^2
+    const a = moving.vx ** 2 + moving.vy ** 2;
+    const b = -2 * (dx * moving.vx + dy * moving.vy);
+    const c = dx * dx + dy * dy - R * R;
 
-    const f = (t) => {
-        const px = moving.x + moving.vx * t;
-        const py = moving.y + moving.vy * t + 0.5 * g * t * t;
-        return (stationary.x - px) ** 2 + (stationary.y - py) ** 2 - R * R;
-    };
+    if (a < EPS) return Infinity;
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return Infinity;
 
-    const df = (t) => {
-        const px = moving.x + moving.vx * t;
-        const py = moving.y + moving.vy * t + 0.5 * g * t * t;
-        const vpx = moving.vx;
-        const vpy = moving.vy + g * t;
-        return -2 * (stationary.x - px) * vpx - 2 * (stationary.y - py) * vpy;
-    };
-
-    // Check if already overlapping
-    if (f(0) <= 0) return EPS;
-
-    // Binary search for root in [0, dt]
-    if (f(dt) > 0) return Infinity; // No collision in interval
-
-    let lo = 0, hi = dt;
-    for (let i = 0; i < 20; i++) {
-        const mid = (lo + hi) / 2;
-        if (f(mid) > 0) lo = mid;
-        else hi = mid;
-    }
-
-    return hi > EPS ? hi : Infinity;
+    const t = (-b - Math.sqrt(disc)) / (2 * a);
+    if (t > EPS && t <= dt) return t;
+    return Infinity;
 }
 
 // Find time of collision between two balls (returns Infinity if no collision in dt)
@@ -437,11 +412,36 @@ class BallBattle {
     }
 
     updatePhysics(dt = 1) {
-        // this._lastCollisions = this._currentCollisions || new Set();
-        // this._currentCollisions = new Set();
+        // DEBUG: Check for overlap at frame start
+        // for (let i = 0; i < this.balls.length; i++) {
+        //     for (let j = i + 1; j < this.balls.length; j++) {
+        //         if (ballsOverlap(this.balls[i], this.balls[j])) {
+        //             console.log("OVERLAP at frame start:", this.balls[i].constructor.name, this.balls[j].constructor.name,
+        //                 "frozen:", this.balls[i].freezeTime, this.balls[j].freezeTime);
+        //         }
+        //     }
+        // }
 
         const toUpdate = this.balls.filter((b) => b.freezeTime == 0);
         const frozen = this.balls.filter((b) => b.freezeTime > 0);
+
+        // Separate overlapping frozen balls
+        for (let i = 0; i < frozen.length; i++) {
+            for (let j = i + 1; j < frozen.length; j++) {
+                const b1 = frozen[i], b2 = frozen[j];
+                const dx = b2.x - b1.x, dy = b2.y - b1.y;
+                const dist = Math.hypot(dx, dy);
+                const minDist = b1.radius + b2.radius;
+                if (dist < minDist && dist > 0) {
+                    const overlap = (minDist - dist) / 2;
+                    const nx = dx / dist, ny = dy / dist;
+                    b1.x -= nx * overlap;
+                    b1.y -= ny * overlap;
+                    b2.x += nx * overlap;
+                    b2.y += ny * overlap;
+                }
+            }
+        }
 
         // Reactivate inert balls that have escaped overlap
         for (const b of toUpdate) {
@@ -501,6 +501,13 @@ class BallBattle {
             // Ball-ball
             if (tBall <= tNext + EPS) {
                 resolveCollision(pair[0], pair[1]);
+                // DEBUG: Check if balls are still overlapping after resolution
+                // if (ballsOverlap(pair[0], pair[1])) {
+                //     const dist = Math.hypot(pair[1].x - pair[0].x, pair[1].y - pair[0].y);
+                //     const minDist = pair[0].radius + pair[1].radius;
+                //     console.log("NOT SEPARATED after resolution:", pair[0].constructor.name, pair[1].constructor.name,
+                //         "dist:", dist.toFixed(2), "minDist:", minDist, "gap:", (dist - minDist).toFixed(4));
+                // }
             }
 
             // Walls
@@ -726,11 +733,22 @@ class SwordBall extends Ball {
     }
 }
 
+function lanceBoost(b, boost) {
+    console.warn(boost);
+    const speed = Math.hypot(b.vx, b.vy);
+    const newSpeed = speed + boost;
+    b.boost += boost;
+
+    const scale = newSpeed / speed;
+    b.vx *= scale;
+    b.vy *= scale;
+}
+
 class LanceBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.baseMass = mass;
         this.boost = 0;
+        this.baseBoost = 0;
         this.dist = 0;
         this.combo = 0;
         this.hit = false;
@@ -738,13 +756,16 @@ class LanceBall extends Ball {
         const lance = new Weapon(theta, "sprites/lance.png", 3, 0);
         lance.addCollider(90, 5);
         lance.addDamageFn((me) => {
-            console.log("CALLED THIS");
             const b = me.ball;
             if (b.dist > 0) {
                 return 0;
             }
-            if (b.combo == 0) b.dist = 0;
+            if (b.combo == 0) {
+                b.dist = 0;
+                lanceBoost(b, -b.baseBoost);
+            }
             b.dist += 30;
+            b.baseBoost += 0.1;
             b.combo++;
             return b.combo;
         }, 0, 15, true);
@@ -752,29 +773,21 @@ class LanceBall extends Ball {
         lance.ballColFns.push((me, other) => {
             const b = me.ball;
             b.hit = true;
-            const speed = Math.hypot(b.vx, b.vy);
-            const boost = 0.1;
-            const newSpeed = speed + boost;
-            b.boost += boost;
-
-            const scale = newSpeed / speed;
-            b.vx *= scale;
-            b.vy *= scale;
         });
 
-        lance.weaponColFns.push((me, other) => {
-            const b = me.ball;
-            const ob = other.ball;
-            const nx = ob.x - b.x;
-            const ny = ob.y - b.y;
-            const len = Math.hypot(nx, ny);
-            const ux = nx / len;
-            const uy = ny / len;
+        // lance.weaponColFns.push((me, other) => {
+        //     const b = me.ball;
+        //     const ob = other.ball;
+        //     const nx = ob.x - b.x;
+        //     const ny = ob.y - b.y;
+        //     const len = Math.hypot(nx, ny);
+        //     const ux = nx / len;
+        //     const uy = ny / len;
 
-            const dot = b.vx * ux + b.vy * uy;
-            b.vx -= 2 * dot * ux;
-            b.vy -= 2 * dot * uy;
-        });
+        //     const dot = b.vx * ux + b.vy * uy;
+        //     b.vx -= 2 * dot * ux;
+        //     b.vy -= 2 * dot * uy;
+        // });
 
         this.addWeapon(lance);
     }
@@ -783,8 +796,9 @@ class LanceBall extends Ball {
         this.weapons[0].theta = Math.atan2(this.vy, this.vx);
         if (this.freezeTime == 0) {
             this.dist -= Math.hypot(this.vx, this.vy);
-            if (!this.hit) {
+            if (!this.hit && this.combo > 0) {
                 this.combo = 0;
+                lanceBoost(this, this.baseBoost);
             }
             this.hit = false;
         }
@@ -798,7 +812,7 @@ function randomVel(abs) {
 
 const balls = [
     // new DaggerBall(50, 200, ...randomVel(5), 0, 100),
-    new SwordBall(350, 200, ...randomVel(5), Math.PI, 100),
+    new DaggerBall(350, 200, ...randomVel(5), Math.PI, 100),
     // new DuplicatorBall(350, 200, ...randomVel(5), 100),
     new LanceBall(50, 200, ...randomVel(5), Math.PI, 100),
 ];
