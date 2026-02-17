@@ -1,8 +1,8 @@
 "use strict"
 
-// const d = new Date().getTime();
-// console.log(d);
-// Math.seedrandom(1771283349443);
+const d = new Date().getTime();
+console.log(d);
+Math.seedrandom(1771341836727);
 
 const GRAVITY = 0.1;
 const ELASTICITY = 1.0; // restitution for collisions (1.0 = perfectly elastic)
@@ -97,18 +97,21 @@ class Weapon {
         });
     }
 
-    addDamageFn(fn, iframes = 15, freeze = 20) {
+    addDamageFn(fn, iframes = 15, freeze = 20, DoT = false) {
         this.dmgFn = fn;
+        this.DoT = DoT;
         this.iframes = iframes;
         this.ballColFns.push((me, b) => {
-            b.damage(fn(me, b));
+            const dmg = fn(me, b);
+            if (dmg == 0) return;
+            b.damage(dmg);
             me.ball.freezeTime = b.freezeTime = b instanceof DuplicatorBall ? Math.round(freeze / 2) : freeze;
         });
     }
 
-    addDamage(dmg, iframes = 15, freeze = 20) {
+    addDamage(dmg, iframes = 15, freeze = 20, DoT = false) {
         this.dmg = dmg;
-        this.addDamageFn((me) => me.dmg, iframes, freeze);
+        this.addDamageFn((me) => me.dmg, iframes, freeze, DoT);
     }
 }
 
@@ -248,23 +251,47 @@ function ballsOverlap(b1, b2) {
     return Math.hypot(b2.x - b1.x, b2.y - b1.y) < b1.radius + b2.radius;
 }
 
-// Find time of collision with a stationary circle
+// Find time of collision with a stationary circle (accounts for gravity)
 function timeToStationaryCollision(moving, stationary, dt) {
     const dx = stationary.x - moving.x;
     const dy = stationary.y - moving.y;
     const R = moving.radius + stationary.radius;
+    const g = GRAVITY;
 
-    const a = moving.vx ** 2 + moving.vy ** 2;
-    const b = -2 * (dx * moving.vx + dy * moving.vy);
-    const c = dx * dx + dy * dy - R * R;
+    // Position: p(t) = p0 + v*t + 0.5*g*t^2 (gravity only in y)
+    // |stationary - p(t)|^2 = R^2
+    // (dx - vx*t)^2 + (dy - vy*t - 0.5*g*t^2)^2 = R^2
+    // Expanding gives a quartic, but we can solve iteratively or use the quadratic approx
+    // For small dt, iterate with Newton's method on distance^2 - R^2
 
-    if (a < EPS) return Infinity;
-    const disc = b * b - 4 * a * c;
-    if (disc < 0) return Infinity;
+    const f = (t) => {
+        const px = moving.x + moving.vx * t;
+        const py = moving.y + moving.vy * t + 0.5 * g * t * t;
+        return (stationary.x - px) ** 2 + (stationary.y - py) ** 2 - R * R;
+    };
 
-    const t = (-b - Math.sqrt(disc)) / (2 * a);
-    if (t > EPS && t <= dt) return t;
-    return Infinity;
+    const df = (t) => {
+        const px = moving.x + moving.vx * t;
+        const py = moving.y + moving.vy * t + 0.5 * g * t * t;
+        const vpx = moving.vx;
+        const vpy = moving.vy + g * t;
+        return -2 * (stationary.x - px) * vpx - 2 * (stationary.y - py) * vpy;
+    };
+
+    // Check if already overlapping
+    if (f(0) <= 0) return EPS;
+
+    // Binary search for root in [0, dt]
+    if (f(dt) > 0) return Infinity; // No collision in interval
+
+    let lo = 0, hi = dt;
+    for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2;
+        if (f(mid) > 0) lo = mid;
+        else hi = mid;
+    }
+
+    return hi > EPS ? hi : Infinity;
 }
 
 // Find time of collision between two balls (returns Infinity if no collision in dt)
@@ -292,18 +319,14 @@ function timeToCollision(b1, b2, dt) {
     if (disc < 0) return Infinity;
 
     const t = (-b - Math.sqrt(disc)) / (2 * a);
-    if (t >= 0 && t <= dt) return t;
+    if (t > EPS && t <= dt) return t;
     return Infinity;
 }
 
 // Elastic collision response (no positional correction needed with exact timing)
 function resolveCollision(b1, b2) {
-    // const key = b1.id < b2.id ? `${b1.id}-${b2.id}` : `${b2.id}-${b1.id}`;
-    // if (!b1.battle._lastCollisions.has(key)) {
     b1.onCollision(b2);
     b2.onCollision(b1);
-    // }
-    // b1.battle._currentCollisions.add(key);
 
     const dx = b2.x - b1.x;
     const dy = b2.y - b1.y;
@@ -312,10 +335,18 @@ function resolveCollision(b1, b2) {
     const nx = dx / dist;
     const ny = dy / dist;
 
-    const v1x = b1.freezeTime > 0 ? 0 : b1.vx;
-    const v1y = b1.freezeTime > 0 ? 0 : b1.vy;
-    const v2x = b2.freezeTime > 0 ? 0 : b2.vx;
-    const v2y = b2.freezeTime > 0 ? 0 : b2.vy;
+    // Remove lance boost from velocity for collision calculation
+    const boosts = [b1, b2].map(b => {
+        if (!(b instanceof LanceBall) || !b.boost) return { bx: 0, by: 0 };
+        const speed = Math.hypot(b.vx, b.vy);
+        const effectiveBoost = Math.min(b.boost, speed);
+        return { bx: b.vx / speed * effectiveBoost, by: b.vy / speed * effectiveBoost };
+    });
+
+    const v1x = b1.freezeTime > 0 ? 0 : b1.vx - boosts[0].bx;
+    const v1y = b1.freezeTime > 0 ? 0 : b1.vy - boosts[0].by;
+    const v2x = b2.freezeTime > 0 ? 0 : b2.vx - boosts[1].bx;
+    const v2y = b2.freezeTime > 0 ? 0 : b2.vy - boosts[1].by;
 
     const dvx = v2x - v1x;
     const dvy = v2y - v1y;
@@ -327,10 +358,23 @@ function resolveCollision(b1, b2) {
     const invMass2 = b2.freezeTime > 0 ? 0 : 1 / b2.mass;
     const j = -(1 + ELASTICITY) * velAlongNormal / (invMass1 + invMass2);
 
-    b1.vx -= j * invMass1 * nx;
-    b1.vy -= j * invMass1 * ny;
-    b2.vx += j * invMass2 * nx;
-    b2.vy += j * invMass2 * ny;
+    const new1x = v1x - j * invMass1 * nx;
+    const new1y = v1y - j * invMass1 * ny;
+    const new2x = v2x + j * invMass2 * nx;
+    const new2y = v2y + j * invMass2 * ny;
+
+    // Add boost back in the new velocity direction
+    for (const [b, nvx, nvy, boost] of [[b1, new1x, new1y, boosts[0]], [b2, new2x, new2y, boosts[1]]]) {
+        const boostMag = Math.hypot(boost.bx, boost.by);
+        if (boostMag > 0) {
+            const newSpeed = Math.hypot(nvx, nvy);
+            b.vx = nvx + nvx / newSpeed * boostMag;
+            b.vy = nvy + nvy / newSpeed * boostMag;
+        } else {
+            b.vx = nvx;
+            b.vy = nvy;
+        }
+    }
 }
 
 function advanceAll(balls, t) {
@@ -493,14 +537,14 @@ class BallBattle {
                 (b) => b.weapons.forEach(
                     (w) => w.updateFns.forEach((f) =>
                         f(w, subDt))));
-            if (this._checkWeaponCollisions(toUpdate, hitThisFrame)) break;
+            this._checkWeaponCollisions(toUpdate, hitThisFrame);
         }
 
         // Decrement iframes for pairs that didn't hit during any substep
         for (const b of toUpdate) {
             for (const w of b.dmgWeapons) {
                 for (const id of Object.keys(w._collidingWith)) {
-                    if (!hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
+                    if (w.DoT || !hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
                         w._collidingWith[id]--;
                         if (w._collidingWith[id] <= 0) delete w._collidingWith[id];
                     }
@@ -686,28 +730,36 @@ class LanceBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.baseMass = mass;
-        this.speedMult = 1;
-        this.keepAngle = 0;
+        this.boost = 0;
+        this.dist = 0;
+        this.combo = 0;
+        this.hit = false;
 
         const lance = new Weapon(theta, "sprites/lance.png", 3, 0);
         lance.addCollider(90, 5);
-        lance.addDamageFn(() => Math.ceil((this.vx ** 2 + this.vy ** 2) / 60), 1);
+        lance.addDamageFn((me) => {
+            console.log("CALLED THIS");
+            const b = me.ball;
+            if (b.dist > 0) {
+                return 0;
+            }
+            if (b.combo == 0) b.dist = 0;
+            b.dist += 30;
+            b.combo++;
+            return b.combo;
+        }, 0, 15, true);
 
         lance.ballColFns.push((me, other) => {
-            me.ball.energyMult += 0.1;
-            // me.ball.keepAngle = 20;
-            // me.ball.oldAngle = me.theta;
+            const b = me.ball;
+            b.hit = true;
+            const speed = Math.hypot(b.vx, b.vy);
+            const boost = 0.1;
+            const newSpeed = speed + boost;
+            b.boost += boost;
 
-            // const b = me.ball;
-            // const nx = other.x - b.x;
-            // const ny = other.y - b.y;
-            // const len = Math.hypot(nx, ny);
-            // const ux = nx / len;
-            // const uy = ny / len;
-
-            // const dot = b.vx * ux + b.vy * uy;
-            // b.vx -= 2 * dot * ux;
-            // b.vy -= 2 * dot * uy;
+            const scale = newSpeed / speed;
+            b.vx *= scale;
+            b.vy *= scale;
         });
 
         lance.weaponColFns.push((me, other) => {
@@ -728,23 +780,14 @@ class LanceBall extends Ball {
     }
 
     onUpdate() {
-        if (!this.baseEnergy) this.baseEnergy = (this.potentialEnergy() + this.kineticEnergy()) / this.mass;
-        this.weapons[0].theta = this.keepAngle > 0 ? this.oldAngle : Math.atan2(this.vy, this.vx);
-        this.keepAngle--;
-
-        const speed = Math.hypot(this.vx, this.vy);
-        const energy = 0.5 * this.mass * speed * speed + this.potentialEnergy();
-        const target = this.baseEnergy * this.energyMult * this.mass;
-        if (energy > target) return;
-
-        const accelRate = (target - energy) / (10000 * this.baseMass);
-        const newSpeed = speed + accelRate;
-        const newMass = this.mass * energy / (0.5 * this.mass * newSpeed * newSpeed + this.potentialEnergy());
-
-        this.mass = newMass;
-        const scale = newSpeed / speed;
-        this.vx *= scale;
-        this.vy *= scale;
+        this.weapons[0].theta = Math.atan2(this.vy, this.vx);
+        if (this.freezeTime == 0) {
+            this.dist -= Math.hypot(this.vx, this.vy);
+            if (!this.hit) {
+                this.combo = 0;
+            }
+            this.hit = false;
+        }
     }
 }
 
