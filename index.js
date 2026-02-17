@@ -97,13 +97,18 @@ class Weapon {
         });
     }
 
-    addDamage(dmg, iframes = 15, freeze = 20) {
-        this.dmg = dmg;
+    addDamageFn(fn, iframes = 15, freeze = 20) {
+        this.dmgFn = fn;
         this.iframes = iframes;
         this.ballColFns.push((me, b) => {
-            b.damage(me.dmg);
+            b.damage(fn(me, b));
             me.ball.freezeTime = b.freezeTime = b instanceof DuplicatorBall ? Math.round(freeze / 2) : freeze;
         });
+    }
+
+    addDamage(dmg, iframes = 15, freeze = 20) {
+        this.dmg = dmg;
+        this.addDamageFn((me) => me.dmg, iframes, freeze);
     }
 }
 
@@ -368,7 +373,7 @@ class BallBattle {
     constructor(balls) {
         this.balls = [];
         this.nextID = 0;
-        this.debug = false;
+        this.debug = true;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -464,6 +469,8 @@ class BallBattle {
     }
 
     updateWeapons(dt = 1) {
+        this.balls.forEach((b) => b.onUpdate());
+
         let toUpdate = [];
         for (let i = 0; i < this.balls.length; i++) {
             if (this.balls[i].freezeTime > 0) {
@@ -501,7 +508,6 @@ class BallBattle {
             }
         }
 
-        this.balls.forEach((b) => b.onUpdate());
         this.balls = this.balls.filter((b) => b.hp > 0);
     }
 
@@ -582,22 +588,27 @@ class BallBattle {
         );
         spriteReqs = {};
 
+        // let energySum = 0;
+        // for (let b of this.balls) {
+        //     energySum += b.potentialEnergy() + b.kineticEnergy();
+        // }
+        // console.log(energySum);
+
         // if (k < 2000) {
         this.updatePhysics();
-        // console.log(this.balls.reduce((b) => b.potentialEnergy() + b.kineticEnergy()));
         this.updateWeapons();
         this.render();
         requestAnimationFrame(this.run.bind(this));
         // k++;
         // }
         // else {
-        //     const step = () => {
-        //         this.updatePhysics();
-        //         this.updateWeapons();
-        //         this.render();
-        //         setTimeout(() => requestAnimationFrame(step), 100); // 100ms delay
-        //     };
-        //     step();
+        // const step = () => {
+        //     this.updatePhysics();
+        //     this.updateWeapons();
+        //     this.render();
+        //     setTimeout(() => requestAnimationFrame(step), 30); // 100ms delay
+        // };
+        // step();
         // }
     }
 
@@ -617,7 +628,7 @@ class BallBattle {
 // let k = 0;
 
 class DuplicatorBall extends Ball {
-    constructor(x, y, vx, vy, hp = 50, radius = 20, color = "#d26ffa", mass = radius * radius) {
+    constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#d26ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.inert = false;
         this.cooldown = 0;
@@ -671,6 +682,72 @@ class SwordBall extends Ball {
     }
 }
 
+class LanceBall extends Ball {
+    constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        this.baseMass = mass;
+        this.speedMult = 1;
+        this.keepAngle = 0;
+
+        const lance = new Weapon(theta, "sprites/lance.png", 3, 0);
+        lance.addCollider(90, 5);
+        lance.addDamageFn(() => Math.ceil((this.vx ** 2 + this.vy ** 2) / 60), 1);
+
+        lance.ballColFns.push((me, other) => {
+            me.ball.energyMult += 0.1;
+            // me.ball.keepAngle = 20;
+            // me.ball.oldAngle = me.theta;
+
+            // const b = me.ball;
+            // const nx = other.x - b.x;
+            // const ny = other.y - b.y;
+            // const len = Math.hypot(nx, ny);
+            // const ux = nx / len;
+            // const uy = ny / len;
+
+            // const dot = b.vx * ux + b.vy * uy;
+            // b.vx -= 2 * dot * ux;
+            // b.vy -= 2 * dot * uy;
+        });
+
+        lance.weaponColFns.push((me, other) => {
+            const b = me.ball;
+            const ob = other.ball;
+            const nx = ob.x - b.x;
+            const ny = ob.y - b.y;
+            const len = Math.hypot(nx, ny);
+            const ux = nx / len;
+            const uy = ny / len;
+
+            const dot = b.vx * ux + b.vy * uy;
+            b.vx -= 2 * dot * ux;
+            b.vy -= 2 * dot * uy;
+        });
+
+        this.addWeapon(lance);
+    }
+
+    onUpdate() {
+        if (!this.baseEnergy) this.baseEnergy = (this.potentialEnergy() + this.kineticEnergy()) / this.mass;
+        this.weapons[0].theta = this.keepAngle > 0 ? this.oldAngle : Math.atan2(this.vy, this.vx);
+        this.keepAngle--;
+
+        const speed = Math.hypot(this.vx, this.vy);
+        const energy = 0.5 * this.mass * speed * speed + this.potentialEnergy();
+        const target = this.baseEnergy * this.energyMult * this.mass;
+        if (energy > target) return;
+
+        const accelRate = (target - energy) / (10000 * this.baseMass);
+        const newSpeed = speed + accelRate;
+        const newMass = this.mass * energy / (0.5 * this.mass * newSpeed * newSpeed + this.potentialEnergy());
+
+        this.mass = newMass;
+        const scale = newSpeed / speed;
+        this.vx *= scale;
+        this.vy *= scale;
+    }
+}
+
 function randomVel(abs) {
     const theta = Math.random(2 * Math.PI);
     return [Math.cos(theta) * abs, Math.sin(theta) * abs];
@@ -678,8 +755,9 @@ function randomVel(abs) {
 
 const balls = [
     // new DaggerBall(50, 200, ...randomVel(5), 0, 100),
-    new DaggerBall(350, 200, ...randomVel(5), Math.PI, 100),
-    new DuplicatorBall(50, 200, ...randomVel(5), 100)
+    new SwordBall(350, 200, ...randomVel(5), Math.PI, 100),
+    // new DuplicatorBall(350, 200, ...randomVel(5), 100),
+    new LanceBall(50, 200, ...randomVel(5), Math.PI, 100),
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));
