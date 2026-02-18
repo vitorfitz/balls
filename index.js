@@ -2,7 +2,7 @@
 
 const d = new Date().getTime();
 console.log(d);
-Math.seedrandom(1771356518866);
+Math.seedrandom(d);
 
 const GRAVITY = 0.1;
 const ELASTICITY = 1.0; // restitution for collisions (1.0 = perfectly elastic)
@@ -91,7 +91,7 @@ class Weapon {
             const approaching = Math.sin(toOther - me.theta) * me.angVel > 0;
             if (approaching) {
                 me.angVel = -me.angVel;
-                me.ball.freezeTime = other.ball.freezeTime = 15;
+                // me.ball.freezeTime = other.ball.freezeTime = 15;
             }
             me.flipped = me.angVel < 0;
         });
@@ -105,7 +105,9 @@ class Weapon {
             const dmg = fn(me, b);
             if (dmg == 0) return;
             b.damage(dmg);
-            me.ball.freezeTime = b.freezeTime = b instanceof DuplicatorBall ? Math.round(freeze / 4) : freeze;
+            // me.ball.freezeTime = b.freezeTime = b instanceof DuplicatorBall ? Math.round(freeze / 2) : freeze;
+            // me.ball.battle.dupeCooldown += me.ball.freezeTime;
+            me.ball.freezeTime = b.freezeTime = b instanceof DuplicatorBall ? 0 : freeze;
         });
     }
 
@@ -344,7 +346,29 @@ function resolveCollision(b1, b2) {
     const dvy = v2y - v1y;
     const velAlongNormal = dvx * nx + dvy * ny;
 
-    if (velAlongNormal > 0) return; // Already separating
+    if (velAlongNormal > 0) {
+        // console.log("early return - already separating");
+        // Still need to clamp lance velocity even if separating
+        for (const [a, b] of [[b1, b2], [b2, b1]]) {
+            if (a instanceof LanceBall) {
+                const toB = a === b1 ? 1 : -1;
+                // Use actual velocities, not boost-adjusted
+                const relVel = ((a.vx - b.vx) * nx + (a.vy - b.vy) * ny) * toB;
+                if (relVel <= 0) continue;
+
+                const dot_a = a.vx * nx + a.vy * ny;
+                const dot_b = b.vx * nx + b.vy * ny;
+                if ((dot_a - dot_b) * toB > 0) {
+                    const speed = Math.hypot(a.vx, a.vy);
+                    if (speed > EPS && a.boost > 0) {
+                        a.vx *= -1;
+                        a.vy *= -1;
+                    }
+                }
+            }
+        }
+        return;
+    }
 
     const invMass1 = b1.freezeTime > 0 ? 0 : 1 / b1.mass;
     const invMass2 = b2.freezeTime > 0 ? 0 : 1 / b2.mass;
@@ -369,7 +393,7 @@ function resolveCollision(b1, b2) {
     }
 
     for (const [a, b] of [[b1, b2], [b2, b1]]) {
-        if (a instanceof LanceBall && a.boost) {
+        if (a instanceof LanceBall) {
             // Normal from a to b
             const toB = a === b1 ? 1 : -1;
             const relVel = ((v1x - v2x) * nx + (v1y - v2y) * ny) * -toB;
@@ -426,7 +450,9 @@ class BallBattle {
     constructor(balls) {
         this.balls = [];
         this.nextID = 0;
-        this.debug = true;
+        // this.debug = true;
+        this.debug = false;
+        this.dupeCooldown = 0;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -558,6 +584,7 @@ class BallBattle {
     }
 
     updateWeapons(dt = 1) {
+        this.dupeCooldown--;
         this.balls.forEach((b) => b.onUpdate());
 
         let toUpdate = [];
@@ -565,14 +592,15 @@ class BallBattle {
             if (this.balls[i].freezeTime > 0) {
                 this.balls[i].freezeTime--;
             }
-            else if (!this.balls[i].inert) {
+            else {
                 toUpdate.push(this.balls[i]);
             }
         }
 
-        // Subdivide based on max angular velocity to avoid tunneling
+        // Subdivide based on max angular velocity or lance speed to avoid tunneling
         const maxAngVel = Math.max(...toUpdate.flatMap(b => b.weapons.map(w => Math.abs(w.angVel || 0))), 0.01);
-        const substeps = Math.ceil(maxAngVel * dt / 0.1); // ~0.1 rad per substep
+        const maxLanceSpeed = Math.max(...toUpdate.filter(b => b instanceof LanceBall).map(b => Math.hypot(b.vx, b.vy)), 0);
+        const substeps = Math.max(Math.ceil(maxAngVel * dt / 0.1), Math.ceil(maxLanceSpeed * dt / 10));
         const subDt = dt / substeps;
 
         const hitThisFrame = new Set(); // tracks "weaponIdx-ballId" pairs that hit
@@ -695,7 +723,7 @@ class BallBattle {
         //     this.updatePhysics();
         //     this.updateWeapons();
         //     this.render();
-        //     setTimeout(() => requestAnimationFrame(step), 30); // 100ms delay
+        //     setTimeout(() => requestAnimationFrame(step), 100);
         // };
         // step();
         // }
@@ -724,15 +752,16 @@ class DuplicatorBall extends Ball {
     }
 
     onCollision(b) {
-        if (this.inert || b instanceof DuplicatorBall || b.freezeTime > 0 || this.cooldown > 0) return;
+        if (this.inert || b instanceof DuplicatorBall || b.freezeTime > 0) return;
 
-        b.damage(1);
+        if (this.battle.dupeCooldown <= 0) b.damage(1);
+        if (this.cooldown > 0 || this.battle.dupeCooldown > 0) return;
+
+        this.battle.dupeCooldown = 2;
         this.cooldown = 15;
-        // if (this.hp == 1) return;
-
-        const child = new DuplicatorBall(this.x, this.y, ...randomVel(5), Math.ceil(this.hp / 2));
-        child.inert = true;
+        const child = new DuplicatorBall(this.x, this.y, ...randomVel(5), this.hp);
         child.cooldown = 15;
+        child.inert = true;
         this.battle.addBall(child);
     }
 
@@ -744,24 +773,42 @@ class DuplicatorBall extends Ball {
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#5fbf00", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        const dagger = new Weapon(theta, "sprites/dagger.png", 2, -6);
-        dagger.addCollider(20, 4);
-        dagger.addSpin(0.1570);
-        dagger.addParry();
-        dagger.addDamage(1, 0, 6);
+        const dagger = new Weapon(theta, "sprites/dagger.png", 3, -12);
+        dagger.addCollider(30, 6);
+        dagger.addSpin(Math.PI * 0.066667);
+        // dagger.addParry();
+        dagger.addDamage(1, 1, 6);
+        dagger.weaponColFns.push((me, other) => { });
+
+        this.scalingCooldown = {};
         dagger.ballColFns.push((me, b) => {
-            me.angVel = (Math.abs(me.angVel) + 0.0157) * Math.sign(me.angVel);
+            if (!(b.id in me.ball.scalingCooldown)) {
+                me.ball.scalingCooldown[b.id] = 30;
+                me.angVel = (Math.abs(me.angVel) + Math.PI * 0.016667) * Math.sign(me.angVel);
+            }
         });
         this.addWeapon(dagger);
+    }
+
+    onUpdate() {
+        if (this.freezeTime <= 0) {
+            for (let key in this.scalingCooldown) {
+                if (this.scalingCooldown[key] == 0) {
+                    delete this.scalingCooldown[key];
+                    break;
+                }
+                this.scalingCooldown[key]--;
+            }
+        }
     }
 }
 
 class SwordBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "tomato", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        const sword = new Weapon(theta, "sprites/sword.png", 3.333, -18);
-        sword.addCollider(50, 7);
-        sword.addSpin(0.0628);
+        const sword = new Weapon(theta, "sprites/sword.png", 4, -22);
+        sword.addCollider(60, 8);
+        sword.addSpin(Math.PI * 0.02);
         sword.addParry();
         sword.addDamage(1, 30);
         sword.ballColFns.push((me, b) =>
@@ -771,64 +818,66 @@ class SwordBall extends Ball {
     }
 }
 
+const comboLeniency = 10;
 class LanceBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.boost = 0;
         this.dist = 0;
         this.combo = 0;
-        this.hit = false;
+        this.hit = 0;
+        this.damages = -1;
 
-        const lance = new Weapon(theta, "sprites/lance.png", 3, 0);
-        lance.addCollider(90, 5);
+        const lance = new Weapon(theta, "sprites/lance.png", 3, -3);
+        lance.addCollider(90, 9);
         lance.addDamageFn((me) => {
             const b = me.ball;
-            b.hit = true;
-            if (b.dist > 0) {
+            const oldHit = b.hit;
+            b.hit = comboLeniency;
+            if (b.dist > 0 && b.damages == -1) {
                 return 0;
             }
 
-            if (b.combo == 0) b.dist = 0;
-            b.dist += 40;
-            b.combo++;
+            if (b.damages == -1) {
+                if (b.combo == 0 || oldHit < comboLeniency - 1) {
+                    // console.log("reset");
+                    b.dist = 0;
+                }
+                const counts = Math.floor(-b.dist / 300) + 1;
+                b.dist += counts * 300;
+                // console.log("damaged", counts, b.dist);
 
-            const boost = 0.2;
-            const speed = Math.hypot(b.vx, b.vy);
-            const newSpeed = speed + boost;
-            b.boost += boost;
+                const boost = 0.2;
+                const speed = Math.hypot(b.vx, b.vy);
+                const newSpeed = speed + boost;
+                b.boost += boost;
+                const scale = newSpeed / speed;
+                b.vx *= scale;
+                b.vy *= scale;
 
-            const scale = newSpeed / speed;
-            b.vx *= scale;
-            b.vy *= scale;
+                const oldCombo = b.combo;
+                b.combo += counts;
+                b.damages = (oldCombo + b.combo + 1) * counts / 2;
+            }
 
-            return b.combo;
-        }, 0, 15, true);
+            return b.damages;
+        }, 0, 12, true);
 
-        // lance.weaponColFns.push((me, other) => {
-        //     const b = me.ball;
-        //     const ob = other.ball;
-        //     const nx = ob.x - b.x;
-        //     const ny = ob.y - b.y;
-        //     const len = Math.hypot(nx, ny);
-        //     const ux = nx / len;
-        //     const uy = ny / len;
-
-        //     const dot = b.vx * ux + b.vy * uy;
-        //     b.vx -= 2 * dot * ux;
-        //     b.vy -= 2 * dot * uy;
-        // });
+        lance.weaponColFns.push((me, other) => { });
 
         this.addWeapon(lance);
     }
 
     onUpdate() {
+        this.damages = -1;
         this.weapons[0].theta = Math.atan2(this.vy, this.vx);
         if (this.freezeTime == 0) {
-            this.dist -= Math.hypot(this.vx, this.vy);
-            if (!this.hit) {
+            this.dist -= this.vx ** 2 + this.vy ** 2;
+            // console.log(this.dist, this.hit);
+            if (this.hit == 0) {
                 this.combo = 0;
             }
-            this.hit = false;
+            else this.hit--;
         }
     }
 }
@@ -839,10 +888,10 @@ function randomVel(abs) {
 }
 
 const balls = [
-    // new DaggerBall(50, 200, ...randomVel(5), 0, 100),
-    new SwordBall(50, 200, ...randomVel(5), Math.PI, 100),
-    // new DuplicatorBall(50, 200, ...randomVel(5), 100),
-    new LanceBall(350, 200, ...randomVel(5), Math.PI, 100),
+    new DaggerBall(50, 200, ...randomVel(5), 0, 100),
+    // new SwordBall(50, 200, ...randomVel(5), Math.PI, 100),
+    new DuplicatorBall(350, 200, ...randomVel(5), 50),
+    // new LanceBall(50, 200, ...randomVel(5), Math.PI, 100),
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));
