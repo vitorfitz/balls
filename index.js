@@ -331,10 +331,8 @@ function timeToStationaryCollision(moving, stationary, dt) {
 
 // Find time of collision between two balls (returns Infinity if no collision in dt)
 function timeToCollision(b1, b2, dt) {
-    if (b1.inert || b2.inert) {
-        if ((b1 instanceof Ball) && (b2 instanceof Ball)) return Infinity;
-        if (ballsOverlap(b1, b2)) return Infinity;
-    }
+    if (b1.inert || b2.inert) return Infinity;
+    if (ballsOverlap(b1, b2)) return Infinity;
 
     const g1 = b1.gravity ? GRAVITY : 0;
     const g2 = b2.gravity ? GRAVITY : 0;
@@ -400,8 +398,6 @@ function resolveCollision(b1, b2) {
 
     const bounce1 = b1.shouldBounce(b2);
     const bounce2 = b2.shouldBounce(b1);
-    if (!bounce1) b1.inert = true;
-    if (!bounce2) b2.inert = true;
     if (!bounce1 || !bounce2) return;
 
     if (b1.mass == 0 && b2.mass == 0) return;
@@ -551,6 +547,10 @@ class BallBattle {
         for (let b of balls) {
             this.addBall(b);
         }
+
+        this.lastTime = null;
+        this.accumulator = 0;
+        this.fixedDt = 10;
     }
 
     addBody(body) {
@@ -583,7 +583,7 @@ class BallBattle {
         ctx.fill();
     }
 
-    updatePhysics(dt = 1) {
+    updatePhysics() {
         // Snapshot freeze state at frame start - used by resolveCollision
         for (const b of this.bodies) {
             b._frozenAtFrameStart = b.freezeTime > 0;
@@ -600,6 +600,7 @@ class BallBattle {
             }
         }
 
+        let dt = 1;
         while (dt > EPS) {
             // --- Find earliest ball-ball collision ---
             let tBall = Infinity;
@@ -669,7 +670,7 @@ class BallBattle {
         }
     }
 
-    updateWeapons(dt = 1) {
+    updateWeapons() {
         let toUpdate = [];
         for (let i = 0; i < this.balls.length; i++) {
             if (this.balls[i].freezeTime > 0) {
@@ -683,8 +684,8 @@ class BallBattle {
         // Subdivide based on max angular velocity or lance speed to avoid tunneling
         const maxAngVel = Math.max(...toUpdate.flatMap(b => b.weapons.map(w => Math.abs(w.angVel || 0))), 0.01);
         const maxLanceSpeed = Math.max(...toUpdate.filter(b => b instanceof LanceBall).map(b => Math.hypot(b.vx, b.vy)), 0);
-        const substeps = Math.max(Math.ceil(maxAngVel * dt / 0.1), Math.ceil(maxLanceSpeed * dt / 10));
-        const subDt = dt / substeps;
+        const substeps = Math.max(Math.ceil(maxAngVel / 0.1), Math.ceil(maxLanceSpeed / 10));
+        const subDt = 1 / substeps;
 
         const hitThisFrame = new Set(); // tracks "weaponIdx-ballId" pairs that hit
 
@@ -803,31 +804,48 @@ class BallBattle {
         this.processDeaths();
 
         this.dupeCount = this.balls.reduce((acc, v) => acc + (+(v instanceof DuplicatorBall)), 0);
-        console.log(this.dupeCount);
+    }
+
+    inBounds(x, y, radius) {
+        return x >= radius && x <= this.width - radius
+            && y >= radius && y <= this.height - radius;
     }
 
     async run() {
-        await Promise.all(
-            Object.entries(spriteReqs).map(
-                async ([spriteName, weapons]) => {
-                    const img = await loadImage(spriteName);
-                    for (const weapon of weapons) {
-                        weapon.sprite = img;
-                    }
+        const loop = async (currentTime) => {
+            // let energySum = 0;
+            // for (let b of this.balls) {
+            //     energySum += b.potentialEnergy() + b.kineticEnergy();
+            // }
+            // console.log(energySum);
+
+            if (this.lastTime !== null) {
+                this.accumulator += currentTime - this.lastTime;
+
+                while (this.accumulator >= this.fixedDt) {
+                    this.update();
+                    this.accumulator -= this.fixedDt;
                 }
-            )
-        );
-        spriteReqs = {};
+            }
 
-        // let energySum = 0;
-        // for (let b of this.balls) {
-        //     energySum += b.potentialEnergy() + b.kineticEnergy();
-        // }
-        // console.log(energySum);
+            await Promise.all(
+                Object.entries(spriteReqs).map(
+                    async ([spriteName, weapons]) => {
+                        const img = await loadImage(spriteName);
+                        for (const weapon of weapons) {
+                            weapon.sprite = img;
+                        }
+                    }
+                )
+            );
+            spriteReqs = {};
 
-        this.update();
-        this.render();
-        requestAnimationFrame(this.run.bind(this));
+            this.lastTime = currentTime;
+            this.render();
+            requestAnimationFrame(loop);
+        };
+
+        requestAnimationFrame(loop);
 
         // if (t < sus) {
         //     for (let i = 0; i < 100 && t < sus; i++) {
@@ -853,19 +871,6 @@ class BallBattle {
         //     step();
         // }
     }
-
-    // bug() {
-    //     function inBounds(b) {
-    //         return b.x >= b.radius && b.x <= b.battle.width - b.radius
-    //             && b.y >= b.radius && b.y <= b.battle.height - b.radius;
-    //     }
-
-    //     let t = 0;
-    //     while (inBounds(this.balls[0]) && inBounds(this.balls[1])) {
-    //         this.updatePhysics();
-    //         t++;
-    //     }
-    // }
 }
 // let t = 0;
 // const sus = 300;
@@ -877,7 +882,7 @@ class DuplicatorBall extends Ball {
     }
 
     onCollision(b) {
-        if (this.inert || b instanceof DuplicatorBall || b.freezeTime > 0) return;
+        if (this.inert || b instanceof DuplicatorBall || b.freezeTime > 0 || !(b instanceof Ball)) return;
 
         if (this.battle.dupeCooldown <= 0 && b instanceof Ball) {
             b.damage(1);
@@ -1006,13 +1011,17 @@ class LanceBall extends Ball {
     }
 }
 
+const bulletRadius = 5, maxVolley = 200;
 class MachineGunBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#4a90d9", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.bulletsPerRound = 10;
+        this.damagePerRound = 10;
         this.bulletsFired = 0;
         this.reloadTime = 60;
         this.fireDelay = 0;
+        this.bulletDmg = 1;
+        this.extraDmg = 0;
+        this.bulletsPerRound = this.damagePerRound;
 
         const gun = new Weapon(theta, "sprites/gun.png", 2, -9, 7, 0);
         gun.addCollider(40, 5);
@@ -1027,16 +1036,27 @@ class MachineGunBall extends Ball {
         if (this.fireDelay > 0) { this.fireDelay--; return; }
 
         if (this.bulletsFired < this.bulletsPerRound) {
-            const spawnOffset = this.radius + 40, speed = 7;
+            let dmg = this.bulletDmg;
+            if (Math.random() < this.extraDmg / this.bulletsPerRound - this.bulletsFired) {
+                this.extraDmg--;
+                dmg++;
+            }
+
+            const spawnRadius = this.radius + 40, speed = 7;
             const cosTheta = Math.cos(this.weapons[0].theta);
             const sinTheta = Math.sin(this.weapons[0].theta);
 
+            const spawnX = this.x + cosTheta * spawnRadius;
+            const spawnY = this.y + sinTheta * spawnRadius;
+            if (!this.battle.inBounds(spawnX, spawnY, bulletRadius)) return;
+
             const bullet = new MGBullet(
-                this.x + cosTheta * spawnOffset,
-                this.y + sinTheta * spawnOffset,
+                spawnX,
+                spawnY,
                 cosTheta * speed,
                 sinTheta * speed,
-                this
+                this,
+                dmg
             );
             this.battle.addBody(bullet);
 
@@ -1045,33 +1065,52 @@ class MachineGunBall extends Ball {
         } else {
             this.bulletsFired = 0;
             this.reloadTime = 60;
+            if (this.damagePerRound > maxVolley) {
+                this.bulletDmg = Math.floor(this.damagePerRound / maxVolley);
+                this.extraDmg = this.damagePerRound % maxVolley;
+                this.bulletsPerRound = maxVolley;
+            }
+            else {
+                this.bulletsPerRound = this.damagePerRound;
+            }
         }
     }
 }
 
 class MGBullet extends CircleBody {
-    constructor(x, y, vx, vy, owner) {
-        super(x, y, vx, vy, 1, 5, 0, false);
+    constructor(x, y, vx, vy, owner, dmg = 1) {
+        super(x, y, vx, vy, 1, bulletRadius, 0, false);
         this.owner = owner;
-        this.inert = true;
         this.reflectCooldown = 0;
         this.reflector = owner;
+        this.dmg = dmg;
+
+        for (const b of owner.battle.balls) {
+            if (ballsOverlap(this, b)) {
+                this.onCollision(b);
+                break;
+            }
+        }
     }
 
     onCollision(b) {
         if (b instanceof MGBullet) return;
-        b.damage(1);
+        if (b == this.owner && b == this.reflector) return;
+        b.damage(this.dmg);
 
         const damager = this.reflector == b ? this.owner : this.reflector;
         const ft = b instanceof DuplicatorBall ? 0 : 10;
         if (damager.hp > 0) damager.freezeTime = ft;
         b.freezeTime = ft;
-        if (!(b instanceof DuplicatorBall)) this.hp = 0;
 
-        if (b != this.owner) {
-            this.owner.bulletsPerRound += 2;
-            if (this.owner.bulletsFired > 0) this.owner.bulletsFired += 2;
+        if (b != this.owner && this.hp == 1) {
+            this.owner.damagePerRound += 2;
+            // if (this.owner.bulletsFired > 0) this.owner.bulletsFired += 2;
         }
+
+        this.hp -= b instanceof DuplicatorBall ? 0 : 1;
+        // this.dmg--;
+        // if (this.dmg <= 0) this.hp = 0;
     }
 
     onWallCollision() {
@@ -1127,11 +1166,11 @@ function randomVel(abs) {
 }
 
 const balls = [
-    // new DaggerBall(50, 200, ...randomVel(5), 0, 100),
+    // new DaggerBall(350, 200, ...randomVel(5), 0, 100),
     // new SwordBall(50, 200, ...randomVel(5), 0, 100),
     new DuplicatorBall(50, 200, ...randomVel(5), 50),
     // new LanceBall(50, 200, ...randomVel(5), Math.PI, 100),
-    new MachineGunBall(350, 200, ...randomVel(5), Math.PI, 500),
+    new MachineGunBall(350, 200, ...randomVel(5), Math.PI, 100),
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));
