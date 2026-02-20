@@ -2,7 +2,7 @@
 
 const d = new Date().getTime();
 console.log(d);
-// Math.seedrandom(1771546972087);
+// Math.seedrandom(1771554116615);
 Math.seedrandom(d);
 
 const GRAVITY = 0.1;
@@ -303,6 +303,7 @@ function timeToCollision(b1, b2, dt) {
     if (b1.inert || b2.inert) return Infinity;
     if (ballsOverlap(b1, b2)) return Infinity;
 
+
     const s1 = b1.getTimeScale();
     const s2 = b2.getTimeScale();
     const g1 = (b1.gravity ? GRAVITY : 0) * s1;
@@ -356,7 +357,7 @@ function timeToCollision(b1, b2, dt) {
     return hi > EPS ? hi : Infinity;
 }
 
-// Elastic collision response (no positional correction needed with exact timing)
+// Elastic collision response
 function resolveCollision(b1, b2) {
     b1.onCollision(b2);
     b2.onCollision(b1);
@@ -373,6 +374,19 @@ function resolveCollision(b1, b2) {
 
     const nx = dx / dist;
     const ny = dy / dist;
+
+    if (t > 5630) {
+        // Separate balls slightly to prevent overlap on next frame
+        const overlap = b1.radius + b2.radius - dist;
+        if (overlap > -EPS) {
+            const sep = (overlap + EPS) * 0.5;
+            b1.x -= nx * sep;
+            b1.y -= ny * sep;
+            b2.x += nx * sep;
+            b2.y += ny * sep;
+        }
+        const newDist = Math.hypot(b2.x - b1.x, b2.y - b1.y);
+    }
 
     // Remove lance boost from velocity for collision calculation
     const boosts = [b1, b2].map(b => {
@@ -398,14 +412,9 @@ function resolveCollision(b1, b2) {
                 const dot_a = a.vx * nx + a.vy * ny;
                 const dot_b = b.vx * nx + b.vy * ny;
                 if ((dot_a - dot_b) * toB > 0) {
-                    const diff = (dot_a - dot_b) * toB;
-                    a.vx -= diff * nx * toB;
-                    a.vy -= diff * ny * toB;
-
-                    const removed = Math.min(diff, a.boost);
-                    a.pendingBoost += removed;
-                    a.boost -= removed;
-                    console.warn("DAN", removed);
+                    const dot = a.vx * nx + a.vy * ny;
+                    a.vx -= 2 * dot * nx;
+                    a.vy -= 2 * dot * ny;
                 }
             }
         }
@@ -425,6 +434,7 @@ function resolveCollision(b1, b2) {
     for (const [b, nvx, nvy, boost] of [[b1, new1x, new1y, boosts[0]], [b2, new2x, new2y, boosts[1]]]) {
         const boostMag = Math.hypot(boost.bx, boost.by);
         const newSpeed = Math.hypot(nvx, nvy);
+
         if (boostMag > 0 && newSpeed > EPS) {
             b.vx = nvx + nvx / newSpeed * boostMag;
             b.vy = nvy + nvy / newSpeed * boostMag;
@@ -437,23 +447,22 @@ function resolveCollision(b1, b2) {
     for (const [a, b] of [[b1, b2], [b2, b1]]) {
         if (a instanceof LanceBall) {
             const toB = a === b1 ? 1 : -1;
-            const relVel = ((v1x - v2x) * nx + (v1y - v2y) * ny) * -toB;
+            const relVel = ((a.vx - b.vx) * nx + (a.vy - b.vy) * ny) * toB;
             if (relVel <= 0) continue;
 
             const dot_a = a.vx * nx + a.vy * ny;
             const dot_b = b.vx * nx + b.vy * ny;
             if ((dot_a - dot_b) * toB > 0) {
-                const diff = (dot_a - dot_b) * toB;
-                a.vx -= diff * nx * toB;
-                a.vy -= diff * ny * toB;
-
-                // Store removed speed as pending boost
-                const removed = Math.min(diff, a.boost);
-                a.pendingBoost += removed;
-                a.boost -= removed;
-                console.log("THIS", removed);
+                // Reflect velocity off collision normal: v' = v - 2(v·n)n
+                const dot = a.vx * nx + a.vy * ny;
+                a.vx -= 2 * dot * nx;
+                a.vy -= 2 * dot * ny;
             }
         }
+    }
+
+    if (t > 5630 && t < 5660) {
+        const relVelAfter = (b1.vx - b2.vx) * nx + (b1.vy - b2.vy) * ny;
     }
 }
 
@@ -594,6 +603,10 @@ class BallBattle {
 
             // Ball-ball
             if (tBall <= tNext + EPS) {
+                if (tee >= 5630 && tee <= 5660) {
+                    const [b1, b2] = pair;
+                    const dist = Math.hypot(b2.x - b1.x, b2.y - b1.y);
+                }
                 resolveCollision(pair[0], pair[1]);
             }
 
@@ -750,10 +763,10 @@ class BallBattle {
     }
 
     async run(dt) {
-        for (let i = 0; i < 1000; i++) {
-            t++
-            this.update();
-        }
+        // for (let i = 0; i < 5600; i++) {
+        //     t++
+        //     this.update();
+        // }
 
         const loop = async (currentTime) => {
             t++;
@@ -807,12 +820,14 @@ class DuplicatorBall extends Ball {
         if (this.battle.dupeCooldown <= 0 && b instanceof Ball) {
             b.damage(1);
         }
-        if (this.cooldown > 0 || this.battle.dupeCooldown > 0 || this.battle.dupeCount >= 40) return;
+        if (this.cooldown > 0 || this.battle.dupeCooldown > 0 || this.battle.dupeCount >= 40 || this.hp == 1) return;
 
-        this.battle.dupeCooldown = 2;
-        this.cooldown = 15;
+        this.battle.dupeCooldown = 1;
+        this.cooldown = 30;
+        this.damage(1);
         const child = new DuplicatorBall(this.x, this.y, ...randomVel(5), this.hp);
-        child.cooldown = 15;
+        child.cooldown = 30;
+        child.flashTime = flashDur;
         child.inert = true;
         this.battle.addBall(child);
     }
@@ -828,17 +843,18 @@ class DaggerBall extends Ball {
         super(x, y, vx, vy, hp, radius, color, mass);
         const dagger = new Weapon(theta, "sprites/dagger.png", 3, -12);
         dagger.addCollider(30, 6);
-        dagger.addSpin(Math.PI * 0.066667);
+        dagger.addSpin(Math.PI * 0.079);
         // dagger.addParry();
         dagger.addDamage(1, 1, 15);
 
         this.scalingCooldown = {};
         dagger.ballColFns.push((me, b) => {
             if (!(b.id in me.ball.scalingCooldown)) {
-                me.ball.scalingCooldown[b.id] = 25;
-                me.angVel = (Math.abs(me.angVel) + Math.PI * 0.016667) * Math.sign(me.angVel);
+                me.angVel = (Math.abs(me.angVel) + Math.PI * 0.0158) * Math.sign(me.angVel);
             }
+            me.ball.scalingCooldown[b.id] = 15;
         });
+
         this.addWeapon(dagger);
     }
 
@@ -859,7 +875,7 @@ class SwordBall extends Ball {
         super(x, y, vx, vy, hp, radius, color, mass);
         const sword = new Weapon(theta, "sprites/sword.png", 4, -22);
         sword.addCollider(60, 8);
-        sword.addSpin(Math.PI * 0.023);
+        sword.addSpin(Math.PI * 0.021);
         sword.addParry();
         sword.addDamage(1, 30);
         sword.ballColFns.push((me, b) =>
@@ -875,15 +891,16 @@ class LanceBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.boost = 0;
-        this.pendingBoost = 0;
         this.dist = 0;
         this.combo = 0;
         this.hit = 0;
         this.damageThisTick = -1;
+        this.tick = 0;
+        this.comboHits = new Set();
 
         const lance = new Weapon(theta, "sprites/lance.png", 3, -3);
-        lance.addCollider(90, 11);
-        lance.addDamageFn((me) => {
+        lance.addCollider(90, 12);
+        lance.addDamageFn((me, target) => {
             const b = me.ball;
             const oldHit = b.hit;
             b.hit = comboLeniency;
@@ -892,19 +909,22 @@ class LanceBall extends Ball {
             }
 
             if (b.damageThisTick == -1) {
-                if (b.combo == 0 || oldHit < comboLeniency - 1) {
-                    b.dist = 0;
+                const isNewTarget = !b.comboHits.has(target.id);
+                if (isNewTarget) {
+                    const boost = 0.25;
+                    const speed = Math.hypot(b.vx, b.vy);
+                    const newSpeed = speed + boost;
+                    b.boost += boost;
+                    const scale = newSpeed / speed;
+                    b.vx *= scale;
+                    b.vy *= scale;
                 }
-                const counts = Math.floor(-b.dist / 30) + 1;
-                b.dist += counts * 30;
 
-                const boost = 0.3;
-                const speed = Math.hypot(b.vx, b.vy);
-                const newSpeed = speed + boost;
-                b.boost += boost;
-                const scale = newSpeed / speed;
-                b.vx *= scale;
-                b.vy *= scale;
+                if (b.combo == 0 || oldHit < comboLeniency - 1) b.dist = 0;
+
+                b.comboHits.add(target.id);
+                const counts = Math.floor(-b.dist / 375) + 1;
+                b.dist += counts * 375;
 
                 const oldCombo = b.combo;
                 b.combo += counts;
@@ -918,30 +938,19 @@ class LanceBall extends Ball {
     }
 
     onUpdate(dt) {
-        // Reapply pending boost gradually
-        if (this.pendingBoost > 0) {
-            const speed = Math.hypot(this.vx, this.vy);
-            if (speed > EPS) {
-                const add = Math.min(this.pendingBoost, 999);
-                this.vx += this.vx / speed * add;
-                this.vy += this.vy / speed * add;
-                this.boost += add;
-                this.pendingBoost -= add;
-            }
-        }
-
         this.damageThisTick = -1;
         this.weapons[0].theta = Math.atan2(this.vy, this.vx);
-        this.dist -= Math.sqrt(this.vx ** 2 + this.vy ** 2) * dt;
+        this.dist -= (this.vx ** 2 + this.vy ** 2) * dt;
         if (this.hit <= 0) {
             this.combo = 0;
+            this.comboHits.clear();
         }
         else this.hit -= dt;
     }
 }
 
 // Machine Gun: fires bullets
-const bulletRadius = 5, maxVolley = 120, reloadTime = 60;
+const bulletRadius = 5, maxVolley = 90, reloadTime = 60;
 class MachineGunBall extends Ball {
     constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#4a90d9", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -955,7 +964,7 @@ class MachineGunBall extends Ball {
 
         const gun = new Weapon(theta, "sprites/gun.png", 2, -9, 7, 0);
         gun.addCollider(40, 5);
-        gun.addSpin(Math.PI * 0.021);
+        gun.addSpin(Math.PI * 0.019);
         gun.addParry();
         this.addWeapon(gun);
     }
@@ -1038,7 +1047,7 @@ class MGBullet extends CircleBody {
         b.slowTime = st;
 
         if (b != this.owner) {
-            this.owner.damagePerRound += 0.8;
+            this.owner.damagePerRound += 0.75;
             this.owner.bonusDmgRate = Math.max(0, this.owner.damagePerRound - maxVolley) / maxVolley;
             this.owner.ammoCost = 1 / Math.min(maxVolley, this.owner.damagePerRound);
         }
@@ -1163,13 +1172,13 @@ function randomVel(abs) {
 }
 
 const balls = [
-    new DaggerBall(50, 200, ...randomVel(5), 0, 500),
-    // new SwordBall(50, 200, ...randomVel(5), 0, 500),
-    // new DuplicatorBall(50, 200, ...randomVel(5), 50),
-    new LanceBall(350, 200, ...randomVel(5), Math.PI, 500),
-    // new MachineGunBall(350, 200, ...randomVel(5), Math.PI, 500),
+    // new DaggerBall(50, 200, ...randomVel(5), 0, 100),
+    // new SwordBall(50, 200, ...randomVel(5), 0, 100),
+    new DuplicatorBall(350, 200, ...randomVel(5), 50),
+    // new LanceBall(50, 200, ...randomVel(5), Math.PI, 100),
+    new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 100),
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));
-// battle.run(1.25);
-battle.run(62.5);
+// battle.run(5);
+battle.run(12.5);
