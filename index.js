@@ -305,7 +305,9 @@ function ballsOverlap(b1, b2) {
 
 // Find time of collision between two balls (returns Infinity if no collision in dt)
 function timeToCollision(b1, b2, dt) {
-    if (b1.inert || b2.inert) return Infinity;
+    if (b1 instanceof Ball && b2 instanceof Ball && (b1.inert || b2.inert)) return Infinity;
+    if (b1 instanceof Bullet && b2 instanceof Bullet) return Infinity;
+    if (b1 instanceof Turret && b2 instanceof Turret) return Infinity;
     if (ballsOverlap(b1, b2)) return Infinity;
 
     const s1 = b1.getTimeScale();
@@ -510,14 +512,25 @@ function weaponWeaponContact(w1, w2) {
     return distToSegment(cx, cy, a.x1, a.y1, a.x2, a.y2) <= a.r + b.r;
 }
 
+// Profiling
+// const profiler = {
+//     physics: 0, weapons: 0, render: 0, frames: 0,
+//     log() {
+//         if (++this.frames % 100 === 0) {
+//             console.log(`[${this.frames}] physics: ${(this.physics / 100).toFixed(2)}ms, weapons: ${(this.weapons / 100).toFixed(2)}ms, render: ${(this.render / 100).toFixed(2)}ms, bodies: ${battle.bodies.length}`);
+//             this.physics = this.weapons = this.render = 0;
+//         }
+//     }
+// };
+
 class BallBattle {
     constructor(balls) {
         this.balls = [];
         this.bodies = [];
 
         this.nextID = 0;
-        // this.debug = true;
-        this.debug = false;
+        this.debug = true;
+        // this.debug = false;
         this.dupeCooldown = 0;
         for (let b of balls) {
             this.addBall(b);
@@ -751,12 +764,16 @@ class BallBattle {
             b._slowedAtFrameStart = b.slowTime > 0 || (b.owner && b.owner.slowTime > 0);
         }
 
+        // let t0 = performance.now();
         this.updatePhysics();
+        // profiler.physics += performance.now() - t0;
 
         this.dupeCooldown--;
         this.bodies.forEach((b) => b.onUpdate(b.getTimeScale()));
 
+        // t0 = performance.now();
         this.updateWeapons();
+        // profiler.weapons += performance.now() - t0;
 
         this.processDeaths();
 
@@ -804,7 +821,10 @@ class BallBattle {
             spriteReqs = {};
 
             this.lastTime = currentTime;
+            // let t0 = performance.now();
             this.render();
+            // profiler.render += performance.now() - t0;
+            // profiler.log();
             requestAnimationFrame(loop);
         };
 
@@ -975,7 +995,7 @@ class MachineGunBall extends Ball {
 
         const gun = new Weapon(theta, "sprites/gun.png", 2, -9, 7, 0);
         gun.addCollider(40, 5);
-        gun.addSpin(Math.PI * 0.024 * dir);
+        gun.addSpin(Math.PI * 0.023 * dir);
         gun.addParry();
         this.addWeapon(gun);
     }
@@ -1129,9 +1149,9 @@ const turretRadius = 12.5;
 class WrenchBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#ff9933", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        const wrench = new Weapon(theta, "sprites/wrench.png", 2.3, -8, 0, 3 * Math.PI / 4);
-        wrench.addCollider(40, 8);
-        wrench.addSpin(Math.PI * 0.018 * dir);
+        const wrench = new Weapon(theta, "sprites/wrench.png", 2.4, -8, 0, 3 * Math.PI / 4);
+        wrench.addCollider(45, 7);
+        wrench.addSpin(Math.PI * 0.019 * dir);
         wrench.addParry();
         wrench.addDamage(1, 30, 15);
         this.turretCooldown = 0;
@@ -1171,7 +1191,7 @@ class Turret extends CircleBody {
         this.owner = owner;
         this.theta = theta;
         this.angVel = angVel;
-        this.fireDelay = 40;
+        this.fireDelay = 32;
         this.zIndex = 0;
     }
 
@@ -1236,10 +1256,10 @@ function randomVel(abs) {
 const balls = [
     // new DaggerBall(50, 200, ...randomVel(5), 0, 1, 100),
     // new SwordBall(50, 200, ...randomVel(5), 0, 1, 100),
-    new DuplicatorBall(350, 200, ...randomVel(5), 50),
-    new LanceBall(50, 200, ...randomVel(5), 100),
-    // new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 1, 100),
-    // new WrenchBall(350, 200, ...randomVel(5), Math.PI, 1, 100),
+    // new DuplicatorBall(350, 200, ...randomVel(5), 50),
+    // new LanceBall(50, 200, ...randomVel(5), 100),
+    new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 1, 100),
+    new WrenchBall(350, 200, ...randomVel(5), Math.PI, 1, 100),
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));
