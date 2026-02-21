@@ -83,10 +83,12 @@ class Weapon {
         ctx.save();
         ctx.translate(wx, wy);
         ctx.rotate(angle + this.rotation);
-
         ctx.scale(this.scale, this.scale);
 
-        ctx.drawImage(this.sprite, 0, -this.sprite.height);
+        // Anchor at bottom-left for right-pointing, bottom-right for left-pointing
+        const leftPointing = Math.cos(this.rotation) < 0;
+        const ax = leftPointing ? -this.sprite.width : 0;
+        ctx.drawImage(this.sprite, ax, -this.sprite.height);
         ctx.restore();
     }
 
@@ -144,11 +146,14 @@ class CircleBody {
         this.slowTime = 0;
         this.inert = false;
         this.gravity = grav;
+        this.zIndex = 1;
     }
 
     getTimeScale() {
         return this._slowedAtFrameStart ? SLOW_FACTOR : 1;
     }
+
+    onLoad() { }
 
     onCollision(b) { }
 
@@ -375,19 +380,6 @@ function resolveCollision(b1, b2) {
     const nx = dx / dist;
     const ny = dy / dist;
 
-    if (t > 5630) {
-        // Separate balls slightly to prevent overlap on next frame
-        const overlap = b1.radius + b2.radius - dist;
-        if (overlap > -EPS) {
-            const sep = (overlap + EPS) * 0.5;
-            b1.x -= nx * sep;
-            b1.y -= ny * sep;
-            b2.x += nx * sep;
-            b2.y += ny * sep;
-        }
-        const newDist = Math.hypot(b2.x - b1.x, b2.y - b1.y);
-    }
-
     // Remove lance boost from velocity for collision calculation
     const boosts = [b1, b2].map(b => {
         if (!(b instanceof LanceBall) || !b.boost) return { bx: 0, by: 0 };
@@ -460,10 +452,6 @@ function resolveCollision(b1, b2) {
             }
         }
     }
-
-    if (t > 5630 && t < 5660) {
-        const relVelAfter = (b1.vx - b2.vx) * nx + (b1.vy - b2.vy) * ny;
-    }
 }
 
 function advanceAll(balls, t) {
@@ -525,6 +513,7 @@ class BallBattle {
         body.battle = this;
         this.bodies.push(body);
         body.id = this.nextID++;
+        body.onLoad();
     }
 
     addBall(ball) {
@@ -603,10 +592,6 @@ class BallBattle {
 
             // Ball-ball
             if (tBall <= tNext + EPS) {
-                if (tee >= 5630 && tee <= 5660) {
-                    const [b1, b2] = pair;
-                    const dist = Math.hypot(b2.x - b1.x, b2.y - b1.y);
-                }
                 resolveCollision(pair[0], pair[1]);
             }
 
@@ -706,7 +691,7 @@ class BallBattle {
         for (const ball of balls) {
             for (const w of ball.parryWeapons) {
                 for (const body of this.bodies) {
-                    if (body instanceof MGBullet && body.owner !== ball) {
+                    if (body instanceof Bullet && body.owner !== ball) {
                         if (weaponHitsBall(w, body)) {
                             body.reflect(ball, w);
                         }
@@ -719,7 +704,7 @@ class BallBattle {
     render() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         if (this.debug) {
-            this.ctx.globalAlpha = 0.7;
+            this.ctx.globalAlpha = 0.5;
             for (const b of this.balls) {
                 for (const w of b.weapons) {
                     if (w.range) {
@@ -737,7 +722,10 @@ class BallBattle {
             this.ctx.globalAlpha = 1;
         }
         this.bodies.filter(b => b.inert).forEach(b => b.draw());
-        this.bodies.filter(b => !b.inert).forEach(b => b.draw());
+        this.bodies
+            .sort((a, b) => (a.zIndex - b.zIndex))
+            .filter(b => !b.inert)
+            .forEach(b => b.draw());
     }
 
     update() {
@@ -770,11 +758,11 @@ class BallBattle {
 
         const loop = async (currentTime) => {
             t++;
-            // let energySum = 0;
-            // for (let b of this.balls) {
-            //     energySum += b.potentialEnergy() + b.kineticEnergy();
-            // }
-            // console.log(energySum);
+            let energySum = 0;
+            for (let b of this.balls) {
+                energySum += b.potentialEnergy() + b.kineticEnergy();
+            }
+            console.log(energySum);
 
             if (this.lastTime !== null) {
                 this.accumulator += currentTime - this.lastTime;
@@ -809,7 +797,7 @@ let t = 0;
 
 // Duplicator: Reproduces on hit
 class DuplicatorBall extends Ball {
-    constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#d26ffa", mass = radius * radius) {
+    constructor(x, y, vx, vy, hp = 50, radius = 20, color = "#d26ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.cooldown = 0;
     }
@@ -839,11 +827,11 @@ class DuplicatorBall extends Ball {
 
 // Dagger: Spins faster
 class DaggerBall extends Ball {
-    constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#5fbf00", mass = radius * radius) {
+    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#5fbf00", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         const dagger = new Weapon(theta, "sprites/dagger.png", 3, -12);
         dagger.addCollider(30, 6);
-        dagger.addSpin(Math.PI * 0.079);
+        dagger.addSpin(Math.PI * 0.079 * dir);
         // dagger.addParry();
         dagger.addDamage(1, 1, 15);
 
@@ -871,11 +859,11 @@ class DaggerBall extends Ball {
 
 // Sword: Increases damage
 class SwordBall extends Ball {
-    constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "tomato", mass = radius * radius) {
+    constructor(x, y, vx, vy, theta, dir, hp = 100, radius = 25, color = "tomato", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         const sword = new Weapon(theta, "sprites/sword.png", 4, -22);
         sword.addCollider(60, 8);
-        sword.addSpin(Math.PI * 0.021);
+        sword.addSpin(Math.PI * 0.021 * dir);
         sword.addParry();
         sword.addDamage(1, 30);
         sword.ballColFns.push((me, b) =>
@@ -888,7 +876,7 @@ class SwordBall extends Ball {
 // Lance: Increases movement speed and combos
 const comboLeniency = 15;
 class LanceBall extends Ball {
-    constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
+    constructor(x, y, vx, vy, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.boost = 0;
         this.dist = 0;
@@ -898,7 +886,7 @@ class LanceBall extends Ball {
         this.tick = 0;
         this.comboHits = new Set();
 
-        const lance = new Weapon(theta, "sprites/lance.png", 3, -3);
+        const lance = new Weapon(Math.atan2(this.vy, this.vx), "sprites/lance.png", 3, -3);
         lance.addCollider(90, 12);
         lance.addDamageFn((me, target) => {
             const b = me.ball;
@@ -950,83 +938,86 @@ class LanceBall extends Ball {
 }
 
 // Machine Gun: fires bullets
-const bulletRadius = 5, maxVolley = 90, reloadTime = 60;
+const bulletRadius = 5, maxVolley = 240;
 class MachineGunBall extends Ball {
-    constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#4a90d9", mass = radius * radius) {
+    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#4a90d9", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.damagePerRound = 5.9;
-        this.reloadTime = reloadTime;
+        this.damagePerRound = 10;
+        this.bulletsPerRound = this.damagePerRound;
+        this.reloadTime = 80;
         this.fireDelay = 0;
         this.bonusDmg = 0;
         this.bonusDmgRate = 0;
         this.ammoUse = 0;
-        this.ammoCost = 1 / this.damagePerRound;
 
         const gun = new Weapon(theta, "sprites/gun.png", 2, -9, 7, 0);
         gun.addCollider(40, 5);
-        gun.addSpin(Math.PI * 0.019);
+        gun.addSpin(Math.PI * 0.024 * dir);
         gun.addParry();
         this.addWeapon(gun);
     }
 
     onUpdate(dt) {
         this.reloadTime -= dt;
-        if (this.reloadTime > 0) return;
+        if (this.reloadTime > EPS) return;
 
         this.fireDelay -= dt;
-        if (this.fireDelay > 0) return;
 
-        if (this.ammoUse < 1 - EPS) {
+        while (this.fireDelay <= EPS && this.ammoUse < 1 - EPS) {
             this.bonusDmg += this.bonusDmgRate;
             const floor = Math.floor(this.bonusDmg);
             this.bonusDmg -= floor;
             let dmg = 1 + floor;
 
+            // Offset position by how late this bullet is
             const spawnRadius = this.radius + 40, speed = 7;
-            const cosTheta = Math.cos(this.weapons[0].theta);
-            const sinTheta = Math.sin(this.weapons[0].theta);
+            const lateness = -this.fireDelay;
+            const theta = this.weapons[0].theta - this.weapons[0].angVel * lateness;
+            const cosTheta = Math.cos(theta);
+            const sinTheta = Math.sin(theta);
 
-            const spawnX = this.x + cosTheta * spawnRadius;
-            const spawnY = this.y + sinTheta * spawnRadius;
-            if (!this.battle.inBounds(spawnX, spawnY, bulletRadius)) return;
+            const ballX = this.x - this.vx * lateness;
+            const ballY = this.y - this.vy * lateness;
+            const spawnX = ballX + cosTheta * (spawnRadius + speed * lateness);
+            const spawnY = ballY + sinTheta * (spawnRadius + speed * lateness);
 
-            const bullet = new MGBullet(
-                spawnX,
-                spawnY,
-                cosTheta * speed,
-                sinTheta * speed,
-                this,
-                dmg
-            );
-            this.battle.addBody(bullet);
+            if (this.battle.inBounds(spawnX, spawnY, bulletRadius)) {
+                const bullet = new MGBullet(
+                    spawnX,
+                    spawnY,
+                    cosTheta * speed,
+                    sinTheta * speed,
+                    this,
+                    dmg
+                );
+                this.battle.addBody(bullet);
+            }
 
-            this.ammoUse += this.ammoCost;
-            this.fireDelay = 1;
-        } else {
+            this.ammoUse += 1 / this.bulletsPerRound;
+            let fd = 80 / (80 * 0.33333 + 0.66667 * this.bulletsPerRound);
+            this.fireDelay += fd;
+        }
+
+        if (this.ammoUse >= 1 - EPS) {
             this.ammoUse = 0;
-            this.reloadTime = reloadTime;
-            const roundedDmg = Math.round(this.damagePerRound);
-            if (roundedDmg > maxVolley) {
-                this.bulletDmg = Math.floor(roundedDmg / maxVolley);
-                this.extraDmg = roundedDmg % maxVolley;
-                this.bulletsPerRound = maxVolley;
-            }
-            else {
-                this.bulletsPerRound = roundedDmg;
-            }
+            this.reloadTime = 60 + 200 / this.bulletsPerRound;
+            this.fireDelay = 0;
         }
     }
 }
 
-class MGBullet extends CircleBody {
+class Bullet extends CircleBody {
     constructor(x, y, vx, vy, owner, dmg = 1) {
         super(x, y, vx, vy, 1, bulletRadius, 0, false);
         this.owner = owner;
         this.reflectCooldown = 0;
         this.reflector = owner;
         this.dmg = dmg;
+        this.color = "#111";
+    }
 
-        for (const b of owner.battle.balls) {
+    onLoad() {
+        for (const b of this.battle.balls) {
             if (ballsOverlap(this, b)) {
                 this.onCollision(b);
                 break;
@@ -1036,21 +1027,10 @@ class MGBullet extends CircleBody {
 
     onCollision(b) {
         if (this.hp <= 0) return;
-        if (b instanceof MGBullet) return;
+        if (b instanceof Bullet) return;
         if (b == this.owner && b == this.reflector) return;
-        b.damage(this.dmg);
-
-        const damager = this.reflector == b ? this.owner : this.reflector;
-
-        const st = b instanceof DuplicatorBall ? 0 : 15;
-        if (damager.hp > 0) damager.slowTime = st;
-        b.slowTime = st;
-
-        if (b != this.owner) {
-            this.owner.damagePerRound += 0.75;
-            this.owner.bonusDmgRate = Math.max(0, this.owner.damagePerRound - maxVolley) / maxVolley;
-            this.owner.ammoCost = 1 / Math.min(maxVolley, this.owner.damagePerRound);
-        }
+        if (b instanceof Ball) b.damage(this.dmg);
+        if (b instanceof Turret) this.hp = 0;
     }
 
     onWallCollision() {
@@ -1095,40 +1075,122 @@ class MGBullet extends CircleBody {
         const dotFixed = this.vx * nx + this.vy * ny;
         this.vx -= 2 * dotFixed * nx;
         this.vy -= 2 * dotFixed * ny;
-
-        this.reflected = true;
     }
 }
 
-// Turret: Stationary, spins and shoots bullets
-class Turret extends CircleBody {
-    constructor(x, y, owner, theta = 0) {
-        super(x, y, 0, 0, 30, 15, Infinity, false);
-        this.owner = owner;
-        this.theta = theta;
-        this.angVel = Math.PI * 0.05;
-        this.fireDelay = 0;
+class MGBullet extends Bullet {
+    constructor(x, y, vx, vy, owner, dmg) {
+        super(x, y, vx, vy, owner, dmg);
     }
 
-    draw() {
-        this.battle.drawCircle(this, "#ff9933", "#333", 2);
-        const ctx = this.battle.ctx;
-        const len = this.radius + 10;
-        ctx.strokeStyle = "#666";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(this.x, this.y);
-        ctx.lineTo(this.x + Math.cos(this.theta) * len, this.y + Math.sin(this.theta) * len);
-        ctx.stroke();
+    onCollision(b) {
+        super.onCollision(b);
+
+        if (b instanceof Ball) {
+            const damager = this.reflector == b ? this.owner : this.reflector;
+            const st = b instanceof DuplicatorBall ? 0 : 15;
+            if (damager.hp > 0) damager.slowTime = st;
+            b.slowTime = st;
+
+            if (b != this.owner) {
+                this.owner.damagePerRound += 0.75;
+                this.owner.bonusDmgRate = Math.max(0, this.owner.damagePerRound - maxVolley) / maxVolley;
+                this.owner.bulletsPerRound = Math.min(maxVolley, this.owner.damagePerRound);
+            }
+        }
+    }
+}
+
+// Wrench: Spawns turrets on hit
+const turretRadius = 12.5;
+class WrenchBall extends Ball {
+    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#ff9933", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        const wrench = new Weapon(theta, "sprites/wrench.png", 2.3, -8, 0, 3 * Math.PI / 4);
+        wrench.addCollider(40, 8);
+        wrench.addSpin(Math.PI * 0.018 * dir);
+        wrench.addParry();
+        wrench.addDamage(1, 30, 15);
+        this.turretCooldown = 0;
+
+        wrench.ballColFns.push((me, b) => {
+            if (this.turretCooldown >= EPS) return;
+            this.turretCooldown = 60;
+
+            // Contact point: on target ball's surface, toward the wrench ball
+            const dx = me.ball.x - b.x, dy = me.ball.y - b.y;
+            const dist = Math.hypot(dx, dy);
+            const nx = dx / dist, ny = dy / dist;
+            const tx = b.x + nx * (b.radius + turretRadius);
+            const ty = b.y + ny * (b.radius + turretRadius);
+            if (me.ball.battle.inBounds(tx, ty, turretRadius)) {
+                // Reflect ball velocity away from turret
+                const dot = b.vx * nx + b.vy * ny;
+                if (dot > 0) {
+                    b.vx -= 2 * dot * nx;
+                    b.vy -= 2 * dot * ny;
+                }
+                const turret = new Turret(tx, ty, me.ball, Math.random() * 2 * Math.PI, Math.PI * -0.01 * Math.sign(me.angVel));
+                me.ball.battle.addBody(turret);
+            }
+        });
+        this.addWeapon(wrench);
     }
 
     onUpdate(dt) {
+        this.turretCooldown -= dt;
+    }
+}
+
+class Turret extends CircleBody {
+    constructor(x, y, owner, theta, angVel) {
+        super(x, y, 0, 0, 1, turretRadius, Infinity, false);
+        this.owner = owner;
+        this.theta = theta;
+        this.angVel = angVel;
+        this.fireDelay = 40;
+        this.zIndex = 0;
+    }
+
+    draw() {
+        this.battle.drawCircle(this, this.owner.color, "#333", 2);
+
+        const ctx = this.battle.ctx;
+        const width = 5; // rectangle thickness
+
+        ctx.save();
+
+        // Move to origin point
+        ctx.translate(this.x, this.y);
+
+        // Rotate to match theta
+        ctx.rotate(this.theta);
+
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 2;
+        ctx.fillStyle = this.owner.color;
+
+        // Draw rectangle extending forward
+        ctx.beginPath();
+        ctx.rect(5, -width / 2, 13, width);
+        ctx.stroke();
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    onUpdate(dt) {
+        if (this.owner.hp <= 0) {
+            this.hp = 0;
+            return;
+        }
+
         this.theta += this.angVel * dt;
         this.fireDelay -= dt;
         if (this.fireDelay <= 0) {
-            this.fireDelay = 100;
-            const spawnDist = this.radius + 12, speed = 5;
-            const bullet = new MGBullet(
+            this.fireDelay = 40;
+            const spawnDist = this.radius + 6, speed = 5;
+            const bullet = new Bullet(
                 this.x + Math.cos(this.theta) * spawnDist,
                 this.y + Math.sin(this.theta) * spawnDist,
                 Math.cos(this.theta) * speed,
@@ -1143,42 +1205,20 @@ class Turret extends CircleBody {
     shouldBounce(other) { return true; }
 }
 
-// Wrench: Spawns turrets on hit
-class WrenchBall extends Ball {
-    constructor(x, y, vx, vy, theta, hp = 100, radius = 25, color = "#ff9933", mass = radius * radius) {
-        super(x, y, vx, vy, hp, radius, color, mass);
-        const wrench = new Weapon(theta, "sprites/wrench.png", 3, -10);
-        wrench.addCollider(45, 8);
-        wrench.addSpin(Math.PI * 0.04);
-        wrench.addParry();
-        wrench.addDamage(1, 30, 15);
-        wrench.ballColFns.push((me, b) => {
-            const dx = b.x - me.ball.x, dy = b.y - me.ball.y;
-            const dist = Math.hypot(dx, dy);
-            const tx = me.ball.x + dx / dist * (me.ball.radius + b.radius + 20);
-            const ty = me.ball.y + dy / dist * (me.ball.radius + b.radius + 20);
-            if (me.ball.battle.inBounds(tx, ty, 15)) {
-                const turret = new Turret(tx, ty, me.ball, me.theta);
-                me.ball.battle.addBody(turret);
-            }
-        });
-        this.addWeapon(wrench);
-    }
-}
-
 function randomVel(abs) {
     const theta = Math.random(2 * Math.PI);
     return [Math.cos(theta) * abs, Math.sin(theta) * abs];
 }
 
 const balls = [
-    // new DaggerBall(50, 200, ...randomVel(5), 0, 100),
-    // new SwordBall(50, 200, ...randomVel(5), 0, 100),
-    new DuplicatorBall(350, 200, ...randomVel(5), 50),
-    // new LanceBall(50, 200, ...randomVel(5), Math.PI, 100),
-    new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 100),
+    // new DaggerBall(50, 200, ...randomVel(5), 0, 1, 100),
+    // new SwordBall(50, 200, ...randomVel(5), 0, 1, 100),
+    // new DuplicatorBall(50, 200, ...randomVel(5), 50),
+    new LanceBall(50, 200, ...randomVel(5), 100),
+    // new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 1, 100),
+    new WrenchBall(350, 200, ...randomVel(5), Math.PI, 1, 100),
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));
-// battle.run(5);
+// battle.run(1.25);
 battle.run(12.5);
