@@ -308,7 +308,6 @@ function timeToCollision(b1, b2, dt) {
     if (b1.inert || b2.inert) return Infinity;
     if (ballsOverlap(b1, b2)) return Infinity;
 
-
     const s1 = b1.getTimeScale();
     const s2 = b2.getTimeScale();
     const g1 = (b1.gravity ? GRAVITY : 0) * s1;
@@ -362,6 +361,14 @@ function timeToCollision(b1, b2, dt) {
     return hi > EPS ? hi : Infinity;
 }
 
+// function a() {
+//     let energySum = 0;
+//     for (let b of battle.balls) {
+//         energySum += b.potentialEnergy() + b.kineticEnergy();
+//     }
+//     return energySum;
+// }
+
 // Elastic collision response
 function resolveCollision(b1, b2) {
     b1.onCollision(b2);
@@ -381,17 +388,18 @@ function resolveCollision(b1, b2) {
     const ny = dy / dist;
 
     // Remove lance boost from velocity for collision calculation
-    const boosts = [b1, b2].map(b => {
-        if (!(b instanceof LanceBall) || !b.boost) return { bx: 0, by: 0 };
+    const getUnboosted = (b) => {
+        if (!(b instanceof LanceBall) || b.boostEnergy <= 0) return { vx: b.vx, vy: b.vy };
         const speed = Math.hypot(b.vx, b.vy);
-        const effectiveBoost = Math.min(b.boost, speed);
-        return { bx: b.vx / speed * effectiveBoost, by: b.vy / speed * effectiveBoost };
-    });
+        if (speed < EPS) return { vx: b.vx, vy: b.vy };
+        // boostEnergy = 0.5 * (speed² - unboostedSpeed²), so unboostedSpeed = sqrt(speed² - 2*boostEnergy)
+        const unboostedSpeed = Math.sqrt(Math.max(0, speed * speed - 2 * b.boostEnergy));
+        return { vx: b.vx / speed * unboostedSpeed, vy: b.vy / speed * unboostedSpeed };
+    };
 
-    const v1x = b1.vx - boosts[0].bx;
-    const v1y = b1.vy - boosts[0].by;
-    const v2x = b2.vx - boosts[1].bx;
-    const v2y = b2.vy - boosts[1].by;
+    const ub1 = getUnboosted(b1), ub2 = getUnboosted(b2);
+    const v1x = ub1.vx, v1y = ub1.vy;
+    const v2x = ub2.vx, v2y = ub2.vy;
 
     const dvx = v2x - v1x;
     const dvy = v2y - v1y;
@@ -413,6 +421,8 @@ function resolveCollision(b1, b2) {
         return;
     }
 
+    // if (t >= 0 && (b1 instanceof LanceBall || b2 instanceof LanceBall)) console.log(`[t=${t}]`, `Entered with energy=${a()}, lance vel=${Math.hypot(battle.balls[0].vx, battle.balls[0].vy)}, unboosted lance vel=${Math.hypot(b1 instanceof LanceBall ? v1x : v2x, b1 instanceof LanceBall ? v1y : v2y)}, other vel=${Math.hypot(b1 instanceof LanceBall ? v2x : v1x, b1 instanceof LanceBall ? v2y : v1y)}`);
+
     const invMass1 = b2.mass == 0 ? 0 : 1 / b1.mass;
     const invMass2 = b1.mass == 0 ? 0 : 1 / b2.mass;
     const j = -(1 + ELASTICITY) * velAlongNormal / (invMass1 + invMass2);
@@ -422,17 +432,24 @@ function resolveCollision(b1, b2) {
     const new2x = v2x + j * invMass2 * nx;
     const new2y = v2y + j * invMass2 * ny;
 
-    // Add boost back to new velocities
-    for (const [b, nvx, nvy, boost] of [[b1, new1x, new1y, boosts[0]], [b2, new2x, new2y, boosts[1]]]) {
-        const boostMag = Math.hypot(boost.bx, boost.by);
-        const newSpeed = Math.hypot(nvx, nvy);
-
-        if (boostMag > 0 && newSpeed > EPS) {
-            b.vx = nvx + nvx / newSpeed * boostMag;
-            b.vy = nvy + nvy / newSpeed * boostMag;
-        } else {
+    // Add boost back to new velocities (preserving boost energy, not speed delta)
+    for (const [b, nvx, nvy, sign] of [[b1, new1x, new1y, -1], [b2, new2x, new2y, 1]]) {
+        if (!(b instanceof LanceBall) || b.boostEnergy <= 0) {
             b.vx = nvx;
             b.vy = nvy;
+            continue;
+        }
+
+        const newSpeed = Math.hypot(nvx, nvy);
+        const targetSpeed = Math.sqrt(newSpeed * newSpeed + 2 * b.boostEnergy);
+
+        if (newSpeed > EPS) {
+            b.vx = nvx / newSpeed * targetSpeed;
+            b.vy = nvy / newSpeed * targetSpeed;
+        } else {
+            // Near-zero velocity: apply boost along collision normal (away from other ball)
+            b.vx = nx * sign * targetSpeed;
+            b.vy = ny * sign * targetSpeed;
         }
     }
 
@@ -445,13 +462,14 @@ function resolveCollision(b1, b2) {
             const dot_a = a.vx * nx + a.vy * ny;
             const dot_b = b.vx * nx + b.vy * ny;
             if ((dot_a - dot_b) * toB > 0) {
-                // Reflect velocity off collision normal: v' = v - 2(v·n)n
                 const dot = a.vx * nx + a.vy * ny;
                 a.vx -= 2 * dot * nx;
                 a.vy -= 2 * dot * ny;
             }
         }
     }
+
+    // if (t >= 0 && (b1 instanceof LanceBall || b2 instanceof LanceBall)) console.log(`Exited with energy=${a()}, lance vel=${Math.hypot(battle.balls[0].vx, battle.balls[0].vy)}, unboosted lance vel=${Math.hypot(b1 instanceof LanceBall ? new1x : new2x, b1 instanceof LanceBall ? new1y : new2y)}, other vel=${Math.hypot(b1 instanceof LanceBall ? new2x : new1x, b1 instanceof LanceBall ? new2y : new1y)}`);
 }
 
 function advanceAll(balls, t) {
@@ -751,23 +769,23 @@ class BallBattle {
     }
 
     async run(dt) {
-        // for (let i = 0; i < 5600; i++) {
-        //     t++
-        //     this.update();
-        // }
+        while (t < 0) {
+            t++
+            this.update();
+        }
 
         const loop = async (currentTime) => {
-            t++;
-            let energySum = 0;
-            for (let b of this.balls) {
-                energySum += b.potentialEnergy() + b.kineticEnergy();
-            }
-            console.log(energySum);
-
             if (this.lastTime !== null) {
                 this.accumulator += currentTime - this.lastTime;
 
                 while (this.accumulator >= dt) {
+                    t++;
+                    // let energySum = 0;
+                    // for (let b of this.balls) {
+                    //     energySum += b.potentialEnergy() + b.kineticEnergy();
+                    // }
+                    // console.log(energySum);
+
                     this.update();
                     this.accumulator -= dt;
                 }
@@ -874,20 +892,22 @@ class SwordBall extends Ball {
 }
 
 // Lance: Increases movement speed and combos
-const comboLeniency = 15;
+const comboLeniency = 15, boostPct = 0.05;
 class LanceBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 25, color = "#dfbf9f", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.boost = 0;
+        this.boostEnergy = 0;
+        this.boosts = 0;
         this.dist = 0;
         this.combo = 0;
         this.hit = 0;
         this.damageThisTick = -1;
         this.tick = 0;
         this.comboHits = new Set();
+        this.startSpeed = Math.hypot(vx, vy);
 
         const lance = new Weapon(Math.atan2(this.vy, this.vx), "sprites/lance.png", 3, -3);
-        lance.addCollider(90, 12);
+        lance.addCollider(90, 10);
         lance.addDamageFn((me, target) => {
             const b = me.ball;
             const oldHit = b.hit;
@@ -899,10 +919,13 @@ class LanceBall extends Ball {
             if (b.damageThisTick == -1) {
                 const isNewTarget = !b.comboHits.has(target.id);
                 if (isNewTarget) {
-                    const boost = 0.25;
-                    const speed = Math.hypot(b.vx, b.vy);
-                    const newSpeed = speed + boost;
-                    b.boost += boost;
+                    const boostSpeed = boostPct * this.startSpeed;
+                    const speed = this.startSpeed + boostSpeed * b.boosts;
+                    const newSpeed = speed + boostSpeed;
+                    const energyGain = 0.5 * (newSpeed * newSpeed - speed * speed);
+                    b.boostEnergy += energyGain;
+                    b.boosts++;
+
                     const scale = newSpeed / speed;
                     b.vx *= scale;
                     b.vy *= scale;
@@ -1213,10 +1236,10 @@ function randomVel(abs) {
 const balls = [
     // new DaggerBall(50, 200, ...randomVel(5), 0, 1, 100),
     // new SwordBall(50, 200, ...randomVel(5), 0, 1, 100),
-    // new DuplicatorBall(50, 200, ...randomVel(5), 50),
+    new DuplicatorBall(350, 200, ...randomVel(5), 50),
     new LanceBall(50, 200, ...randomVel(5), 100),
     // new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 1, 100),
-    new WrenchBall(350, 200, ...randomVel(5), Math.PI, 1, 100),
+    // new WrenchBall(350, 200, ...randomVel(5), Math.PI, 1, 100),
 ];
 const battle = new BallBattle(balls);
 battle.addCanvas(document.getElementById("canvas"));

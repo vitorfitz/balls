@@ -28,9 +28,9 @@ eval(code);
 const BALL_TYPES = [
     // { name: 'Dagger', create: () => new global.DaggerBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
     // { name: 'Sword', create: () => new global.SwordBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Lance', create: () => new global.LanceBall(50, 200, ...global.randomVel(5), 100) },
+    // { name: 'Lance', create: () => new global.LanceBall(50, 200, ...global.randomVel(5), 100) },
     // { name: 'MachineGun', create: () => new global.MachineGunBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    // { name: 'Duplicator', create: () => new global.DuplicatorBall(50, 200, ...global.randomVel(5), 50) },
+    { name: 'Duplicator', create: () => new global.DuplicatorBall(50, 200, ...global.randomVel(5), 50) },
     { name: 'Wrench', create: () => new global.WrenchBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
 ];
 
