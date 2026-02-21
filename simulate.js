@@ -19,6 +19,7 @@ global.LanceBall = LanceBall;
 global.MachineGunBall = MachineGunBall;
 global.DuplicatorBall = DuplicatorBall;
 global.WrenchBall = WrenchBall;
+global.GrimoireBall = GrimoireBall;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
 `;
@@ -32,6 +33,7 @@ const BALL_TYPES = [
     { name: 'MachineGun', create: () => new global.MachineGunBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
     { name: 'Duplicator', create: () => new global.DuplicatorBall(50, 200, ...global.randomVel(5), 50) },
     { name: 'Wrench', create: () => new global.WrenchBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
+    { name: 'Grimoire', create: () => new global.GrimoireBall(50, 200, ...global.randomVel(5), 0, 1, 100) }
 ];
 
 const MAX_TICKS = 10000;
@@ -40,7 +42,7 @@ const MATCHES = 500;
 function simulate(t1Idx, t2Idx) {
     const b1 = BALL_TYPES[t1Idx].create(), b2 = BALL_TYPES[t2Idx].create();
     b2.x = 350;
-    b2.theta = Math.PI;
+    if (b2.weapons[0]) b2.weapons[0].theta = Math.PI;
 
     const battle = new global.BallBattle([b1, b2]);
     battle.width = 400; battle.height = 400;
@@ -49,8 +51,8 @@ function simulate(t1Idx, t2Idx) {
 
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
         battle.update();
-        const p1Alive = battle.balls.includes(b1) || battle.balls.some(b => b instanceof global.DuplicatorBall && b1 instanceof global.DuplicatorBall);
-        const p2Alive = battle.balls.includes(b2) || battle.balls.some(b => b instanceof global.DuplicatorBall && b2 instanceof global.DuplicatorBall);
+        const p1Alive = battle.balls.some(b => b.team === b1.team);
+        const p2Alive = battle.balls.some(b => b.team === b2.team);
         if (p1Alive && !p2Alive) return 'p1';
         if (p2Alive && !p1Alive) return 'p2';
     }
