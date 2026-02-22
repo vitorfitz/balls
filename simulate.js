@@ -27,16 +27,16 @@ global.randomVel = randomVel;
 eval(code);
 
 const BALL_TYPES = [
-    { name: 'Dagger', create: () => new global.DaggerBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Sword', create: () => new global.SwordBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Lance', create: () => new global.LanceBall(50, 200, ...global.randomVel(5), 100) },
+    // { name: 'Dagger', create: () => new global.DaggerBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
+    // { name: 'Sword', create: () => new global.SwordBall(50, 200, ...global.randomVel(5), 0, 1, 500) },
+    // { name: 'Lance', create: () => new global.LanceBall(50, 200, ...global.randomVel(5), 100) },
     { name: 'MachineGun', create: () => new global.MachineGunBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
     { name: 'Duplicator', create: () => new global.DuplicatorBall(50, 200, ...global.randomVel(5), 50) },
-    { name: 'Wrench', create: () => new global.WrenchBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Grimoire', create: () => new global.GrimoireBall(50, 200, ...global.randomVel(5), 0, 1, 100) }
+    // { name: 'Wrench', create: () => new global.WrenchBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
+    // { name: 'Grimoire', create: () => new global.GrimoireBall(50, 200, ...global.randomVel(5), 0, 1, 100) }
 ];
 
-const MAX_TICKS = 10000;
+const MAX_TICKS = 20000;
 const MATCHES = 500;
 
 function simulate(t1Idx, t2Idx) {
