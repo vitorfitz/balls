@@ -2,7 +2,8 @@
 
 const d = new Date().getTime();
 console.log(d);
-Math.seedrandom(1771802437381);
+Math.seedrandom(d);
+// 1771802437381 good seed
 
 const GRAVITY = 0.1;
 const ELASTICITY = 1.0; // restitution for collisions (1.0 = perfectly elastic)
@@ -119,21 +120,14 @@ class Weapon {
         });
     }
 
-    addDamageFn(fn, iframes = 15, slow = 0, DoT = false) {
-        this.dmgFn = fn;
+    addDamage(dmg, iframes = 40, slow = 0, DoT = false) {
+        this.dmg = dmg;
         this.DoT = DoT;
         this.iframes = iframes;
         this.ballColFns.push((me, b) => {
-            const dmg = fn(me, b);
-            if (dmg < 0) return;
-            b.damage(dmg);
+            b.damage(me.dmg);
             applySlowTime(slow, me.ball, b);
         });
-    }
-
-    addDamage(dmg, iframes, slow, DoT) {
-        this.dmg = dmg;
-        this.addDamageFn((me) => me.dmg, iframes, slow, DoT);
     }
 
     addDirChange() {
@@ -154,10 +148,11 @@ class CircleBody {
         this.inert = false;
         this.gravity = grav;
         this.zIndex = 1;
+        this.slowFactor = SLOW_FACTOR;
     }
 
     getTimeScale() {
-        return this._slowedAtFrameStart ? SLOW_FACTOR : 1;
+        return this._slowedAtFrameStart ? this.slowFactor : 1;
     }
 
     getZIndex() {
@@ -217,7 +212,7 @@ class Ball extends CircleBody {
 
         const flashPct = Math.max(0, this.flashTime / flashDur);
         const color = this.flashTime > 0
-            ? `color-mix(in srgb, white ${flashPct * 100}%, ${this.color})`
+            ? `color-mix(in srgb, white ${Math.min(flashPct * 116, 90)}%, ${this.color})`
             : this.color;
         this.battle.drawCircle(this, color, "#333", 2)
 
@@ -564,10 +559,12 @@ function weaponWeaponContact(w1, w2) {
 //     }
 // };
 
-function applySlowTime(slow, attacker, receiver) {
+function applySlowTime(slow, attacker, receiver, slowFactor = SLOW_FACTOR) {
     if (receiver instanceof DuplicatorBall || attacker.owner || attacker.hp <= 0 || receiver.owner || receiver.hp <= 0) return;
     attacker.slowTime = Math.max(attacker.slowTime, slow);
+    attacker.slowFactor = slowFactor;
     receiver.slowTime = Math.max(receiver.slowTime, slow);
+    receiver.slowFactor = slowFactor;
 }
 
 class BallBattle {
@@ -911,6 +908,19 @@ class BallBattle {
     }
 }
 
+function propsToList(propsMap) {
+    const ul = document.createElement("ul");
+    for (let p in propsMap) {
+        const li = document.createElement("li");
+        li.textContent = p + "\u00A0";
+
+        const val = document.createTextElement("strong");
+        val.textContent = "" + propsMap[p];
+        li.appendChild(val);
+    }
+    return ul;
+}
+
 // Duplicator: Reproduces on hit
 const dmgCooldown = 13, dupeCooldown = 26, dupeLimit = 26;
 class DuplicatorBall extends Ball {
@@ -951,15 +961,22 @@ class DuplicatorBall extends Ball {
         this.dmgCooldown -= dt;
         this.dupeCooldown -= dt;
     }
+
+    getInfoEl() {
+        return propsToList({
+            "Population": this.battle.dupeCount[this.team],
+        });
+    }
 }
 
 // Dagger: Spins faster
+const baseSpin = Math.PI * 0.078;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#5fbf00", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         const dagger = new Weapon(theta, "sprites/dagger.png", 3, -9);
         dagger.addCollider(30, 6);
-        dagger.addSpin(Math.PI * 0.079 * dir);
+        dagger.addSpin(baseSpin * dir);
         // dagger.addParry();
         dagger.addDamage(1, 1);
         // dagger.addDirChange();
@@ -967,7 +984,7 @@ class DaggerBall extends Ball {
         this.scalingCooldown = {};
         dagger.ballColFns.push((me, b) => {
             if (!(b.id in me.ball.scalingCooldown)) {
-                me.angVel = (Math.abs(me.angVel) + Math.PI * 0.0158) * Math.sign(me.angVel);
+                me.angVel = (Math.abs(me.angVel) + Math.PI * 0.0156) * Math.sign(me.angVel);
                 me.ball.scalingCooldown[b.id] = 24;
             }
         });
@@ -983,6 +1000,12 @@ class DaggerBall extends Ball {
             }
             this.scalingCooldown[key] -= dt;
         }
+    }
+
+    getInfoEl() {
+        return propsToList({
+            "Spin Boost": Math.round(Math.abs(this.weapons[0].angVel) * 100 / baseSpin) + "%",
+        });
     }
 }
 
@@ -1000,6 +1023,12 @@ class SwordBall extends Ball {
             me.dmg++
         );
         this.addWeapon(sword);
+    }
+
+    getInfoEl() {
+        return propsToList({
+            "Damage": this.weapons[0].dmg,
+        });
     }
 }
 
@@ -1019,8 +1048,10 @@ class LanceBall extends Ball {
         this.startSpeed = Math.hypot(vx, vy);
 
         const lance = new Weapon(Math.atan2(this.vy, this.vx), "sprites/spear.png", 4, -42, 0, 3 * Math.PI / 4);
-        lance.addCollider(96, 15, 60);
-        lance.addDamageFn((me, target) => {
+        lance.addCollider(92, 15, 58);
+        lance.iframes = 0;
+        lance.DoT = true;
+        lance.ballColFns.push((me, target) => {
             const b = me.ball;
             const oldHit = b.hit;
             b.hit = comboLeniency;
@@ -1046,7 +1077,7 @@ class LanceBall extends Ball {
                 if (b.combo == 0 || oldHit < comboLeniency - 1) b.dist = 0;
 
                 b.comboHits.add(target.id);
-                const distToHit = 82 * b.startSpeed;
+                const distToHit = 78 * b.startSpeed;
                 const counts = Math.floor(-b.dist / distToHit) + 1;
                 b.dist += counts * distToHit;
 
@@ -1055,8 +1086,13 @@ class LanceBall extends Ball {
                 b.damageThisTick = (oldCombo + b.combo + 1) * counts / 2;
             }
 
-            return b.damageThisTick;
-        }, 0, undefined, true);
+            target.damage(b.damageThisTick);
+
+            const speed2 = b.vx ** 2 + b.vy ** 2;
+            const slowness = 3.4 * b.startSpeed / speed2;
+            // console.log(slowness);
+            if (slowness < 1) applySlowTime(20, b, target, slowness);
+        });
 
         this.addWeapon(lance);
     }
@@ -1070,6 +1106,13 @@ class LanceBall extends Ball {
             this.comboHits.clear();
         }
         else this.hit -= dt;
+    }
+
+    getInfoEl() {
+        return propsToList({
+            "Speed Boost": this.boosts * 100 * boostPct + "%",
+            "Combo": this.combo,
+        });
     }
 }
 
@@ -1131,7 +1174,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = 90 / (120 * 0.2 + 0.8 * this.bulletsPerRound);
+            let fd = 96 / (120 * 0.25 + 0.75 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -1141,10 +1184,15 @@ class MachineGunBall extends Ball {
             this.pendingDamage = 0;
             this.bonusDmgRate = Math.max(0, this.damagePerRound - maxVolley) / maxVolley;
             this.bulletsPerRound = Math.min(maxVolley, this.damagePerRound);
-            // this.reloadTime = 60 + 200 / this.bulletsPerRound;
             this.reloadTime = 60;
             this.fireDelay = 0;
         }
+    }
+
+    getInfoEl() {
+        return propsToList({
+            "Bullets": this.damagePerRound,
+        });
     }
 }
 
@@ -1255,10 +1303,12 @@ class WrenchBall extends Ball {
         wrench.addDamage(1, 40);
         wrench.addDirChange();
         this.turretCooldown = 0;
+        this.turretCount = 0;
 
         wrench.ballColFns.push((me, b) => {
             if (this.turretCooldown >= EPS) return;
             this.turretCooldown = 80;
+            this.turretCount++;
 
             // Contact point: on target ball's surface, toward the wrench ball
             const dx = me.ball.x - b.x, dy = me.ball.y - b.y;
@@ -1282,6 +1332,12 @@ class WrenchBall extends Ball {
 
     handleUpdate(dt) {
         this.turretCooldown -= dt;
+    }
+
+    getInfoEl() {
+        return propsToList({
+            "Turrets": this.turretCount,
+        });
     }
 }
 
@@ -1458,6 +1514,12 @@ class GrimoireBall extends Ball {
         }
         return [...baseArgs, this.nextMinionHP, newRadius];
     }
+
+    getInfoEl() {
+        return propsToList({
+            "Summon HP": this.nextMinionHP,
+        });
+    }
 }
 
 // Hammer: Builds up angular velocity and damage passively, resets on hit but gains faster
@@ -1497,11 +1559,11 @@ function randomVel(abs) {
 }
 
 const balls = [
-    // new DaggerBall(350, 200, ...randomVel(6), 0, 1, 100),
+    new DaggerBall(350, 200, ...randomVel(6), 0, 1, 100),
     // new SwordBall(350, 200, ...randomVel(6), 0, 1, 500),
-    new DuplicatorBall(350, 200, ...randomVel(5), 50),
-    // new LanceBall(50, 200, ...randomVel(5), 100),
-    new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 1, 100),
+    // new DuplicatorBall(350, 200, ...randomVel(5), 50),
+    new LanceBall(50, 200, ...randomVel(5), 100),
+    // new MachineGunBall(50, 200, ...randomVel(5), Math.PI, 1, 100),
     // new WrenchBall(50, 200, ...randomVel(5), 0, 1, 100),
     // new GrimoireBall(350, 200, ...randomVel(5), 0, 1, 100)
     // new HammerBall(350, 200, ...randomVel(5), Math.PI, 1, 100)
