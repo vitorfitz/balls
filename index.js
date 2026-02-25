@@ -86,13 +86,12 @@ class Weapon {
         });
     }
 
-    addDamage(dmg, iframes = 40, slow = 0, DoT = false, slowFn = () => undefined) {
+    addDamage(dmg, iframes = 40, DoT = false) {
         this.dmg = dmg;
-        this.DoT = DoT;
         this.iframes = iframes;
+        this.DoT = DoT;
         this.ballColFns.push((b) => {
             b.damage(this.dmg);
-            applySlowTime(slow, this.ball, b, slowFn(b));
         });
     }
 
@@ -855,10 +854,10 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 1600) {
-        //     t++
-        //     this.update();
-        // }
+        while (t < 4160) {
+            t++
+            this.update();
+        }
 
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
@@ -1273,9 +1272,6 @@ class MGBullet extends Bullet {
         super.handleCollision(b);
 
         if (b instanceof Ball) {
-            // const damager = b.team == this.hitCredit.team ? this.prevHitCredit : this.hitCredit;
-            // applySlowTime(20, damager, b, slowFactor);
-
             if (b.team != this.owner.team) {
                 this.owner.pendingDamage += 1;
             }
