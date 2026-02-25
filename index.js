@@ -666,6 +666,15 @@ class BallBattle {
                 // console.log(`[t=${t}] Physics loop: tNext=${tNext.toFixed(6)} tBall=${tBall.toFixed(6)} remaining dt=${dt.toFixed(6)}`);
                 resolveCollision(pair[0], pair[1]);
                 collidedThisFrame.add(pair[0].id + '-' + pair[1].id);
+                // Clear pairs involving either ball so they can re-collide after velocity changes
+                for (const key of [...collidedThisFrame]) {
+                    if (key !== pair[0].id + '-' + pair[1].id) {
+                        const [id1, id2] = key.split('-');
+                        if (id1 == pair[0].id || id1 == pair[1].id || id2 == pair[0].id || id2 == pair[1].id) {
+                            collidedThisFrame.delete(key);
+                        }
+                    }
+                }
             }
 
             // Walls
@@ -1507,36 +1516,6 @@ class GrimoireBall extends Ball {
         return propsToList({
             "Summon HP": this.nextMinionHP,
         });
-    }
-}
-
-// Hammer: Builds up angular velocity and damage passively, resets on hit but gains faster
-class HammerBall extends Ball {
-    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#7a5230", mass = radius * radius) {
-        super(x, y, vx, vy, hp, radius, color, mass);
-        this.baseAngVel = Math.PI * 0.01 * dir;
-        this.baseDmg = 1;
-        this.buildRate = 1;
-
-        const hammer = new Weapon(theta, "sprites/hammer.webp", 3, -7, 0, 3 * Math.PI / 4);
-        hammer.addCollider(60, 16, 38);
-        hammer.addSpin(this.baseAngVel);
-        hammer.addParry();
-        hammer.addDamage(this.baseDmg, 30);
-
-        hammer.ballColFns.push(() => {
-            this.buildRate += 0.5;
-            hammer.angVel = this.baseAngVel;
-            hammer.dmg = this.baseDmg;
-        });
-
-        this.addWeapon(hammer);
-    }
-
-    handleUpdate(dt) {
-        const w = this.weapons[0];
-        w.angVel += Math.sign(w.angVel) * Math.PI * 0.00005 * this.buildRate * dt;
-        w.dmg += 0.008 * this.buildRate * dt;
     }
 }
 
