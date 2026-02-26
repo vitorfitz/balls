@@ -52,10 +52,15 @@ class Weapon {
     }
 
     draw() {
+        const alpha = this.ball.battle.renderAlpha || 0;
+        const theta = this._prevTheta !== undefined
+            ? this._prevTheta + (this.theta - this._prevTheta) * alpha
+            : this.theta;
         Weapon.drawWeapon(
             this.ball.battle.ctx,
-            this.ball.x, this.ball.y,
-            this.theta, this.sprite, this.scale,
+            this.ball._renderX ?? this.ball.x,
+            this.ball._renderY ?? this.ball.y,
+            theta, this.sprite, this.scale,
             this.ball.radius + this.offset, this.spriteShift, this.rotation
         );
     }
@@ -904,10 +909,10 @@ class BallBattle {
     }
 
     async run(dt) {
-        while (t < 4160) {
-            t++
-            this.update();
-        }
+        // while (t < 1000) {
+        //     t++
+        //     this.update();
+        // }
 
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
@@ -919,6 +924,10 @@ class BallBattle {
                     for (const b of this.bodies) {
                         b._prevX = b.x;
                         b._prevY = b.y;
+                        if (b.theta !== undefined) b._prevTheta = b.theta;
+                    }
+                    for (const b of this.balls) {
+                        for (const w of b.weapons) w._prevTheta = w.theta;
                     }
 
                     this.update();
@@ -1395,14 +1404,20 @@ class Turret extends CircleBody {
 
         const ctx = this.battle.ctx;
         const width = 5; // rectangle thickness
+        const x = this._renderX ?? this.x;
+        const y = this._renderY ?? this.y;
+        const alpha = this.battle.renderAlpha || 0;
+        const theta = this._prevTheta !== undefined
+            ? this._prevTheta + (this.theta - this._prevTheta) * alpha
+            : this.theta;
 
         ctx.save();
 
         // Move to origin point
-        ctx.translate(this.x, this.y);
+        ctx.translate(x, y);
 
         // Rotate to match theta
-        ctx.rotate(this.theta);
+        ctx.rotate(theta);
 
         ctx.strokeStyle = "#333";
         ctx.lineWidth = 2;
