@@ -193,7 +193,7 @@ class Ball extends CircleBody {
         const color = this.flashTime > 0
             ? `color-mix(in srgb, white ${Math.min(flashPct * 116, 90)}%, ${this.color})`
             : this.color;
-        Ball.drawBall(this.battle.ctx, this.x, this.y, this.radius, color, Math.ceil(this.hp));
+        Ball.drawBall(this.battle.ctx, this._renderX, this._renderY, this.radius, color, Math.ceil(this.hp));
         if (this.flashTime > 0) this.flashTime--;
     }
 
@@ -574,6 +574,25 @@ class BallBattle {
 
         this.lastTime = null;
         this.accumulator = 0;
+
+        // Chaos slow-mo tracking
+        this.bulletHitHistory = new Array(80).fill(0);
+        this.bulletHitIndex = 0;
+        this.bulletHitsThisFrame = 0;
+    }
+
+    getGlobalTimeScale() {
+        let weighted = 0, totalWeight = 0;
+        for (let i = 0; i < 80; i++) {
+            const age = (80 + this.bulletHitIndex - i) % 80;
+            const w = 1 / (1 + age * 0.2);
+            weighted += this.bulletHitHistory[i] * w;
+            totalWeight += w;
+        }
+        const intensity = weighted / totalWeight;
+        const res = Math.max(0.15, Math.min(1, 1.25 / (1 + 5 * intensity)));
+        console.log(res);
+        return res;
     }
 
     addBody(body) {
@@ -602,8 +621,10 @@ class BallBattle {
         ctx.lineWidth = borderWidth;
         ctx.fillStyle = color;
 
+        const x = circle._renderX ?? circle.x;
+        const y = circle._renderY ?? circle.y;
         ctx.beginPath();
-        ctx.arc(circle.x, circle.y, circle.radius - ctx.lineWidth / 2, 0, Math.PI * 2);
+        ctx.arc(x, y, circle.radius - ctx.lineWidth / 2, 0, Math.PI * 2);
         if (borderWidth > 0) ctx.stroke();
         ctx.fill();
     }
@@ -806,6 +827,19 @@ class BallBattle {
     }
 
     render() {
+        const alpha = this.renderAlpha || 0;
+
+        // Interpolate positions for smooth rendering
+        for (const b of this.bodies) {
+            if (b._prevX !== undefined) {
+                b._renderX = b._prevX + (b.x - b._prevX) * alpha;
+                b._renderY = b._prevY + (b.y - b._prevY) * alpha;
+            } else {
+                b._renderX = b.x;
+                b._renderY = b.y;
+            }
+        }
+
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         if (this.debug) {
             this.ctx.globalAlpha = 0.5;
@@ -837,6 +871,9 @@ class BallBattle {
             b.hpAtFrameStart = b.hp;
         }
 
+        // Reset bullet hit counter for this frame
+        this.bulletHitsThisFrame = 0;
+
         // let t0 = performance.now();
         this.updatePhysics();
         // profiler.physics += performance.now() - t0;
@@ -849,6 +886,10 @@ class BallBattle {
         // profiler.weapons += performance.now() - t0;
 
         this.processDeaths();
+
+        // Advance hit history
+        this.bulletHitIndex = (this.bulletHitIndex + 1) % 80;
+        this.bulletHitHistory[this.bulletHitIndex] = this.bulletHitsThisFrame;
 
         this.dupeCount = {};
         this.balls.forEach((b) => {
@@ -870,15 +911,15 @@ class BallBattle {
 
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
-                this.accumulator += currentTime - this.lastTime;
+                this.accumulator += (currentTime - this.lastTime) * this.getGlobalTimeScale();
 
                 while (this.accumulator >= dt) {
                     t++;
-                    // let energySum = 0;
-                    // for (let b of this.balls) {
-                    //     energySum += b.potentialEnergy() + b.kineticEnergy();
-                    // }
-                    // console.log(energySum);
+                    // Store previous positions before update
+                    for (const b of this.bodies) {
+                        b._prevX = b.x;
+                        b._prevY = b.y;
+                    }
 
                     this.update();
                     this.accumulator -= dt;
@@ -898,10 +939,9 @@ class BallBattle {
             spriteReqs = {};
 
             this.lastTime = currentTime;
-            // let t0 = performance.now();
+            // Interpolate for smooth rendering
+            this.renderAlpha = this.accumulator / dt;
             this.render();
-            // profiler.render += performance.now() - t0;
-            // profiler.log();
             requestAnimationFrame(loop);
         };
 
@@ -1281,6 +1321,8 @@ class MGBullet extends Bullet {
         super.handleCollision(b);
 
         if (b instanceof Ball) {
+            // this.battle.bulletHitsThisFrame = 1;
+            this.battle.bulletHitsThisFrame++;
             if (b.team != this.owner.team) {
                 this.owner.pendingDamage += 1;
             }
