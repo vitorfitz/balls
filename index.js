@@ -4,6 +4,7 @@ const GRAVITY = 0.1;
 const ELASTICITY = 1.0; // restitution for collisions (1.0 = perfectly elastic)
 const EPS = 1e-9;
 const flashDur = 40;
+const hitHistorySize = 20;
 
 let t = 0;
 
@@ -97,6 +98,7 @@ class Weapon {
         this.DoT = DoT;
         this.ballColFns.push((b) => {
             b.damage(this.dmg);
+            // this.ball.battle.hitsThisFrame++;
         });
     }
 
@@ -581,21 +583,21 @@ class BallBattle {
         this.accumulator = 0;
 
         // Chaos slow-mo tracking
-        this.bulletHitHistory = new Array(80).fill(0);
-        this.bulletHitIndex = 0;
-        this.bulletHitsThisFrame = 0;
+        this.hitHistory = new Array(hitHistorySize).fill(0);
+        this.hitIndex = 0;
+        this.hitsThisFrame = 0;
     }
 
     getGlobalTimeScale() {
         let weighted = 0, totalWeight = 0;
-        for (let i = 0; i < 80; i++) {
-            const age = (80 + this.bulletHitIndex - i) % 80;
-            const w = 1 / (1 + age * 0.2);
-            weighted += this.bulletHitHistory[i] * w;
+        for (let i = 0; i < hitHistorySize; i++) {
+            const age = (hitHistorySize + this.hitIndex - i) % hitHistorySize;
+            const w = 1 / (1 + age * 0.1);
+            weighted += this.hitHistory[i] * w;
             totalWeight += w;
         }
         const intensity = weighted / totalWeight;
-        const res = Math.max(0.15, Math.min(1, 1.25 / (1 + 5 * intensity)));
+        const res = Math.max(0.333, Math.min(1, 3 / (1 + 2 * intensity) - 1));
         console.log(res);
         return res;
     }
@@ -876,8 +878,8 @@ class BallBattle {
             b.hpAtFrameStart = b.hp;
         }
 
-        // Reset bullet hit counter for this frame
-        this.bulletHitsThisFrame = 0;
+        // Reset hit counter for this frame
+        this.hitsThisFrame = 0;
 
         // let t0 = performance.now();
         this.updatePhysics();
@@ -893,8 +895,8 @@ class BallBattle {
         this.processDeaths();
 
         // Advance hit history
-        this.bulletHitIndex = (this.bulletHitIndex + 1) % 80;
-        this.bulletHitHistory[this.bulletHitIndex] = this.bulletHitsThisFrame;
+        this.hitIndex = (this.hitIndex + 1) % hitHistorySize;
+        this.hitHistory[this.hitIndex] = this.hitsThisFrame;
 
         this.dupeCount = {};
         this.balls.forEach((b) => {
@@ -1330,8 +1332,7 @@ class MGBullet extends Bullet {
         super.handleCollision(b);
 
         if (b instanceof Ball) {
-            // this.battle.bulletHitsThisFrame = 1;
-            this.battle.bulletHitsThisFrame++;
+            if (!b.owner && !(b instanceof DuplicatorBall)) this.battle.hitsThisFrame++;
             if (b.team != this.owner.team) {
                 this.owner.pendingDamage += 1;
             }
@@ -1553,7 +1554,7 @@ class GrimoireBall extends Ball {
         const speed = 20 / 3;
         const baseArgs = [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed];
 
-        if (Constructor === DaggerBall || Constructor === SwordBall || Constructor === MachineGunBall || Constructor === WrenchBall || Constructor === HammerBall) {
+        if (Constructor === DaggerBall || Constructor === SwordBall || Constructor === MachineGunBall || Constructor === WrenchBall) {
             return [...baseArgs, target.weapons[0]?.theta || 0, 1, this.nextMinionHP, newRadius];
         }
         if (Constructor === GrimoireBall) {
