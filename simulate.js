@@ -28,16 +28,16 @@ eval(code);
 
 const BALL_TYPES = [
     { name: 'Dagger', create: () => new global.DaggerBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Sword', create: () => new global.SwordBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Lance', create: () => new global.LanceBall(50, 200, ...global.randomVel(5), 100) },
+    // { name: 'Sword', create: () => new global.SwordBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
+    // { name: 'Lance', create: () => new global.LanceBall(50, 200, ...global.randomVel(5), 100) },
     { name: 'MachineGun', create: () => new global.MachineGunBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Duplicator', create: () => new global.DuplicatorBall(50, 200, ...global.randomVel(5), 50) },
-    { name: 'Wrench', create: () => new global.WrenchBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    { name: 'Grimoire', create: () => new global.GrimoireBall(50, 200, ...global.randomVel(5), 0, 1, 100) }
+    // { name: 'Duplicator', create: () => new global.DuplicatorBall(50, 200, ...global.randomVel(5), 50) },
+    // { name: 'Wrench', create: () => new global.WrenchBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
+    // { name: 'Grimoire', create: () => new global.GrimoireBall(50, 200, ...global.randomVel(5), 0, 1, 100) }
 ];
 
-const MAX_TICKS = 20000;
-const MATCHES = 500;
+const MAX_TICKS = 10000;
+const MATCHES = 50;
 
 function simulate(t1Idx, t2Idx) {
     const b1 = BALL_TYPES[t1Idx].create(), b2 = BALL_TYPES[t2Idx].create();
@@ -69,6 +69,7 @@ if (!isMainThread) {
     parentPort.postMessage({ w1, w2, draws });
 } else {
     const NUM_WORKERS = os.cpus().length;
+    // const NUM_WORKERS = 10;
 
     async function runMatchup(t1Idx, t2Idx) {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);

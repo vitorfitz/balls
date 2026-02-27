@@ -7,13 +7,23 @@
     <link rel="stylesheet" href="index.css">
 </head>
 
-<body>
-    <div class="col">
-        <canvas id="canvas" width="400" height="400"></canvas>
+<body class="">
+    <div id="menu">
+        <div id="balls"></div>
+        <button id="start" class="disabled">Fight!</button>
     </div>
-    <script src="seedrandom.js"></script>
-    <script src="index.js"></script>
-
+    <div id="battle" class="hidden">
+        <div class="col">
+            <div id="battle-ui">
+                <div id="ball1-info" class="ball-info"></div>
+                <div id="ball2-info" class="ball-info"></div>
+            </div>
+            <canvas id="canvas" width="400" height="400"></canvas>
+        </div>
+        <script src="seedrandom.js"></script>
+        <script src="index.js"></script>
+        <script src="ui.js"></script>
+    </div>
 </body>
 
 </html>

@@ -4,7 +4,6 @@ const GRAVITY = 0.1;
 const ELASTICITY = 1.0; // restitution for collisions (1.0 = perfectly elastic)
 const EPS = 1e-9;
 const flashDur = 40;
-const hitHistorySize = 20;
 
 let t = 0;
 
@@ -54,7 +53,7 @@ class Weapon {
 
     draw() {
         const alpha = this.ball.battle.renderAlpha || 0;
-        const theta = this._prevTheta !== undefined
+        const theta = (this.angVel && this._prevTheta !== undefined)
             ? this._prevTheta + (this.theta - this._prevTheta) * alpha
             : this.theta;
         Weapon.drawWeapon(
@@ -98,7 +97,6 @@ class Weapon {
         this.DoT = DoT;
         this.ballColFns.push((b) => {
             b.damage(this.dmg);
-            // this.ball.battle.hitsThisFrame++;
         });
     }
 
@@ -139,7 +137,8 @@ class CircleBody {
     }
 
     getTimeScale() {
-        return this._slowedAtFrameStart ? this.slowFactor : 1;
+        const local = this._slowedAtFrameStart ? this.slowFactor : 1;
+        return Math.min(local, this.battle?.getGlobalTimeScale() ?? 1);
     }
 
     getZIndex() {
@@ -556,11 +555,13 @@ function weaponWeaponContact(w1, w2) {
 // };
 
 function applySlowTime(duration, attacker, receiver, slowFactor = 0.2) {
+    // if (receiver instanceof DuplicatorBall || attacker.hp <= 0 || receiver.hp <= 0) return;
     if (receiver instanceof DuplicatorBall || attacker.owner || attacker.hp <= 0 || receiver.owner || receiver.hp <= 0) return;
 
     function applySlow(b) {
         b.slowFactor = b.slowTime > 0 ? Math.min(b.slowFactor, slowFactor) : slowFactor;
         b.slowTime = Math.max(b.slowTime, duration);
+        // if (b.owner) applySlow(b.owner);
         // console.log(slowFactor, "to " + b.constructor.name + " for " + b.slowTime + " frames");
     }
     applySlow(attacker);
@@ -581,25 +582,26 @@ class BallBattle {
 
         this.lastTime = null;
         this.accumulator = 0;
-
-        // Chaos slow-mo tracking
-        this.hitHistory = new Array(hitHistorySize).fill(0);
-        this.hitIndex = 0;
-        this.hitsThisFrame = 0;
+        this.globalTimeScale = 1;
+        this._targetGlobalTimeScale = 1;
     }
 
     getGlobalTimeScale() {
-        let weighted = 0, totalWeight = 0;
-        for (let i = 0; i < hitHistorySize; i++) {
-            const age = (hitHistorySize + this.hitIndex - i) % hitHistorySize;
-            const w = 1 / (1 + age * 0.1);
-            weighted += this.hitHistory[i] * w;
-            totalWeight += w;
+        return this.globalTimeScale;
+    }
+
+    updateGlobalTimeScale() {
+        // Count minions owned by GrimoireBalls
+        let count = 0;
+        for (const b of this.balls) {
+            if (!(b instanceof DuplicatorBall) && b.owner instanceof GrimoireBall) {
+                count++;
+            }
         }
-        const intensity = weighted / totalWeight;
-        const res = Math.max(0.333, Math.min(1, 3 / (1 + 2 * intensity) - 1));
-        console.log(res);
-        return res;
+        this._targetGlobalTimeScale = Math.pow(0.9, count);
+        // Gradual interpolation for smooth transitions
+        this.globalTimeScale += (this._targetGlobalTimeScale - this.globalTimeScale) * 0.0125;
+        // console.log(this.globalTimeScale);
     }
 
     addBody(body) {
@@ -873,13 +875,12 @@ class BallBattle {
     }
 
     update() {
+        this.updateGlobalTimeScale();
+
         for (const b of this.bodies) {
             b._slowedAtFrameStart = b.slowTime > 0 || (b.owner && b.owner.slowTime > 0);
             b.hpAtFrameStart = b.hp;
         }
-
-        // Reset hit counter for this frame
-        this.hitsThisFrame = 0;
 
         // let t0 = performance.now();
         this.updatePhysics();
@@ -893,10 +894,6 @@ class BallBattle {
         // profiler.weapons += performance.now() - t0;
 
         this.processDeaths();
-
-        // Advance hit history
-        this.hitIndex = (this.hitIndex + 1) % hitHistorySize;
-        this.hitHistory[this.hitIndex] = this.hitsThisFrame;
 
         this.dupeCount = {};
         this.balls.forEach((b) => {
@@ -918,7 +915,7 @@ class BallBattle {
 
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
-                this.accumulator += (currentTime - this.lastTime) * this.getGlobalTimeScale();
+                this.accumulator += currentTime - this.lastTime;
 
                 while (this.accumulator >= dt) {
                     t++;
@@ -966,9 +963,11 @@ function propsToList(propsMap) {
         const li = document.createElement("li");
         li.textContent = p + "\u00A0";
 
-        const val = document.createTextElement("strong");
+        const val = document.createElement("strong");
         val.textContent = "" + propsMap[p];
         li.appendChild(val);
+
+        ul.appendChild(li);
     }
     return ul;
 }
@@ -1026,7 +1025,8 @@ const baseSpin = Math.PI * 0.078;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#5fbf00", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        const dagger = new Weapon(theta, "sprites/dagger.png", 3, -9);
+        const cfg = getWeaponConfig(DaggerBall);
+        const dagger = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset);
         dagger.addCollider(30, 6);
         dagger.addSpin(baseSpin * dir);
         // dagger.addParry();
@@ -1065,8 +1065,9 @@ class DaggerBall extends Ball {
 class SwordBall extends Ball {
     constructor(x, y, vx, vy, theta, dir, hp = 100, radius = 25, color = "#ff6464", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        const sword = new Weapon(theta, "sprites/sword.png", 4, -21);
-        sword.addCollider(60, 8);
+        const cfg = getWeaponConfig(SwordBall);
+        const sword = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset);
+        sword.addCollider(60, 8, 10);
         sword.addSpin(Math.PI * 0.023 * dir);
         sword.addParry();
         sword.addDamage(1, 40);
@@ -1099,7 +1100,8 @@ class LanceBall extends Ball {
         this.comboHits = new Set();
         this.startSpeed = Math.hypot(vx, vy);
 
-        const lance = new Weapon(Math.atan2(this.vy, this.vx), "sprites/spear.png", 4, -42, 0, 3 * Math.PI / 4);
+        const cfg = getWeaponConfig(LanceBall);
+        const lance = new Weapon(Math.atan2(this.vy, this.vx), cfg.sprite, cfg.scale, cfg.offset, 0, cfg.rotation);
         lance.addCollider(92, 15, 58);
         lance.iframes = 0;
         lance.DoT = true;
@@ -1181,7 +1183,8 @@ class MachineGunBall extends Ball {
         this.bonusDmgRate = 0;
         this.ammoUse = 0;
 
-        const gun = new Weapon(theta, "sprites/gun.png", 2, -9, 7, 0);
+        const cfg = getWeaponConfig(MachineGunBall);
+        const gun = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         gun.addCollider(45, 5);
         gun.addSpin(Math.PI * 0.017 * dir);
         gun.addParry();
@@ -1259,7 +1262,7 @@ class Bullet extends CircleBody {
     }
 
     onLoad() {
-        for (const b of this.battle.balls) {
+        for (const b of this.battle.bodies) {
             if (b.team !== this.owner.team && ballsOverlap(this, b)) {
                 this.onCollision(b);
                 break;
@@ -1332,7 +1335,6 @@ class MGBullet extends Bullet {
         super.handleCollision(b);
 
         if (b instanceof Ball) {
-            if (!b.owner && !(b instanceof DuplicatorBall)) this.battle.hitsThisFrame++;
             if (b.team != this.owner.team) {
                 this.owner.pendingDamage += 1;
             }
@@ -1345,7 +1347,8 @@ const turretRadius = 12.5;
 class WrenchBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#ff9933", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        const wrench = new Weapon(theta, "sprites/wrench.png", 2, -6, 0, 3 * Math.PI / 4);
+        const cfg = getWeaponConfig(WrenchBall);
+        const wrench = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, 0, cfg.rotation);
         wrench.addCollider(45, 6);
         wrench.addSpin(Math.PI * 0.020 * dir);
         wrench.addParry();
@@ -1465,7 +1468,8 @@ class GrimoireBall extends Ball {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.nextMinionHP = 0;
 
-        const grimoire = new Weapon(theta, "sprites/grimoire.webp", 2, -13, -1, Math.PI / 4);
+        const cfg = getWeaponConfig(GrimoireBall);
+        const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
         grimoire.addCollider(30, 17);
         grimoire.addSpin(Math.PI * 0.025 * dir);
@@ -1505,6 +1509,7 @@ class GrimoireBall extends Ball {
         minion.id = this.battle.nextID++;
         minion.owner = this;
         minion.slowTime = this.slowTime;
+        minion.slowFactor = this.slowFactor;
         minion.mass *= 1 / 0.75;
 
         // Copy boost properties
@@ -1581,4 +1586,18 @@ function randomVel(abs) {
     const theta = Math.random(2 * Math.PI);
     // console.log([Math.cos(theta) * abs, Math.sin(theta) * abs]);
     return [Math.cos(theta) * abs, Math.sin(theta) * abs];
+}
+
+const ballClasses = [
+    { name: "Duplicator", class: DuplicatorBall, hp: 50, radius: 20, color: "#f86ffa" },
+    { name: "Dagger", class: DaggerBall, hp: 100, radius: 25, color: "#5fbf00", weapon: { sprite: "sprites/dagger.png", scale: 3, offset: -9, rotation: Math.PI / 4, spin: true } },
+    { name: "Lance", class: LanceBall, hp: 100, radius: 25, color: "#dfbf9f", weapon: { sprite: "sprites/spear.png", scale: 4, offset: -42, rotation: 3 * Math.PI / 4, spin: false } },
+    { name: "Machine Gun", class: MachineGunBall, hp: 100, radius: 25, color: "#61a3e9", weapon: { sprite: "sprites/gun.png", scale: 2, offset: -9, shift: 7, rotation: 0, spin: true } },
+    { name: "Wrench", class: WrenchBall, hp: 100, radius: 25, color: "#ff9933", weapon: { sprite: "sprites/wrench.png", scale: 2, offset: -6, rotation: 3 * Math.PI / 4, spin: true } },
+    { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.webp", scale: 2, offset: -13, shift: -1, rotation: Math.PI / 4, spin: true } },
+    { name: "Sword", class: SwordBall, hp: 100, radius: 25, color: "#ff6464", weapon: { sprite: "sprites/sword.png", scale: 4, offset: -21, rotation: Math.PI / 4, spin: true } },
+];
+
+function getWeaponConfig(BallClass) {
+    return ballClasses.find(b => b.class === BallClass)?.weapon;
 }

@@ -9,7 +9,7 @@ body {
     font-size: 18px;
 }
 
-canvas {
+#battle canvas {
     background: #fff;
     border: 3px solid #000;
 }
@@ -19,4 +19,85 @@ canvas {
     flex-direction: column;
     align-items: center;
     justify-content: center;
+}
+
+.hidden {
+    display: none !important;
+}
+
+#menu {
+    position: relative;
+}
+
+#balls>* {
+    position: absolute;
+    background-color: white;
+    border-radius: 50%;
+    border: 0;
+    cursor: pointer;
+    translate: 50% 50%;
+    border: 2px solid #333;
+}
+
+#balls>*>canvas {
+    position: absolute;
+    right: 50%;
+    bottom: 50%;
+    translate: 50% 50%;
+    pointer-events: none;
+}
+
+#balls>*>span {
+    position: absolute;
+    right: 50%;
+    translate: 50% 0;
+    color: #333;
+    font-style: italic;
+    font-size: 14px;
+    width: 90px;
+}
+
+#balls>.selected {
+    background-color: #bbd3ff;
+}
+
+#start {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    translate: 50% 50%;
+    font-size: 24px;
+    color: black;
+    border: 2px solid #c10000;
+    background-color: #ff978e;
+    padding: 16px 20px;
+    cursor: pointer;
+}
+
+#start.disabled {}
+
+#battle-ui {
+    display: flex;
+    justify-content: space-between;
+    width: 400px;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #333;
+}
+
+.ball-info {
+    background: white;
+    border: 2px solid #333;
+    padding: 8px 12px;
+    border-radius: 8px;
+    min-width: 100px;
+}
+
+.ball-info .name {
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.ball-info .stat {
+    font-size: 12px;
 }
