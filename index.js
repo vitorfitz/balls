@@ -264,72 +264,78 @@ class Ball extends CircleBody {
     }
 }
 
-const LEFT = 0, RIGHT = 1, TOP = 2, BOTTOM = 3;
+const HORIZONTAL = 0, VERTICAL = 1;
 
-function timeToWallCollision(b, dt) {
-    let tMin = Infinity;
-    let wall = null;
-    const LEFT = 0, RIGHT = 1, TOP = 2, BOTTOM = 3;
-    const s = b.getTimeScale();
-    const g = (b.gravity ? GRAVITY : 0) * s;
-    const vx = b.vx * s;
-    const vy = b.vy * s;
-
-    // Left wall
-    if (vx < 0) {
-        const t = (b.radius - b.x) / vx;
-        if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = LEFT; }
+class Wall {
+    // axis: HORIZONTAL (blocks Y movement) or VERTICAL (blocks X movement)
+    // pos: position on the perpendicular axis
+    // min, max: extent along the wall's axis
+    // normal: +1 or -1, direction the wall faces
+    constructor(axis, pos, min, max, normal) {
+        this.axis = axis;
+        this.pos = pos;
+        this.min = min;
+        this.max = max;
+        this.normal = normal;
     }
 
-    // Right wall
-    if (vx > 0) {
-        const t = (b.battle.width - b.radius - b.x) / vx;
-        if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = RIGHT; }
-    }
+    timeToCollision(b, dt) {
+        const s = b.getTimeScale();
+        const g = (b.gravity ? GRAVITY : 0) * s;
 
-    // Top wall
-    if (g > 0) {
-        const a = 0.5 * g;
-        const bq = vy;
-        const c = b.y - b.radius;
-        const disc = bq * bq - 4 * a * c;
-        if (disc >= 0) {
-            const t = (-bq - Math.sqrt(disc)) / (2 * a);
-            if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = TOP; }
+        if (this.axis === VERTICAL) {
+            const vx = b.vx * s;
+            const target = this.pos + this.normal * b.radius;
+            if (vx * this.normal >= 0) return Infinity;
+            const t = (target - b.x) / vx;
+            if (t <= EPS || t > dt) return Infinity;
+            const yAtT = b.y + b.vy * s * t + 0.5 * g * t * t;
+            if (yAtT < this.min - b.radius || yAtT > this.max + b.radius) return Infinity;
+            return t;
+        } else {
+            const vy = b.vy * s;
+            const target = this.pos + this.normal * b.radius;
+            if (g !== 0) {
+                const a = 0.5 * g;
+                const bq = vy;
+                const c = b.y - target;
+                const disc = bq * bq - 4 * a * c;
+                if (disc < 0) return Infinity;
+                const sqrtDisc = Math.sqrt(disc);
+                const t = this.normal > 0 ? (-bq - sqrtDisc) / (2 * a) : (-bq + sqrtDisc) / (2 * a);
+                if (t <= EPS || t > dt) return Infinity;
+                const xAtT = b.x + b.vx * s * t;
+                if (xAtT < this.min - b.radius || xAtT > this.max + b.radius) return Infinity;
+                return t;
+            } else {
+                if (vy * this.normal >= 0) return Infinity;
+                const t = (target - b.y) / vy;
+                if (t <= EPS || t > dt) return Infinity;
+                const xAtT = b.x + b.vx * s * t;
+                if (xAtT < this.min - b.radius || xAtT > this.max + b.radius) return Infinity;
+                return t;
+            }
         }
-    } else if (vy < 0) {
-        const t = (b.radius - b.y) / vy;
-        if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = TOP; }
     }
 
-    // Bottom wall
-    if (g > 0) {
-        const a = 0.5 * g;
-        const bq = vy;
-        const c = b.y - (b.battle.height - b.radius);
-        const disc = bq * bq - 4 * a * c;
-        if (disc >= 0) {
-            const t = (-bq + Math.sqrt(disc)) / (2 * a);
-            if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = BOTTOM; }
+    resolve(b) {
+        b.onWallCollision();
+        if (!b.shouldBounceWall(this)) return;
+        if (this.axis === VERTICAL) {
+            b.vx = -b.vx * ELASTICITY;
+        } else {
+            b.vy = -b.vy * ELASTICITY;
         }
-    } else if (vy > 0) {
-        const t = (b.battle.height - b.radius - b.y) / vy;
-        if (t > EPS && t <= dt && t < tMin) { tMin = t; wall = BOTTOM; }
     }
-
-    return { t: tMin, wall };
 }
 
-function resolveWallCollision(b, wall) {
-    b.onWallCollision();
-    if (!b.shouldBounceWall(wall)) return;
-
-    if (wall === LEFT || wall === RIGHT) {
-        b.vx = -b.vx * ELASTICITY;
-    }
-    if (wall === TOP || wall === BOTTOM) {
-        b.vy = -b.vy * ELASTICITY;
-    }
+function createBorderWalls(width, height) {
+    return [
+        new Wall(VERTICAL, 0, 0, height, 1),       // left
+        new Wall(VERTICAL, width, 0, height, -1),  // right
+        new Wall(HORIZONTAL, 0, 0, width, 1),      // top
+        new Wall(HORIZONTAL, height, 0, width, -1) // bottom
+    ];
 }
 
 function resolveImmediateWallContact(b) {
@@ -661,6 +667,11 @@ class BallBattle {
         this.ctx.imageSmoothingEnabled = false;
         this.width = canvas.width;
         this.height = canvas.height;
+        this.walls = createBorderWalls(this.width, this.height);
+    }
+
+    addWall(wall) {
+        this.walls.push(wall);
     }
 
     drawCircle(circle, color, borderColor = "#333", borderWidth = 0) {
@@ -726,12 +737,14 @@ class BallBattle {
             let wallEvents = [];
 
             for (const b of this.bodies) {
-                const res = timeToWallCollision(b, dt);
-                if (res.t < tWall - EPS) {
-                    tWall = res.t;
-                    wallEvents = [{ ball: b, wall: res.wall }];
-                } else if (Math.abs(res.t - tWall) <= EPS) {
-                    wallEvents.push({ ball: b, wall: res.wall });
+                for (const wall of this.walls) {
+                    const t = wall.timeToCollision(b, dt);
+                    if (t < tWall - EPS) {
+                        tWall = t;
+                        wallEvents = [{ ball: b, wall }];
+                    } else if (Math.abs(t - tWall) <= EPS) {
+                        wallEvents.push({ ball: b, wall });
+                    }
                 }
             }
 
@@ -755,7 +768,7 @@ class BallBattle {
             // Walls
             if (tWall <= tNext + EPS) {
                 for (const ev of wallEvents) {
-                    resolveWallCollision(ev.ball, ev.wall);
+                    ev.wall.resolve(ev.ball);
                     // Clear collision pairs involving this ball so it can re-collide after velocity change
                     // for (const key of [...collidedThisFrame]) {
                     //     if (key.startsWith(ev.ball.id + '-') || key.endsWith('-' + ev.ball.id)) {
