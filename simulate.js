@@ -5,12 +5,14 @@ const os = require('os');
 
 global.Image = class { onload() { } onerror() { } set src(v) { setTimeout(() => this.onload(), 0); } };
 
+const seedrandom = require('./seedrandom.js');
+Math.seedrandom = seedrandom;
+
 const fs = require('fs');
 
 let code = fs.readFileSync('./index.js', 'utf8');
 code = code.replace(/const d = new Date.*?Math\.seedrandom\(d\);/s, '');
 code = code.replace(/const balls = \[[\s\S]*$/s, '');
-code = code.replace(/"use strict"/, '');
 
 code += `
 global.DaggerBall = DaggerBall;
@@ -27,34 +29,35 @@ global.randomVel = randomVel;
 eval(code);
 
 const BALL_TYPES = [
-    { name: 'Dagger', create: () => new global.DaggerBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    // { name: 'Sword', create: () => new global.SwordBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    // { name: 'Lance', create: () => new global.LanceBall(50, 200, ...global.randomVel(5), 100) },
-    { name: 'MachineGun', create: () => new global.MachineGunBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    // { name: 'Duplicator', create: () => new global.DuplicatorBall(50, 200, ...global.randomVel(5), 50) },
-    // { name: 'Wrench', create: () => new global.WrenchBall(50, 200, ...global.randomVel(5), 0, 1, 100) },
-    // { name: 'Grimoire', create: () => new global.GrimoireBall(50, 200, ...global.randomVel(5), 0, 1, 100) }
+    { name: 'Duplicator', create: (pos, rng) => new global.DuplicatorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 50) },
+    { name: 'Dagger', create: (pos, rng) => new global.DaggerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    { name: 'Lance', create: (pos, rng) => new global.LanceBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Machine Gun', create: (pos, rng) => new global.MachineGunBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    { name: 'Wrench', create: (pos, rng) => new global.WrenchBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    { name: 'Grimoire', create: (pos, rng) => new global.GrimoireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    { name: 'Sword', create: (pos, rng) => new global.SwordBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) }
 ];
 
 const MAX_TICKS = 10000;
-const MATCHES = 50;
+const MATCHES = 500;
 
 function simulate(t1Idx, t2Idx) {
-    const b1 = BALL_TYPES[t1Idx].create(), b2 = BALL_TYPES[t2Idx].create();
-    b2.x = 350;
-    if (b2.weapons[0]) b2.weapons[0].theta = Math.PI;
+    const rng = new Math.seedrandom();
+    const b1 = BALL_TYPES[t1Idx].create(0, rng), b2 = BALL_TYPES[t2Idx].create(1, rng);
 
     const battle = new global.BallBattle([b1, b2]);
     battle.width = 400; battle.height = 400;
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: 400, height: 400 };
+    global.t = 0;
 
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
+        global.t++;
         battle.update();
-        const p1Alive = battle.balls.some(b => b.team === b1.team);
-        const p2Alive = battle.balls.some(b => b.team === b2.team);
-        if (p1Alive && !p2Alive) return 'p1';
-        if (p2Alive && !p1Alive) return 'p2';
+        const p1 = battle.balls.find(b => b.team === b1.team && !b.owner);
+        const p2 = battle.balls.find(b => b.team === b2.team && !b.owner);
+        if (p1 && !p2) return 'p1';
+        if (p2 && !p1) return 'p2';
     }
     return 'draw';
 }
@@ -69,7 +72,6 @@ if (!isMainThread) {
     parentPort.postMessage({ w1, w2, draws });
 } else {
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 10;
 
     async function runMatchup(t1Idx, t2Idx) {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
