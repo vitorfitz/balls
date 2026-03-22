@@ -27,11 +27,11 @@ function simulate(t1Idx, t2Idx, seed) {
         battle.update();
         const p1 = battle.balls.find(b => b.team === b1.team && !b.owner);
         const p2 = battle.balls.find(b => b.team === b2.team && !b.owner);
-        if (p1 && p2) {
-            const diff = p1.hp - p2.hp;
-            minHpDiff = Math.min(minHpDiff, diff);
-            maxHpDiff = Math.max(maxHpDiff, diff);
-        }
+
+        const diff = (p1 ? p1.hp : 0) - (p2 ? p2.hp : 0);
+        minHpDiff = Math.min(minHpDiff, diff);
+        maxHpDiff = Math.max(maxHpDiff, diff);
+
         if (p1 && !p2) {
             let hp = p1.hp;
             if (p1 instanceof DuplicatorBall) {
@@ -56,9 +56,9 @@ onmessage = (e) => {
     let progress = '';
 
     // for (let i = 0; i < BALL_TYPES.length; i++) {
-    for (let i = 0; i < 1; i++) {
-        // for (let j = i + 1; j < BALL_TYPES.length; j++) {
-        for (let j = 5; j < BALL_TYPES.length; j++) {
+    for (let i = 1; i < BALL_TYPES.length; i++) {
+        for (let j = i + 1; j < BALL_TYPES.length; j++) {
+            // for (let j = 5; j < BALL_TYPES.length; j++) {
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             const results = [];
 
@@ -75,7 +75,7 @@ onmessage = (e) => {
             const hasDupe = BALL_TYPES[i].name === 'Duplicator' || BALL_TYPES[j].name === 'Duplicator';
             const seeds = results.filter(r => {
                 if (r.ticks > maxTicks) return false;
-                if (!hasDupe && r.hpSwing < 30) return false;
+                if (!hasDupe && r.hpSwing < 25) return false;
                 const winnerIdx = r.winner === 'p1' ? i : j;
                 const loserIdx = r.winner === 'p1' ? j : i;
                 const isDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
