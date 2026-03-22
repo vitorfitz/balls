@@ -3,7 +3,7 @@
 const d = new Date().getTime();
 console.log(d);
 let battleSeed = d;
-// let battleSeed = 654;
+// let battleSeed = 968;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
@@ -11,12 +11,15 @@ const menuDiv = document.getElementById("menu");
 const fightBtn = document.getElementById("start");
 const ballPicker = document.getElementById("balls");
 const battleDiv = document.getElementById("battle");
+const modeBtns = document.querySelectorAll("#mode>span");
 
-const menuRadius = 226;
-const ballBtnDiameter = 122;
+const menuRadius = 210;
+const ballBtnDiameter = 120;
 const canvasPadding = 70;
+const wallThickness = 3;
 let combatants = [];
 let ballBtns = [];
+let mode = 0;
 
 {
     const theta0 = 3 * Math.PI / 2;
@@ -47,6 +50,8 @@ let ballBtns = [];
         btn.appendChild(nameSpan);
 
         btn.addEventListener("click", () => {
+            if (mode == 1) return;
+
             const ind = combatants.indexOf(i);
             if (ind != -1) {
                 btn.classList.remove("selected");
@@ -80,18 +85,38 @@ let ballBtns = [];
     }
 }
 
-function makeBall(i, pos, rng) {
+for (let i = 0; i < 2; i++) {
+    modeBtns[i].addEventListener("click", function () {
+        for (let j = 0; j < modeBtns.length; j++) {
+            if (i == j) {
+                modeBtns[j].classList.add("selected");
+            }
+            else {
+                modeBtns[j].classList.remove("selected");
+            }
+        }
+
+        mode = i;
+        if (i == 1) {
+            menuDiv.classList.add("ffa");
+        }
+        else {
+            menuDiv.classList.remove("ffa");
+        }
+    });
+}
+
+function makeBall(i, pos, rng, speed = 5) {
     const data = ballClasses[i];
     const spinArgs = data.weapon?.spin ? [
-        pos == 0 ? 0 : Math.PI,
-        pos == 0 ? 1 : -1,
+        pos[0] < 200 ? 0 : Math.PI,
+        pos[0] < 200 ? 1 : -1,
     ] : [];
     const theta = rng() * 2 * Math.PI;
     return new data.class(
-        pos == 0 ? 50 : 350,
-        200,
-        Math.cos(theta) * 5,
-        Math.sin(theta) * 5,
+        pos[0], pos[1],
+        Math.cos(theta) * speed,
+        Math.sin(theta) * speed,
         ...spinArgs,
         data.hp
     );
@@ -99,6 +124,7 @@ function makeBall(i, pos, rng) {
 
 let battle;
 let displayedHP = {};
+let deathOrder = [];
 const ball1Info = document.getElementById("ball1-info");
 const ball2Info = document.getElementById("ball2-info");
 
@@ -119,6 +145,12 @@ function drawHealthBar(canvas, hp, maxHp, color, alignRight) {
 function updateBattleUI() {
     if (!battle) return;
 
+    if (mode === 1) {
+        updateFFALeaderboard();
+        requestAnimationFrame(updateBattleUI);
+        return;
+    }
+
     [ball1Info, ball2Info].forEach((el, i) => {
         const data = ballClasses[combatants[i]];
         const b = battle.balls.find(ball => ball.team === data.color && !ball.owner);
@@ -133,7 +165,7 @@ function updateBattleUI() {
 
             hpText = document.createElement("span");
             hpText.className = "hp-text";
-            const offset = "8px";
+            const offset = "7px";
             if (i == 0) hpText.style.left = offset;
             else hpText.style.right = offset;
 
@@ -164,9 +196,170 @@ function updateBattleUI() {
     requestAnimationFrame(updateBattleUI);
 }
 
-fightBtn.addEventListener("click", function () {
-    if (fightBtn.classList.contains("disabled")) return;
+function updateFFALeaderboard() {
+    const lb = document.getElementById("leaderboard");
 
+    // Build sorted list of combatants by HP, freezing dead ball positions
+    const entries = combatants.map(i => {
+        const data = ballClasses[i];
+        const b = battle.balls.find(ball => ball.team === data.color && !ball.owner);
+        if (!b && !deathOrder.includes(i)) deathOrder.push(i);
+        return { i, data, b, hp: b ? b.getDisplayedHP() : 0 };
+    });
+
+    // Sort: alive balls by HP descending, dead balls by death order (first dead = last place)
+    entries.sort((a, b) => {
+        const aDead = deathOrder.includes(a.i);
+        const bDead = deathOrder.includes(b.i);
+        if (aDead && bDead) return deathOrder.indexOf(b.i) - deathOrder.indexOf(a.i);
+        if (aDead) return 1;
+        if (bDead) return -1;
+        return b.hp - a.hp;
+    });
+
+    entries.forEach(({ i, data, b }) => {
+        let el = lb.querySelector(`[data-idx="${i}"]`);
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "lb-entry";
+            el.dataset.idx = i;
+            el.innerHTML = `<div class="name">${data.name}</div><div class="stat"><div class="hp-bar"><span class="hp-text"></span><canvas class="hp-canvas" width="110" height="24"></canvas><span class="dmg"><span style="margin-right:4px">🗡️</span>${b.damageDealt}</span></div></div>`;
+            lb.appendChild(el);
+        }
+
+        el.classList.toggle("dead", !b);
+        if (!b) {
+            el.querySelector(".hp-text").textContent = "0";
+            drawHealthBar(el.querySelector(".hp-canvas"), 0, 1, "#333", false);
+            return;
+        }
+
+        const hp = b.getDisplayedHP();
+        const key = data.color;
+        if (!(key in displayedHP)) displayedHP[key] = hp;
+        displayedHP[key] += (hp - displayedHP[key]) * 0.05;
+
+        el.querySelector(".hp-text").textContent = hp;
+        el.querySelector(".hp-text").style.color = displayedHP[key] / data.hp < 0.25 ? "#fff" : "#333";
+        drawHealthBar(el.querySelector(".hp-canvas"), displayedHP[key], data.hp, data.color, false);
+        el.querySelector(".dmg").lastChild.textContent = b.damageDealt;
+
+        const oldInfo = el.querySelector("ul");
+        if (oldInfo) oldInfo.remove();
+        if (b.getInfoEl) el.querySelector(".stat").appendChild(b.getInfoEl());
+    });
+
+    // Reorder DOM elements
+    entries.forEach(({ i }, idx) => {
+        const el = lb.querySelector(`[data-idx="${i}"]`);
+        el.style.top = (idx * 85) + "px";
+        el.style.zIndex = 11 - idx;
+    });
+}
+
+fightBtn.addEventListener("click", function () {
+    if (mode == 1) {
+        startFFA();
+    }
+
+    if (!fightBtn.classList.contains("disabled")) {
+        startDuel();
+    }
+});
+
+function startFFA() {
+    menuDiv.classList.add("hidden");
+    battleDiv.classList.remove("hidden");
+    battleDiv.classList.add("ffa-mode");
+
+    const canvas = document.getElementById("canvas");
+    const size = 1500, armWidth = 900, holeSize = 300;
+    canvas.width = canvas.height = size + 2 * wallThickness;
+    canvas.style.width = canvas.style.height = "800px";
+
+    if (dramaticCheck.checked) {
+        battleSeed = FFA_DRAMATIC_SEEDS[Math.floor(Math.random() * FFA_DRAMATIC_SEEDS.length)];
+        console.log("used", battleSeed);
+    }
+
+    const rng = new Math.seedrandom(battleSeed);
+    const armStart = (size - armWidth) / 2, armEnd = (size + armWidth) / 2;
+
+    // Generate positions within the plus arms (avoid corners and center hole)
+    const positions = [
+        [150, 450],
+        [150, 1050],
+        [1350, 450],
+        [1350, 1050],
+        [450, 150],
+        [1050, 150],
+    ];
+    combatants = [];
+    for (let i = 0; i < ballClasses.length; i++) {
+        const b = ballClasses[i];
+        if (b.class != DuplicatorBall) combatants.push(i);
+    }
+
+    battle = new BallBattle(combatants.map((i, j) => {
+        const b = makeBall(i, positions[j], rng, 5);
+        return b;
+    }), battleSeed, 0.05);
+    battle.addCanvas(canvas, wallThickness);
+    battle.walls = createPlusArenaWalls(size, armWidth, holeSize);
+    battle.zoom = 1;
+    battle.shrinkConfig = {
+        baseSize: size,
+        baseArmWidth: armWidth,
+        holeSize: holeSize,
+        stages: [
+            { players: 4, size: 900, zoom: 1.45 },
+            { players: 2, size: 600, holeSize: 200, zoom: 1.8 },
+        ]
+    };
+    battle.isInBounds = (x, y, r) => {
+        const hs = (size - holeSize) / 2, he = (size + holeSize) / 2;
+        // Outside arena bounds
+        if (x - r < 0 || x + r > size || y - r < 0 || y + r > size) return false;
+        // Inside center hole
+        if (x + r > hs && x - r < he && y + r > hs && y - r < he) return false;
+        // Inside plus arms
+        return (x - r >= armStart && x + r <= armEnd) || (y - r >= armStart && y + r <= armEnd);
+    };
+    battle.drawArena = (ctx) => {
+        const as = armStart, ae = armEnd, hs = (size - holeSize) / 2, he = (size + holeSize) / 2;
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        // Outer plus shape (clockwise)
+        ctx.moveTo(as, 0);
+        ctx.lineTo(ae, 0);
+        ctx.lineTo(ae, as);
+        ctx.lineTo(size, as);
+        ctx.lineTo(size, ae);
+        ctx.lineTo(ae, ae);
+        ctx.lineTo(ae, size);
+        ctx.lineTo(as, size);
+        ctx.lineTo(as, ae);
+        ctx.lineTo(0, ae);
+        ctx.lineTo(0, as);
+        ctx.lineTo(as, as);
+        ctx.closePath();
+        // Center hole (counter-clockwise for evenodd)
+        ctx.moveTo(hs, hs);
+        ctx.lineTo(hs, he);
+        ctx.lineTo(he, he);
+        ctx.lineTo(he, hs);
+        ctx.closePath();
+
+        ctx.fill("evenodd");
+        ctx.lineWidth = 2 * wallThickness;
+        ctx.stroke();
+        ctx.fill("evenodd");
+    };
+    battle.run(100);
+    updateBattleUI();
+}
+
+function startDuel() {
     // Use dramatic seed if available and dramatic mode is on
     if (dramaticCheck.checked) {
         const [i, j] = combatants[0] < combatants[1] ? combatants : [combatants[1], combatants[0]];
@@ -184,8 +377,16 @@ fightBtn.addEventListener("click", function () {
     battleDiv.classList.remove("hidden");
 
     const rng = new Math.seedrandom(battleSeed);
-    battle = new BallBattle(combatants.map((comb, pos) => makeBall(comb, pos, rng)), battleSeed);
-    battle.addCanvas(document.getElementById("canvas"));
+    const positions = [[50, 200], [350, 200]];
+    battle = new BallBattle(combatants.map((comb, i) => makeBall(comb, positions[i], rng)), battleSeed, 0.1);
+    battle.addCanvas(document.getElementById("canvas"), wallThickness);
+    battle.drawArena = (ctx) => {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, battle.width, battle.height);
+        ctx.lineWidth = 2 * wallThickness;
+        ctx.strokeRect(0, 0, battle.width, battle.height);
+        ctx.fillRect(0, 0, battle.width, battle.height);
+    };
     battle.run(10);
     updateBattleUI();
-});
+}

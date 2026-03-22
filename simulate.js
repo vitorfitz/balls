@@ -24,12 +24,13 @@ global.WrenchBall = WrenchBall;
 global.GrimoireBall = GrimoireBall;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
+global.createBorderWalls = createBorderWalls;
 `;
 
 eval(code);
 
 const BALL_TYPES = [
-    { name: 'Duplicator', create: (pos, rng) => new global.DuplicatorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 50) },
+    { name: 'Duplicator', create: (pos, rng) => new global.DuplicatorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Dagger', create: (pos, rng) => new global.DaggerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
     { name: 'Lance', create: (pos, rng) => new global.LanceBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Machine Gun', create: (pos, rng) => new global.MachineGunBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
@@ -47,6 +48,7 @@ function simulate(t1Idx, t2Idx) {
 
     const battle = new global.BallBattle([b1, b2]);
     battle.width = 400; battle.height = 400;
+    battle.walls = createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: 400, height: 400 };
     global.t = 0;
@@ -100,6 +102,8 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
+                // if (i != 2 && j != 2) continue;
+
                 const { w1, w2, draws } = await runMatchup(i, j);
                 const t1 = BALL_TYPES[i], t2 = BALL_TYPES[j];
 

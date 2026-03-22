@@ -15,6 +15,7 @@ function simulate(t1Idx, t2Idx, seed) {
     const b1 = makeBall(t1Idx, 0, rng), b2 = makeBall(t2Idx, 1, rng);
     const battle = new BallBattle([b1, b2], seed);
     battle.width = battle.height = 400;
+    battle.walls = createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: 400, height: 400 };
     t = 0;
@@ -55,8 +56,9 @@ onmessage = (e) => {
     let progress = '';
 
     // for (let i = 0; i < BALL_TYPES.length; i++) {
-    for (let i = 1; i < BALL_TYPES.length; i++) {
-        for (let j = i + 1; j < BALL_TYPES.length; j++) {
+    for (let i = 0; i < 1; i++) {
+        // for (let j = i + 1; j < BALL_TYPES.length; j++) {
+        for (let j = 5; j < BALL_TYPES.length; j++) {
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             const results = [];
 
@@ -79,7 +81,7 @@ onmessage = (e) => {
                 const isDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
                 const isDupBeatsWrench = isDupe && BALL_TYPES[loserIdx].name === 'Wrench';
-                const effectiveThreshold = isDupBeatsWrench ? 20 : loserIsDupe ? 5 : threshold;
+                const effectiveThreshold = isDupBeatsWrench ? 75 : loserIsDupe ? 5 : threshold;
                 return r.hp <= effectiveThreshold || (isDupe && r.units <= 5);
             }).map(r => r.seed);
 

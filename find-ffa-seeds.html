@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Find FFA Dramatic Seeds</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+        }
+
+        #output {
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+    <h3>FFA Dramatic Seed Finder</h3>
+    <div>
+        <label>Seeds to search: <input type="number" id="matches" value="1000"></label>
+        <label>HP Threshold: <input type="number" id="threshold" value="5"></label>
+        <button id="start">Start</button>
+        <br><br>
+        <label>Debug seed: <input type="number" id="debugSeed" value="968"></label>
+        <button id="debug">Debug</button>
+    </div>
+    <div id="output"></div>
+
+    <script>
+        document.getElementById('start').onclick = () => {
+            const output = document.getElementById('output');
+            const matches = +document.getElementById('matches').value;
+            const threshold = +document.getElementById('threshold').value;
+
+            output.textContent = 'Running in worker...\n';
+
+            const worker = new Worker('find-ffa-seeds-worker.js');
+            worker.postMessage({ matches, threshold });
+            worker.onmessage = (e) => {
+                if (e.data.progress) {
+                    output.textContent = e.data.progress;
+                } else {
+                    output.textContent = e.data.result;
+                    worker.terminate();
+                }
+            };
+        };
+
+        document.getElementById('debug').onclick = () => {
+            const output = document.getElementById('output');
+            const debugSeed = +document.getElementById('debugSeed').value;
+
+            output.textContent = 'Check browser console for debug output...\n';
+
+            const worker = new Worker('find-ffa-seeds-worker.js');
+            worker.postMessage({ debugSeed });
+            worker.onmessage = (e) => {
+                output.textContent = e.data.result + '\n\nCheck browser console (F12) for detailed logs.';
+                worker.terminate();
+            };
+        };
+    </script>
+</body>
+
+</html>

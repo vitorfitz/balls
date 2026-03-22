@@ -10,11 +10,6 @@ body {
     font-family: sans-serif;
 }
 
-#canvas {
-    background: #fff;
-    border: 3px solid #000;
-}
-
 .col {
     display: flex;
     flex-direction: column;
@@ -30,13 +25,61 @@ body {
     position: relative;
 }
 
-#menu h1 {
+#menu>* {
     position: absolute;
-    bottom: 320px;
     right: 0;
     translate: 50% 50%;
+}
+
+#menu h1 {
+    bottom: 320px;
     color: #333;
     font-size: 40px;
+}
+
+#mode {
+    bottom: 280px;
+    display: flex;
+    font-size: 26px;
+    letter-spacing: 0.5px;
+}
+
+#mode> :hover {
+    text-decoration: underline;
+}
+
+#mode>* {
+    background: linear-gradient(to bottom right, #888697, #9697a2);
+    background-clip: text;
+    color: transparent;
+    cursor: pointer;
+    user-select: none;
+}
+
+#mode>.selected {
+    background: linear-gradient(to bottom right, #2a3e98, #495a9c);
+    background-clip: text;
+}
+
+#divider {
+    margin: 0 8px;
+    width: 2px;
+    height: 1lh;
+    position: relative;
+}
+
+#divider::after {
+    content: "";
+    position: absolute;
+    background-color: #9697a2;
+    top: -1px;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+}
+
+#balls {
+    bottom: -30px;
 }
 
 #balls>* {
@@ -67,15 +110,19 @@ body {
     width: 90px;
 }
 
-#balls>.selected {
-    background-color: #bbd3ff;
+#balls>.selected,
+.ffa #balls>* {
+    background-color: #c9dcff;
+}
+
+.ffa #balls>* {
+    cursor: auto;
+    pointer-events: none;
 }
 
 #dramatic-toggle {
     position: absolute;
-    right: 0;
     bottom: -365px;
-    translate: 50% 50%;
     color: #333;
     cursor: pointer;
     display: flex;
@@ -96,9 +143,7 @@ body {
 
 #start {
     position: absolute;
-    right: 0;
-    bottom: 0;
-    translate: 50% 50%;
+    bottom: -30px;
     font-size: 24px;
     color: black;
     border: 2px solid #c10000;
@@ -107,11 +152,11 @@ body {
     cursor: pointer;
 }
 
-#start.disabled {
+#menu:not(.ffa) #start.disabled {
     pointer-events: none;
 }
 
-#start.disabled::after {
+#menu:not(.ffa) #start.disabled::after {
     position: absolute;
     top: -2px;
     bottom: -2px;
@@ -146,7 +191,7 @@ body {
     text-align: right;
 }
 
-.ball-info .stat {
+.stat {
     font-size: 16px;
 }
 
@@ -157,18 +202,20 @@ body {
 
 #battle li {
     list-style: none;
+    white-space: nowrap;
 }
 
 .hp-bar {
     position: relative;
     display: flex;
+    margin-bottom: 3px;
 }
 
 #ball2-info .hp-bar {
     flex-direction: row-reverse;
 }
 
-.hp-bar span {
+.hp-bar>span {
     position: absolute;
     bottom: 50%;
     translate: 0 50%;
@@ -178,4 +225,52 @@ body {
 
 .ded {
     font-size: 32px;
+}
+
+/* FFA Leaderboard */
+#battle {
+    display: flex;
+    align-items: center;
+}
+
+#battle.ffa-mode #battle-ui {
+    display: none;
+}
+
+#leaderboard {
+    display: none;
+    margin-left: 60px;
+    overflow-y: auto;
+    position: relative;
+    width: 200px;
+    height: 498px;
+}
+
+.dmg {
+    left: 118px;
+    color: #777;
+    white-space: nowrap;
+}
+
+#battle.ffa-mode #leaderboard {
+    display: flex;
+}
+
+.lb-entry {
+    color: #333;
+    position: absolute;
+    transition: top 0.3s ease;
+}
+
+.lb-entry.dead {
+    opacity: 0.5;
+}
+
+.lb-entry .name {
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.lb-entry .hp-bar>:first-child {
+    left: 7px;
 }
