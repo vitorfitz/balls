@@ -31,8 +31,8 @@ global.createBorderWalls = createBorderWalls;
 eval(code);
 
 const BALL_TYPES = [
-    // { name: 'Duplicator', create: (pos, rng) => new global.DuplicatorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
-    { name: 'Grower', create: (pos, rng) => new global.GrowerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Duplicator', create: (pos, rng) => new global.DuplicatorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
+    // { name: 'Grower', create: (pos, rng) => new global.GrowerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Dagger', create: (pos, rng) => new global.DaggerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
     // { name: 'Lance', create: (pos, rng) => new global.LanceBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
     // { name: 'Machine Gun', create: (pos, rng) => new global.MachineGunBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },

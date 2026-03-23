@@ -225,7 +225,7 @@ function updateFFALeaderboard() {
             el = document.createElement("div");
             el.className = "lb-entry";
             el.dataset.idx = i;
-            el.innerHTML = `<div class="name">${data.name}</div><div class="stat"><div class="hp-bar"><span class="hp-text"></span><canvas class="hp-canvas" width="110" height="24"></canvas><span class="dmg"><span style="margin-right:4px">🗡️</span>${b.damageDealt}</span></div></div>`;
+            el.innerHTML = `<div class="name">${data.name}</div><div class="stat"><div class="hp-bar"><span class="hp-text"></span><canvas class="hp-canvas" width="110" height="24"></canvas><span class="dmg"><span style="margin-right:4px">🗡️</span>${Math.round(b.damageDealt)}</span></div></div>`;
             lb.appendChild(el);
         }
 
@@ -244,7 +244,7 @@ function updateFFALeaderboard() {
         el.querySelector(".hp-text").textContent = hp;
         el.querySelector(".hp-text").style.color = displayedHP[key] / data.hp < 0.25 ? "#fff" : "#333";
         drawHealthBar(el.querySelector(".hp-canvas"), displayedHP[key], data.hp, data.color, false);
-        el.querySelector(".dmg").lastChild.textContent = b.damageDealt;
+        el.querySelector(".dmg").lastChild.textContent = Math.round(b.damageDealt);
 
         const oldInfo = el.querySelector("ul");
         if (oldInfo) oldInfo.remove();
@@ -289,6 +289,7 @@ function startFFA() {
 
     // Generate positions within the plus arms (avoid corners and center hole)
     const positions = [
+        // [750, 1350],
         [150, 450],
         [150, 1050],
         [1350, 450],
@@ -299,7 +300,7 @@ function startFFA() {
     combatants = [];
     for (let i = 0; i < ballClasses.length; i++) {
         const b = ballClasses[i];
-        if (b.class != DuplicatorBall) combatants.push(i);
+        if (b.class != DuplicatorBall && b.class != GrowerBall) combatants.push(i);
     }
 
     battle = new BallBattle(combatants.map((i, j) => {
