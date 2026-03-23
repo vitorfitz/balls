@@ -3,7 +3,7 @@
 const d = new Date().getTime();
 console.log(d);
 let battleSeed = d;
-// let battleSeed = 1774219300352;
+// let battleSeed = 968;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
@@ -22,7 +22,7 @@ let ballBtns = [];
 let mode = 0;
 
 {
-    const theta0 = 13 * Math.PI / 8;
+    const theta0 = 3 * Math.PI / 2;
     for (let i = 0; i < ballClasses.length; i++) {
         const btn = document.createElement("button");
         btn.style.width = btn.style.height = ballBtnDiameter + "px";
@@ -40,7 +40,7 @@ let mode = 0;
 
         const nameSpan = document.createElement("span");
         nameSpan.textContent = ballClasses[i].name;
-        const offset = ballClasses[i].name == "Grower" ? "12px" : "16px";
+        const offset = "16px";
         if (theta <= Math.PI) {
             nameSpan.style.top = offset;
         }
