@@ -1499,7 +1499,7 @@ class LanceBall extends Ball {
 }
 
 // Machine Gun: fires bullets
-const bulletRadius = 5, maxVolley = 240;
+const bulletRadius = 5, maxVolley = 110;
 class MachineGunBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#61a3e9", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -1686,11 +1686,12 @@ class MGBullet extends Bullet {
         super.handleCollision(b);
 
         if (b instanceof Ball) {
+            const hc = b == this.hitCredit ? this.prevHitCredit : this.hitCredit;
             if (!b.owner && !(b instanceof DuplicatorBall)) {
                 b.hitsThisFrame++;
+                if (hc == this.owner) this.owner.hitsThisFrame++;
             }
 
-            const hc = b == this.hitCredit ? this.prevHitCredit : this.hitCredit;
             if (hc.team == this.owner.team) {
                 this.owner.pendingDamage += 1;
             }

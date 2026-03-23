@@ -3,7 +3,7 @@
 const d = new Date().getTime();
 console.log(d);
 let battleSeed = d;
-// let battleSeed = 968;
+// let battleSeed = 1774219300352;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
@@ -22,7 +22,7 @@ let ballBtns = [];
 let mode = 0;
 
 {
-    const theta0 = 3 * Math.PI / 2;
+    const theta0 = 13 * Math.PI / 8;
     for (let i = 0; i < ballClasses.length; i++) {
         const btn = document.createElement("button");
         btn.style.width = btn.style.height = ballBtnDiameter + "px";
@@ -40,7 +40,7 @@ let mode = 0;
 
         const nameSpan = document.createElement("span");
         nameSpan.textContent = ballClasses[i].name;
-        const offset = "16px";
+        const offset = ballClasses[i].name == "Grower" ? "12px" : "16px";
         if (theta <= Math.PI) {
             nameSpan.style.top = offset;
         }
@@ -118,7 +118,9 @@ function makeBall(i, pos, rng, speed = 5) {
         Math.cos(theta) * speed,
         Math.sin(theta) * speed,
         ...spinArgs,
-        data.hp
+        data.hp,
+        undefined,
+        data.color
     );
 }
 
@@ -355,7 +357,7 @@ function startFFA() {
         ctx.stroke();
         ctx.fill("evenodd");
     };
-    battle.run(100);
+    battle.run(10);
     updateBattleUI();
 }
 
