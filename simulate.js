@@ -16,6 +16,7 @@ code = code.replace(/const balls = \[[\s\S]*$/s, '');
 
 code += `
 global.DaggerBall = DaggerBall;
+global.GrowerBall = GrowerBall;
 global.SwordBall = SwordBall;
 global.LanceBall = LanceBall;
 global.MachineGunBall = MachineGunBall;
@@ -30,17 +31,18 @@ global.createBorderWalls = createBorderWalls;
 eval(code);
 
 const BALL_TYPES = [
-    { name: 'Duplicator', create: (pos, rng) => new global.DuplicatorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
+    // { name: 'Duplicator', create: (pos, rng) => new global.DuplicatorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Grower', create: (pos, rng) => new global.GrowerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Dagger', create: (pos, rng) => new global.DaggerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
-    { name: 'Lance', create: (pos, rng) => new global.LanceBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
-    { name: 'Machine Gun', create: (pos, rng) => new global.MachineGunBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
-    { name: 'Wrench', create: (pos, rng) => new global.WrenchBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
-    { name: 'Grimoire', create: (pos, rng) => new global.GrimoireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
-    { name: 'Sword', create: (pos, rng) => new global.SwordBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) }
+    // { name: 'Lance', create: (pos, rng) => new global.LanceBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), 100) },
+    // { name: 'Machine Gun', create: (pos, rng) => new global.MachineGunBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    // { name: 'Wrench', create: (pos, rng) => new global.WrenchBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    // { name: 'Grimoire', create: (pos, rng) => new global.GrimoireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    // { name: 'Sword', create: (pos, rng) => new global.SwordBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) }
 ];
 
 const MAX_TICKS = 10000;
-const MATCHES = 500;
+const MATCHES = 100;
 
 function simulate(t1Idx, t2Idx) {
     const rng = new Math.seedrandom();
