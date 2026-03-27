@@ -15,6 +15,7 @@ code = code.replace(/const d = new Date.*?Math\.seedrandom\(d\);/s, '');
 code = code.replace(/const balls = \[[\s\S]*$/s, '');
 
 code += `
+global.GrowerBall = GrowerBall;
 global.DaggerBall = DaggerBall;
 global.SwordBall = SwordBall;
 global.LanceBall = LanceBall;
@@ -30,6 +31,7 @@ global.createPlusArenaWalls = createPlusArenaWalls;
 eval(code);
 
 const BALL_TYPES = [
+    { name: "Grower", class: global.GrowerBall, color: "#008a12", spin: false },
     { name: 'Dagger', class: global.DaggerBall, color: '#5fbf00', spin: true },
     { name: 'Lance', class: global.LanceBall, color: '#dfbf9f', spin: false },
     { name: 'Machine Gun', class: global.MachineGunBall, color: '#61a3e9', spin: true },
@@ -38,9 +40,9 @@ const BALL_TYPES = [
     { name: 'Sword', class: global.SwordBall, color: '#ff6464', spin: true },
 ];
 
-const POSITIONS = [[150, 450], [150, 1050], [1350, 450], [1350, 1050], [450, 150], [1050, 150]];
+const POSITIONS = [[750, 1350], [150, 450], [150, 1050], [1350, 450], [1350, 1050], [450, 150], [1050, 150]];
 const MAX_TICKS = 15000;
-const MATCHES = 500;
+const MATCHES = 1000;
 
 function simulate() {
     const seed = Date.now() + Math.random();
@@ -95,28 +97,39 @@ if (!isMainThread) {
         const { winnerIdx, damages } = simulate();
         if (winnerIdx >= 0) wins[winnerIdx]++;
         damages.forEach((d, j) => totalDmg[j] += d);
+        // parentPort.postMessage({ type: 'progress' });
     }
-    parentPort.postMessage({ wins, totalDmg, count });
+    parentPort.postMessage({ type: 'done', wins, totalDmg, count });
 } else {
     const NUM_WORKERS = os.cpus().length;
+    // const NUM_WORKERS = 5;
 
     (async () => {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
         const remainder = MATCHES % NUM_WORKERS;
 
+        let completed = 0;
         const promises = [];
         for (let i = 0; i < NUM_WORKERS; i++) {
             const count = perWorker + (i < remainder ? 1 : 0);
             if (count === 0) continue;
             promises.push(new Promise((resolve, reject) => {
                 const worker = new Worker(__filename, { workerData: { count } });
-                worker.on('message', resolve);
+                worker.on('message', msg => {
+                    if (msg.type === 'progress') {
+                        completed++;
+                        process.stdout.write(`\rProgress: ${completed}/${MATCHES} (${(completed / MATCHES * 100).toFixed(1)}%)`);
+                    } else if (msg.type === 'done') {
+                        resolve(msg);
+                    }
+                });
                 worker.on('error', reject);
             }));
         }
 
-        console.log(`Simulating ${MATCHES} FFA battles...\n`);
+        console.log(`Simulating ${MATCHES} FFA battles...`);
         const results = await Promise.all(promises);
+        console.log('\n');
 
         const wins = new Array(BALL_TYPES.length).fill(0);
         const totalDmg = new Array(BALL_TYPES.length).fill(0);

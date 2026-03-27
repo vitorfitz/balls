@@ -3,7 +3,7 @@
 const d = new Date().getTime();
 console.log(d);
 let battleSeed = d;
-// let battleSeed = 1774219300352;
+// let battleSeed = 1774563588630;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
@@ -232,6 +232,7 @@ function updateFFALeaderboard() {
         el.classList.toggle("dead", !b);
         if (!b) {
             el.querySelector(".hp-text").textContent = "0";
+            el.querySelector(".hp-text").style.color = "#fff";
             drawHealthBar(el.querySelector(".hp-canvas"), 0, 1, "#333", false);
             return;
         }
@@ -289,7 +290,7 @@ function startFFA() {
 
     // Generate positions within the plus arms (avoid corners and center hole)
     const positions = [
-        // [750, 1350],
+        [750, 1350],
         [150, 450],
         [150, 1050],
         [1350, 450],
@@ -300,13 +301,13 @@ function startFFA() {
     combatants = [];
     for (let i = 0; i < ballClasses.length; i++) {
         const b = ballClasses[i];
-        if (b.class != DuplicatorBall && b.class != GrowerBall) combatants.push(i);
+        if (b.class != DuplicatorBall /*&& b.class != GrowerBall*/) combatants.push(i);
     }
 
     battle = new BallBattle(combatants.map((i, j) => {
-        const b = makeBall(i, positions[j], rng, 5);
+        const b = makeBall(i, positions[j], rng, 4);
         return b;
-    }), battleSeed, 0.05);
+    }), battleSeed, 0.025);
     battle.addCanvas(canvas, wallThickness);
     battle.walls = createPlusArenaWalls(size, armWidth, holeSize);
     battle.zoom = 1;

@@ -1,12 +1,11 @@
 importScripts('seedrandom.js', 'index.js');
 
 const MAX_TICKS = 15000;
-const POSITIONS = [[150, 450], [150, 1050], [1350, 450], [1350, 1050], [450, 150], [1050, 150]];
+const POSITIONS = [[750, 1350], [150, 450], [150, 1050], [1350, 450], [1350, 1050], [450, 150], [1050, 150]];
 
-// Match ui.js: get indices of non-Duplicator balls
 const combatants = [];
 for (let i = 0; i < ballClasses.length; i++) {
-    if (ballClasses[i].class !== DuplicatorBall) combatants.push(i);
+    if (ballClasses[i].class != DuplicatorBall /*&& ballClasses[i].class != GrowerBall*/) combatants.push(i);
 }
 
 function simulate(seed) {

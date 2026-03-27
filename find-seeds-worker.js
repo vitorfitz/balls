@@ -55,10 +55,10 @@ onmessage = (e) => {
     const dramaticSeeds = {};
     let progress = '';
 
-    // for (let i = 0; i < BALL_TYPES.length; i++) {
-    for (let i = 1; i < BALL_TYPES.length; i++) {
+    for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // for (let j = 5; j < BALL_TYPES.length; j++) {
+            // if (i != 1 && j != 1) continue;
+
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             const results = [];
 
@@ -68,7 +68,7 @@ onmessage = (e) => {
             }
 
             const durations = results.map(r => r.ticks).sort((a, b) => a - b);
-            const durLimit = key == "Duplicator_Wrench" ? 6000 : 4000;
+            const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" ? 6000 : 4000;
             const median = durations[Math.floor(durations.length / 2)] || durLimit;
             const maxTicks = Math.max(durLimit, median);
 

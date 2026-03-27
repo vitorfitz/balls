@@ -205,7 +205,7 @@ class Ball extends CircleBody {
     checkSlamDamage(other = null) {
         if (this.slamTimer > 0) {
             // this.damage(this.slamTimer, this.slamSource);
-            let dmg = this.slamTimer > (this.battle.isDuel ? 4 : 16) ? 2 : 1;
+            let dmg = this.slamTimer > (this.battle.isDuel ? 8 : 16) ? 2 : 1;
             this.damage(dmg, this.slamSource);
 
             if (other && other instanceof Ball && other.team != this.team) {
@@ -564,21 +564,20 @@ function resolveCollision(b1, b2) {
     const nx = dx / dist;
     const ny = dy / dist;
 
-
-    const boostMult = (b1 instanceof GrowerBall || b2 instanceof GrowerBall) ? 0.5 : 1;
-
     // Cap effective boost by the other ball's kinetic energy
     const ke1 = 0.5 * (b1.vx * b1.vx + b1.vy * b1.vy);
     const ke2 = 0.5 * (b2.vx * b2.vx + b2.vy * b2.vy);
-    const effBoost1 = Math.min(b1.boostEnergy || 0, ke1) * boostMult;
-    const effBoost2 = Math.min(b2.boostEnergy || 0, ke2) * boostMult;
+    const effBoost1 = Math.min(b1.boostEnergy || 0, ke1) * (b2 instanceof GrowerBall ? 0.5 : 1);
+    const effBoost2 = Math.min(b2.boostEnergy || 0, ke2) * (b1 instanceof GrowerBall ? 0.5 : 1);
     // console.log("mm", effBoost1 || effBoost2, b1.boostEnergy || b2.boostEnergy);
 
     // Remove lance boost from velocity for collision calculation
     const getUnboosted = (b, effBoost) => {
         if (effBoost <= 0) return { vx: b.vx, vy: b.vy };
+
         const speed = Math.hypot(b.vx, b.vy);
         if (speed < EPS) return { vx: b.vx, vy: b.vy };
+
         const unboostedSpeed = Math.sqrt(Math.max(0, speed * speed - 2 * effBoost));
         return { vx: b.vx / speed * unboostedSpeed, vy: b.vy / speed * unboostedSpeed };
     };
@@ -598,25 +597,9 @@ function resolveCollision(b1, b2) {
         const dot_a = a.vx * sa * nx + a.vy * sa * ny;
         const dot_b = b.vx * sb * nx + b.vy * sb * ny;
         if ((dot_a - dot_b) * toB > 0) {
-            // if (a instanceof GrowerBall) {
-            //     // Transfer boost to other ball and slow down to unboosted speed
-            //     const speed = Math.hypot(a.vx, a.vy);
-            //     const unboostedSpeed = Math.sqrt(Math.max(0, speed * speed - 2 * a.boostEnergy * boostMult));
-            //     if (speed > EPS) {
-            //         a.vx = a.vx / speed * unboostedSpeed;
-            //         a.vy = a.vy / speed * unboostedSpeed;
-            //     }
-            //     const bSpeed = Math.hypot(b.vx, b.vy);
-            //     const newBSpeed = Math.sqrt(bSpeed * bSpeed + 2 * a.boostEnergy * boostMult);
-            //     if (bSpeed > EPS) {
-            //         b.vx = b.vx / bSpeed * newBSpeed;
-            //         b.vy = b.vy / bSpeed * newBSpeed;
-            //     }
-            // } else {
             const dot = a.vx * nx + a.vy * ny;
             a.vx -= 2 * dot * nx;
             a.vy -= 2 * dot * ny;
-            // }
         }
     };
 
@@ -789,12 +772,12 @@ class BallBattle {
             let hasGrimoire = false;
             for (const b of this.balls) {
                 if (b instanceof LanceBall) maxBoosts = Math.max(maxBoosts, b.boosts);
+                else if (b instanceof GrowerBall) maxBoosts = Math.max(maxBoosts, (b.scale ** 2 - 1));
                 hasGrimoire = hasGrimoire || (b instanceof GrimoireBall);
             }
 
             this.targetTimeScale = 0.9 ** count;
             this.targetTimeScale *= 1 / (1 + maxBoosts * (hasGrimoire ? 0.025 : 0.01));
-            // Gradual interpolation for smooth transitions
         }
         else {
             let count = 0;
@@ -805,6 +788,7 @@ class BallBattle {
             // this.targetTimeScale = 0.8;
         }
 
+        // Gradual interpolation for smooth transitions
         this.baseTimeScale += (this.targetTimeScale - this.baseTimeScale) * 0.01;
 
         // Per-ball hit history slowdown (outside duels)
@@ -1601,7 +1585,7 @@ class LanceBall extends Ball {
                 if (this.combo == 0 || oldHit < comboLeniency - 1) this.dist = 0;
 
                 this.comboHits.add(target.id);
-                const distToHit = 69 * this.startSpeed;
+                const distToHit = 67 * this.startSpeed;
                 const counts = Math.floor(-this.dist / distToHit) + 1;
                 this.dist += counts * distToHit;
 
@@ -1875,8 +1859,9 @@ class WrenchBall extends Ball {
                 );
                 if (overlaps) return;
 
-                this.turretCooldown = 60;
+                this.turretCooldown = 50;
                 this.turretCount++;
+                this.ticksSinceDamage = 0;
 
                 // Reflect ball velocity away from turret
                 const dot = b.vx * nx + b.vy * ny;
@@ -1902,9 +1887,9 @@ class WrenchBall extends Ball {
     }
 
     getTurretPower() {
-        if (this.ticksSinceDamage <= 1500) return 1;
+        if (this.ticksSinceDamage <= 500) return 1;
         const onlyDupes = this.battle.balls.length > 1 && this.battle.balls.every(b => b.team === this.team || b instanceof DuplicatorBall || b instanceof GrowerBall);
-        return onlyDupes ? 1 + Math.min(1500, this.ticksSinceDamage - 1500) / 150 : 1;
+        return onlyDupes ? 1 + (this.ticksSinceDamage - 500) / 500 : 1;
     }
 
     getInfoEl() {
@@ -1914,7 +1899,7 @@ class WrenchBall extends Ball {
     }
 }
 
-const fireDelay = 33, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
+const fireDelay = 34, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
 class Turret extends CircleBody {
     constructor(x, y, owner, theta, angVel) {
         super(x, y, 0, 0, 1, turretRadius, Infinity, false);
@@ -2146,7 +2131,7 @@ class GrimoireBall extends Ball {
     }
 }
 
-const growCooldown = 10;
+const growCooldown = 8;
 const maxScale = 6.56;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
@@ -2168,7 +2153,7 @@ class GrowerBall extends Ball {
     handleCollision(b) {
         if (this.inert || b.team == this.team || !(b instanceof Ball)) return;
         b.damage(1, this);
-        b.slamTimer = this.battle.isDuel ? 5 : 20;
+        b.slamTimer = this.battle.isDuel ? 10 : 20;
         b.slamSource = this;
 
         if (!this.battle.isDuel) {
@@ -2218,11 +2203,12 @@ class GrowerBall extends Ball {
         this.mass = this.baseMass * this.scale;
         this.radius = this.baseRadius * this.scale;
 
-        if (!this.battle.isDuel) { this.boostEnergy = 15 * (this.scale - 1); }
+        if (!this.battle.isDuel) { this.boostEnergy = 7.5 * (this.scale - 1); }
     }
 
     getDmgResistance() {
-        return this.battle.isDuel ? this.scale ** 2 * 0.4 + 0.6 : this.scale ** 2 * 0.2 + 0.8;
+        // return this.battle.isDuel ? this.scale ** 2 * 0.4 + 0.6 : this.scale ** 2 * 0.2 + 0.8;
+        return this.battle.isDuel ? this.scale ** 2 * 0.31 + 0.69 : this.scale ** 2 * 0.2 + 0.8;
         // return this.scale ** 2 * 0.4 + 0.6;
     }
 
