@@ -1484,7 +1484,7 @@ class DuplicatorBall extends Ball {
 // Dagger: Spins faster
 const baseSpin = Math.PI * 0.071;
 class DaggerBall extends Ball {
-    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#5fbf00", mass = radius * radius) {
+    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         const cfg = getWeaponConfig(DaggerBall);
         const dagger = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset);
