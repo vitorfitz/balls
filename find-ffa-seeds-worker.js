@@ -25,7 +25,7 @@ function simulate(seed) {
         return b;
     });
 
-    const battle = new BallBattle(balls, seed, 0.05);
+    const battle = new BallBattle(balls, seed, 0.025);
     battle.width = battle.height = size;
     battle.walls = createPlusArenaWalls(size, armWidth, holeSize);
     battle.ctx = new Proxy({}, { get: () => () => { } });
