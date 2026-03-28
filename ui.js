@@ -3,7 +3,7 @@
 const d = new Date().getTime();
 console.log(d);
 let battleSeed = d;
-// let battleSeed = 1774563588630;
+// let battleSeed = 1774667125058;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
@@ -22,7 +22,8 @@ let ballBtns = [];
 let mode = 0;
 
 {
-    const theta0 = 13 * Math.PI / 8;
+    // const theta0 = 13 * Math.PI / 8;
+    const theta0 = 3 * Math.PI / 2;
     for (let i = 0; i < ballClasses.length; i++) {
         const btn = document.createElement("button");
         btn.style.width = btn.style.height = ballBtnDiameter + "px";
