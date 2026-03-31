@@ -96,11 +96,12 @@ class Weapon {
         this.dmg = dmg;
         this.iframes = iframes;
         this.DoT = DoT;
-        this.ballColFns.push((b) => {
-            b.damage(this.dmg, this.ball);
+        this.ballColFns.push((b, reflector) => {
+            const source = reflector || this.ball;
+            b.damage(this.dmg, source);
             if (!b.owner && !(b instanceof DuplicatorBall)) {
                 const amt = (this.ball instanceof DaggerBall && (this.ball.owner || b instanceof GrimoireBall)) ? 0.5 : hitSlow;
-                addToHitHistory([this.ball, b], amt);
+                addToHitHistory([source, b], amt);
             }
         });
     }
@@ -115,6 +116,14 @@ class Weapon {
         //     iframes = Math.min(target.battle.isDuel ? 7 : 20, iframes);
         // }
         return iframes;
+    }
+
+    scaleBy(s) {
+        this.scale *= s;
+        this.offset *= s;
+        this.spriteShift *= s;
+        if (this.range) this.range *= s;
+        if (this.thickness) this.thickness *= s;
     }
 
     static drawWeapon(ctx, x, y, angle, sprite, scale, offset, spriteShift, rotation) {
@@ -206,7 +215,7 @@ class Ball extends CircleBody {
     checkSlamDamage(other = null) {
         if (this.slamTimer > 0) {
             // this.damage(this.slamTimer, this.slamSource);
-            let dmg = this.slamTimer > (this.battle.isDuel ? 8 : 16) ? 2 : 1;
+            let dmg = this.slamTimer > (this.battle.isDuel ? 8 : 15) ? 2 : 1;
             this.damage(dmg, this.slamSource);
 
             if (other && other instanceof Ball && other.team != this.team) {
@@ -240,10 +249,11 @@ class Ball extends CircleBody {
     }
 
     damage(dmg, source = null) {
+        const hpBefore = this.hp;
         super.damage(dmg);
         this.flashTime = flashDur;
         if (source && !this.owner) {
-            source.getRootOwner().damageDealt += Math.min(dmg, this.hp);
+            source.getRootOwner().damageDealt += Math.min(dmg, hpBefore);
         }
     }
 
@@ -296,10 +306,6 @@ class Ball extends CircleBody {
             ctx.textBaseline = "middle";
             ctx.fillText(text, x, y);
         }
-    }
-
-    getDisplayedHP() {
-        return Math.ceil(this.hp);
     }
 }
 
@@ -360,7 +366,7 @@ class Wall {
     resolve(b) {
         b.onWallCollision();
         if (!b.shouldBounceWall(this)) return;
-        // stripKnockBoost(b);
+        decayKnockBoost(b);
         const wallVel = this.velocity || 0;
         if (this.axis === VERTICAL) {
             b.x = this.pos + this.normal * b.radius;
@@ -532,107 +538,154 @@ function timeToCollision(b1, b2, dt, r1Override = null, r2Override = null) {
 //     return energySum;
 // }
 
-function stripKnockBoost(b) {
+function decayKnockBoost(b, pct = 0.5) {
     if (b.knockBoost > 0) {
         const speed = Math.hypot(b.vx, b.vy);
-        if (speed > b.knockBoost) {
-            const newSpeed = speed - b.knockBoost;
-            b.vx *= newSpeed / speed;
-            b.vy *= newSpeed / speed;
+        if (speed >= 1) {
+            let decay = Math.min(b.knockBoost, speed * pct);
+            if (decay > 0) {
+                const newSpeed = speed - decay;
+                b.vx *= newSpeed / speed;
+                b.vy *= newSpeed / speed;
+                b.knockBoost -= decay;
+            }
         }
-        b.knockBoost = 0;
     }
 }
 
 // Apply elastic impulse along a normal direction
 // Full elastic collision with boost handling
-function applyElasticCollision(b1, b2, nx, ny) {
-    // Cap effective boost by the other ball's kinetic energy
-    const ke1 = 0.5 * (b1.vx * b1.vx + b1.vy * b1.vy);
-    const ke2 = 0.5 * (b2.vx * b2.vx + b2.vy * b2.vy);
-    const effBoost1 = Math.min(b1.boostEnergy || 0, ke1) * (b2 instanceof GrowerBall ? 0.5 : 1);
-    const effBoost2 = Math.min(b2.boostEnergy || 0, ke2) * (b1 instanceof GrowerBall ? 0.5 : 1);
+const knockBoostEnabled = true;
+function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
+    const bothGrowerOrNeither = (b1 instanceof GrowerBall) === (b2 instanceof GrowerBall);
+    const boostScale = bothGrowerOrNeither ? 0 : 1;
 
-    // Remove lance boost from velocity for collision calculation
-    const getUnboosted = (b, effBoost) => {
-        if (effBoost <= 0) return { vx: b.vx, vy: b.vy };
-        const speed = Math.hypot(b.vx, b.vy);
-        if (speed < EPS) return { vx: b.vx, vy: b.vy };
-        const unboostedSpeed = Math.sqrt(Math.max(0, speed * speed - 2 * effBoost));
-        return { vx: b.vx / speed * unboostedSpeed, vy: b.vy / speed * unboostedSpeed };
+    // Effective boost energy, capped by kinetic energy. Zero if both are growers.
+    const effBoost1 = Math.min(b1.boostEnergy || 0, 0.5 * (b1.vx ** 2 + b1.vy ** 2)) * boostScale;
+    const effBoost2 = Math.min(b2.boostEnergy || 0, 0.5 * (b2.vx ** 2 + b2.vy ** 2)) * boostScale;
+
+    // Strip boost energy from velocity to get "unboosted" velocities for collision math
+    const unboosted = (b, eff) => {
+        if (eff <= 0) return { vx: b.vx, vy: b.vy };
+        const spd = Math.hypot(b.vx, b.vy);
+        if (spd < EPS) return { vx: b.vx, vy: b.vy };
+        const s = Math.sqrt(Math.max(0, spd * spd - 2 * eff)) / spd;
+        return { vx: b.vx * s, vy: b.vy * s };
     };
 
-    const ub1 = getUnboosted(b1, effBoost1), ub2 = getUnboosted(b2, effBoost2);
-    const v1x = ub1.vx, v1y = ub1.vy;
-    const v2x = ub2.vx, v2y = ub2.vy;
+    const ub1 = unboosted(b1, effBoost1), ub2 = unboosted(b2, effBoost2);
+    const velAlongNormal = (ub2.vx - ub1.vx) * nx + (ub2.vy - ub1.vy) * ny;
 
-    const dvx = v2x - v1x;
-    const dvy = v2y - v1y;
-    const velAlongNormal = dvx * nx + dvy * ny;
-
-    const applyBoostReflection = (a, b, toB) => {
+    // Reflect a boosted ball's velocity across the collision normal when it's
+    // moving toward the other ball faster (in time-scaled space)
+    const tryBoostReflect = (a, b, toB) => {
         if (!a.boostEnergy || a.boostEnergy <= 0) return;
-        const sa = a.getTimeScale();
-        const sb = b.getTimeScale();
-        const dot_a = a.vx * sa * nx + a.vy * sa * ny;
-        const dot_b = b.vx * sb * nx + b.vy * sb * ny;
-        if ((dot_a - dot_b) * toB > 0) {
+        const dotA = (a.vx * a.getTimeScale()) * nx + (a.vy * a.getTimeScale()) * ny;
+        const dotB = (b.vx * b.getTimeScale()) * nx + (b.vy * b.getTimeScale()) * ny;
+        if (dotA * toB > 0 && (dotA - dotB) * toB > 0) {
             const dot = a.vx * nx + a.vy * ny;
             a.vx -= 2 * dot * nx;
             a.vy -= 2 * dot * ny;
         }
     };
 
-    if (velAlongNormal > 0) {
-        applyBoostReflection(b1, b2, 1);
-        applyBoostReflection(b2, b1, -1);
+    // Grower-vs-non-grower can still collide even when unboosted velocities diverge
+    const isGrowerKnock = !fromMirror && knockBoostEnabled && !bothGrowerOrNeither;
+    if (velAlongNormal > 0 && !isGrowerKnock) {
+        tryBoostReflect(b1, b2, 1);
+        tryBoostReflect(b2, b1, -1);
         return;
     }
 
+    // Save originals for grower knock calculation
+    const orig1x = b1.vx, orig1y = b1.vy;
+    const orig2x = b2.vx, orig2y = b2.vy;
+
+    // Compute impulse on unboosted velocities
     const bothInfinite = !isFinite(b1.mass) && !isFinite(b2.mass);
-    const invMass1 = b2.mass == 0 ? 0 : bothInfinite ? 1 : 1 / b1.mass;
-    const invMass2 = b1.mass == 0 ? 0 : bothInfinite ? 1 : 1 / b2.mass;
-    const j = -(1 + ELASTICITY) * velAlongNormal / (invMass1 + invMass2);
+    const invM1 = b2.mass === 0 ? 0 : bothInfinite ? 1 : 1 / b1.mass;
+    const invM2 = b1.mass === 0 ? 0 : bothInfinite ? 1 : 1 / b2.mass;
+    const j = -(1 + ELASTICITY) * velAlongNormal / (invM1 + invM2);
 
-    const new1x = v1x - j * invMass1 * nx;
-    const new1y = v1y - j * invMass1 * ny;
-    const new2x = v2x + j * invMass2 * nx;
-    const new2y = v2y + j * invMass2 * ny;
+    const post1x = ub1.vx - j * invM1 * nx, post1y = ub1.vy - j * invM1 * ny;
+    const post2x = ub2.vx + j * invM2 * nx, post2y = ub2.vy + j * invM2 * ny;
 
-    // Add boost back to new velocities (preserving boost energy, not speed delta)
-    for (const [b, nvx, nvy, sign, effBoost] of [[b1, new1x, new1y, -1, effBoost1], [b2, new2x, new2y, 1, effBoost2]]) {
-        if (effBoost <= 0) {
-            b.vx = nvx;
-            b.vy = nvy;
-            continue;
+    // Set velocity to post-collision unboosted + re-added boost energy
+    const setVelWithBoost = (b, pvx, pvy, sign, eff) => {
+        if (eff <= 0) { b.vx = pvx; b.vy = pvy; return; }
+        const spd = Math.hypot(pvx, pvy);
+        const target = Math.sqrt(spd * spd + 2 * eff);
+        if (spd > EPS) { b.vx = pvx / spd * target; b.vy = pvy / spd * target; }
+        else { b.vx = nx * sign * target; b.vy = ny * sign * target; }
+    };
+
+    // Identify grower and non-grower for knock boost (if applicable)
+    const grower = isGrowerKnock ? (b1 instanceof GrowerBall ? b1 : b2) : null;
+    const other = grower === b1 ? b2 : grower === b2 ? b1 : null;
+
+    if (grower && other) {
+        const isB1 = grower === b1;
+        const gPost = isB1 ? { x: post1x, y: post1y } : { x: post2x, y: post2y };
+        const gEff = isB1 ? effBoost1 : effBoost2;
+        const oEff = isB1 ? effBoost2 : effBoost1;
+        const gSign = isB1 ? -1 : 1;
+
+        // Grower: unboosted collision result + its own boost re-added
+        setVelWithBoost(grower, gPost.x, gPost.y, gSign, gEff);
+
+        // Other: elastic collision against grower's FULL (boosted) original velocity
+        const oOrigX = isB1 ? orig2x : orig1x;
+        const oOrigY = isB1 ? orig2y : orig1y;
+        const gOrigX = isB1 ? orig1x : orig2x;
+        const gOrigY = isB1 ? orig1y : orig2y;
+        const fullVAN = (oOrigX - gOrigX) * nx + (oOrigY - gOrigY) * ny;
+        const jFull = -(1 + ELASTICITY) * fullVAN / (invM1 + invM2);
+        const oInvM = isB1 ? invM2 : invM1;
+        const oNewVx = oOrigX + jFull * oInvM * nx;
+        const oNewVy = oOrigY + jFull * oInvM * ny;
+        other.vx = oNewVx;
+        other.vy = oNewVy;
+
+        // Re-add other's boost if it had one
+        if (oEff > 0) {
+            const spd = Math.hypot(other.vx, other.vy);
+            if (spd > EPS) {
+                const target = Math.sqrt(spd * spd + 2 * oEff) / spd;
+                other.vx *= target;
+                other.vy *= target;
+            }
         }
 
-        const newSpeed = Math.hypot(nvx, nvy);
-        const targetSpeed = Math.sqrt(newSpeed * newSpeed + 2 * effBoost);
-
-        if (newSpeed > EPS) {
-            b.vx = nvx / newSpeed * targetSpeed;
-            b.vy = nvy / newSpeed * targetSpeed;
-        } else {
-            b.vx = nx * sign * targetSpeed;
-            b.vy = ny * sign * targetSpeed;
-        }
+        // Compute knock energy injected into the other ball
+        const gUbVx = isB1 ? ub1.vx : ub2.vx, gUbVy = isB1 ? ub1.vy : ub2.vy;
+        const keGrowerBefore = 0.5 * grower.mass * (gUbVx ** 2 + gUbVy ** 2);
+        const keGrowerAfter = 0.5 * grower.mass * (gPost.x ** 2 + gPost.y ** 2);
+        const keOtherBefore = 0.5 * other.mass * (oOrigX ** 2 + oOrigY ** 2);
+        const keOtherAfter = 0.5 * other.mass * (oNewVx ** 2 + oNewVy ** 2);
+        const injected = (keGrowerAfter + keOtherAfter) - (keGrowerBefore + keOtherBefore);
+        other._pendingKnockEnergy = Math.max(other._pendingKnockEnergy || 0, injected / grower.mass);
+    } else {
+        // Standard case: apply unboosted collision + re-add each ball's boost
+        setVelWithBoost(b1, post1x, post1y, -1, effBoost1);
+        setVelWithBoost(b2, post2x, post2y, 1, effBoost2);
     }
 
+    // Post-collision boost reflection: if a boosted ball is still closing on the
+    // other (in time-scaled space), mirror its velocity across the normal
     for (const [a, b, toB] of [[b1, b2, 1], [b2, b1, -1]]) {
+        if (a === other || b === other) continue; // already handled by grower knock
         if (a.boostEnergy > 0) {
-            const sa = a.getTimeScale();
-            const sb = b.getTimeScale();
-            const relVel = ((a.vx * sa - b.vx * sb) * nx + (a.vy * sa - b.vy * sb) * ny) * toB;
-            if (relVel > 0) applyBoostReflection(a, b, toB);
+            const relVel = ((a.vx * a.getTimeScale() - b.vx * b.getTimeScale()) * nx
+                + (a.vy * a.getTimeScale() - b.vy * b.getTimeScale()) * ny) * toB;
+            if (relVel > 0) tryBoostReflect(a, b, toB);
         }
     }
 }
 
 // Elastic collision response
 function resolveCollision(b1, b2) {
-    stripKnockBoost(b1);
-    stripKnockBoost(b2);
+    if (!(b2 instanceof Bullet)) decayKnockBoost(b1);
+    if (!(b1 instanceof Bullet)) decayKnockBoost(b2);
 
     b1.onCollision(b2);
     b2.onCollision(b1);
@@ -646,22 +699,43 @@ function resolveCollision(b1, b2) {
     const dx = b2.x - b1.x;
     const dy = b2.y - b1.y;
     const dist = Math.hypot(dx, dy);
+    if (dist < EPS) return; // Avoid NaN from division by zero
     const nx = dx / dist;
     const ny = dy / dist;
 
     applyElasticCollision(b1, b2, nx, ny);
 
-    // Apply pending knockBoost after collision resolution
+    // Apply pending knockEnergy after collision resolution
     for (const b of [b1, b2]) {
-        if (b._pendingKnockBoost > 0) {
+        if (b._pendingKnockEnergy > 0) {
             const speed = Math.hypot(b.vx, b.vy);
             if (speed > 0) {
-                const newSpeed = speed + b._pendingKnockBoost;
+                const newSpeed = Math.sqrt(speed * speed + 2 * b._pendingKnockEnergy);
                 b.vx *= newSpeed / speed;
                 b.vy *= newSpeed / speed;
             }
-            b.knockBoost = b._pendingKnockBoost;
-            b._pendingKnockBoost = 0;
+            b.knockBoost = Math.sqrt(2 * b._pendingKnockEnergy);
+            b._pendingKnockEnergy = 0;
+        }
+    }
+
+    // Ensure separation after all velocity modifications (including knockEnergy)
+    const grower = (b1 instanceof GrowerBall && !(b2 instanceof GrowerBall)) ? b1 :
+        (b2 instanceof GrowerBall && !(b1 instanceof GrowerBall)) ? b2 : null;
+    if (grower) {
+        const other = grower === b1 ? b2 : b1;
+        const sa = grower.getTimeScale();
+        const sb = other.getTimeScale();
+        const growerAlongN = grower.vx * sa * nx + grower.vy * sa * ny;
+        const otherAlongN = other.vx * sb * nx + other.vy * sb * ny;
+
+        if (t == 8932 || t == 9613) console.log(`[t=${t}] sep check: growerAlongN=${growerAlongN.toFixed(4)}, otherAlongN=${otherAlongN.toFixed(4)}, sa=${sa.toFixed(4)}, sb=${sb.toFixed(4)}, grower=${grower.constructor.name}, other=${other.constructor.name}`);
+        if (otherAlongN <= growerAlongN && growerAlongN > 0 && otherAlongN >= 0) {
+            const boost = 2 * (growerAlongN / sb - other.vx * nx - other.vy * ny) + 0.001;
+            if (t == 8932 || t == 9613) console.log(`[t=${t}] GOT HERE boost=${boost}`);
+            other.vx += boost * nx;
+            other.vy += boost * ny;
+            if (other.team != grower.team) other.damage(2, grower);
         }
     }
 }
@@ -683,15 +757,28 @@ function distToSegment(px, py, x1, y1, x2, y2) {
 function weaponHitsBall(w, b) {
     const seg = w.getHitSegment();
     const d = distToSegment(b.x, b.y, seg.x1, seg.y1, seg.x2, seg.y2);
-    return d <= (seg.r + b.radius);
+    const hits = d <= (seg.r + b.radius);
+    return hits;
+}
+
+function segmentToSegmentDist(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
+    return Math.min(
+        distToSegment(ax1, ay1, bx1, by1, bx2, by2),
+        distToSegment(ax2, ay2, bx1, by1, bx2, by2),
+        distToSegment(bx1, by1, ax1, ay1, ax2, ay2),
+        distToSegment(bx2, by2, ax1, ay1, ax2, ay2)
+    );
 }
 
 function weaponWeaponContact(w1, w2) {
     const a = w1.getHitSegment();
     const b = w2.getHitSegment();
-    const cx = (b.x1 + b.x2) * 0.5;
-    const cy = (b.y1 + b.y2) * 0.5;
-    return distToSegment(cx, cy, a.x1, a.y1, a.x2, a.y2) <= a.r + b.r;
+    const d = segmentToSegmentDist(a.x1, a.y1, a.x2, a.y2, b.x1, b.y1, b.x2, b.y2);
+    const hits = d <= a.r + b.r;
+    // if ((w1.ball instanceof MirrorBall || w2.ball instanceof MirrorBall) && t >= 787 && t <= 795) {
+    //     console.log("weaponWeaponContact", JSON.stringify({ t, d, threshold: a.r + b.r, hits, segA: a, segB: b }));
+    // }
+    return hits;
 }
 
 function addMirrorIFrames(src, target) {
@@ -747,17 +834,17 @@ class BallBattle {
         this.gravity = gravity;
 
         this.nextID = 0;
-        this.debug = true;
-        // this.debug = false;
+        // this.debug = true;
+        this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
         this.isDuel = balls.length == 2;
         this.lol = this.isDuel && ((balls[0] instanceof GrimoireBall && balls[1] instanceof MirrorBall) || (balls[1] instanceof GrimoireBall && balls[0] instanceof MirrorBall));
         if (this.lol) {
-            for (let b of balls) {
-                b.hp *= 0.2;
-            }
+            // for (let b of balls) {
+            //     b.hp *= 0.2;
+            // }
         }
 
         this.lastTime = null;
@@ -797,7 +884,7 @@ class BallBattle {
                 count += (this.balls[i] instanceof DuplicatorBall ? 0.1 : 1) * (this.balls[i].owner ? 0.5 : 1);
             }
             this.targetTimeScale = 0.95 ** Math.max(0, count - 2);
-            // this.targetTimeScale = 0.8;
+            // this.targetTimeScale = 0.7;
         }
 
         // Gradual interpolation for smooth transitions
@@ -850,9 +937,9 @@ class BallBattle {
     addBall(ball) {
         this.addBody(ball);
         this.balls.push(ball);
-        if (!this.isDuel && ball instanceof LanceBall) {
-            ball.startSpeed *= 1.1;
-        }
+        // if (!this.isDuel && ball instanceof LanceBall) {
+        //     ball.startSpeed *= 1.1;
+        // }
     }
 
     addCanvas(canvas, offset = 0) {
@@ -862,7 +949,7 @@ class BallBattle {
         if (offset) this.ctx.translate(offset, offset);
         this.width = canvas.width - 2 * offset;
         this.height = canvas.height - 2 * offset;
-        this.walls = createBorderWalls(this.width, this.height);
+        if (!this.walls) this.walls = createBorderWalls(this.width, this.height);
     }
 
     addWall(wall) {
@@ -888,19 +975,6 @@ class BallBattle {
             const g = b.gravity ? this.gravity : 0;
             const s = b.getTimeScale();
 
-            // Decay knockBoost by reducing actual velocity
-            if (b.knockBoost > 0) {
-                const speed = Math.hypot(b.vx, b.vy);
-                const decay = Math.min(b.knockBoost, b.knockBoost * 0.02 * adv);
-                if (speed > decay) {
-                    const newSpeed = speed - decay;
-                    b.vx *= newSpeed / speed;
-                    b.vy *= newSpeed / speed;
-                }
-                b.knockBoost -= decay;
-                if (b.knockBoost < 0.02) b.knockBoost = 0;
-            }
-
             b.x = b.x + b.vx * s * adv;
             b.y = b.y + b.vy * s * adv + 0.5 * g * s * s * adv * adv;
             b.vy = b.vy + g * s * adv;
@@ -908,16 +982,20 @@ class BallBattle {
     }
 
     updatePhysics() {
+        // Decay knock boost once per tick
+        for (const b of this.bodies) {
+            decayKnockBoost(b, 0.01);
+        }
+
         // Reactivate inert balls that have escaped overlap
         for (const b of this.bodies) {
             if (b.inert && this.bodies.every(o => o.inert || o.team == b.team || !ballsOverlap(b, o))) {
                 b.inert = false;
             }
         }
-        const tee = t;
 
         let dt = 1;
-        let iterations = 0;
+        // let iterations = 0;
         while (dt > EPS) {
             // if (++iterations > 1000) {
             //     console.warn(`[t=${t}] Physics loop exceeded 1000 iterations, bodies=${this.bodies.length}, dt=${dt}`);
@@ -956,11 +1034,11 @@ class BallBattle {
 
             for (const b of this.bodies) {
                 for (const wall of this.walls) {
-                    const t = wall.timeToCollision(b, dt);
-                    if (t < tWall - EPS) {
-                        tWall = t;
+                    const tCol = wall.timeToCollision(b, dt);
+                    if (tCol < tWall - EPS) {
+                        tWall = tCol;
                         wallEvents = [{ ball: b, wall }];
-                    } else if (Math.abs(t - tWall) <= EPS) {
+                    } else if (Math.abs(tCol - tWall) <= EPS) {
                         wallEvents.push({ ball: b, wall });
                     }
                 }
@@ -978,22 +1056,13 @@ class BallBattle {
 
             // Ball-ball
             if (tBall <= tNext + EPS) {
-                // console.log("aaa", pair[0].kineticEnergy() + pair[1].kineticEnergy());
                 resolveCollision(pair[0], pair[1]);
-                // console.log("bbb", pair[0].kineticEnergy() + pair[1].kineticEnergy());
-                // collidedThisFrame.add(pair[0].id + '-' + pair[1].id);
             }
 
             // Walls
             if (tWall <= tNext + EPS) {
                 for (const ev of wallEvents) {
                     ev.wall.resolve(ev.ball);
-                    // Clear collision pairs involving this ball so it can re-collide after velocity change
-                    // for (const key of [...collidedThisFrame]) {
-                    //     if (key.startsWith(ev.ball.id + '-') || key.endsWith('-' + ev.ball.id)) {
-                    //         collidedThisFrame.delete(key);
-                    //     }
-                    // }
                 }
             }
         }
@@ -1035,7 +1104,7 @@ class BallBattle {
         const substeps = Math.max(Math.ceil(maxAngVel / 0.1), Math.ceil(maxLanceSpeed / 10));
         const subDt = 1 / substeps;
 
-        const hitThisFrame = new Set(); // tracks "weaponIdx-ballId" pairs that hit
+        this.hitThisFrame = new Set(); // tracks "weaponIdx-ballId" pairs that hit
 
         for (let step = 0; step < substeps; step++) {
             this.balls.forEach(
@@ -1045,16 +1114,24 @@ class BallBattle {
                         (w) => w.updateFns.forEach((f) =>
                             f(scaledDt)));
                 });
-            this._checkWeaponCollisions(activeBalls, hitThisFrame);
+            this._checkWeaponCollisions(activeBalls);
         }
 
         // Decrement iframes for pairs that didn't hit during any substep
         for (const b of this.balls) {
             for (const w of b.dmgWeapons) {
                 for (const id of Object.keys(w.iFrames)) {
-                    if (w.DoT || !hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
+                    if (w.DoT || !this.hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
                         w.iFrames[id]--;
                         if (w.iFrames[id] <= 0) delete w.iFrames[id];
+                    }
+                }
+                // Clear contact tracking for balls not hit this frame
+                if (w._inContact) {
+                    for (const id of Object.keys(w._inContact)) {
+                        if (!this.hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
+                            delete w._inContact[id];
+                        }
                     }
                 }
             }
@@ -1074,7 +1151,7 @@ class BallBattle {
         this.bodies = this.bodies.filter((b) => b.hp > 0);
     }
 
-    _checkWeaponCollisions(balls, hitThisFrame) {
+    _checkWeaponCollisions(balls) {
         for (let i = 0; i < balls.length; i++) {
             for (let j = i + 1; j < balls.length; j++) {
                 const A = balls[i];
@@ -1082,8 +1159,8 @@ class BallBattle {
 
                 // weapon - ball
                 for (const w of A.dmgWeapons) {
-                    if (A.team !== B.team && weaponHitsBall(w, B)) {
-                        hitThisFrame.add(A.id + "-" + w.theta + "-" + B.id);
+                    if (A.team !== B.team && weaponHitsBall(w, B) && (w.DoT || !(B._cantHitBall?.[A.id] > 0))) {
+                        this.hitThisFrame.add(A.id + "-" + w.theta + "-" + B.id);
                         addMirrorIFrames(A, B);
                         if (!(B.id in w.iFrames)) {
                             w.iFrames[B.id] = w.getIFrames(B);
@@ -1093,8 +1170,8 @@ class BallBattle {
                 }
 
                 for (const w of B.dmgWeapons) {
-                    if (B.team !== A.team && weaponHitsBall(w, A)) {
-                        hitThisFrame.add(B.id + "-" + w.theta + "-" + A.id);
+                    if (B.team !== A.team && weaponHitsBall(w, A) && (w.DoT || !(A._cantHitBall?.[B.id] > 0))) {
+                        this.hitThisFrame.add(B.id + "-" + w.theta + "-" + A.id);
                         addMirrorIFrames(B, A);
                         if (!(A.id in w.iFrames)) {
                             w.iFrames[A.id] = w.getIFrames(A);
@@ -1107,8 +1184,8 @@ class BallBattle {
                 for (const w1 of A.parryWeapons) {
                     for (const w2 of B.parryWeapons) {
                         if (weaponWeaponContact(w1, w2)) {
-                            w1.weaponColFns.forEach(fn => fn(w2, hitThisFrame));
-                            w2.weaponColFns.forEach(fn => fn(w1, hitThisFrame));
+                            w1.weaponColFns.forEach(fn => fn(w2));
+                            w2.weaponColFns.forEach(fn => fn(w1));
                         }
                     }
                 }
@@ -1119,7 +1196,7 @@ class BallBattle {
                         const mw = mirror.parryWeapons[0];
                         const gw = grimoire.weapons[0];
                         if (mw && gw && weaponWeaponContact(mw, gw)) {
-                            mw.weaponColFns.forEach(fn => fn(gw, hitThisFrame));
+                            mw.weaponColFns.forEach(fn => fn(gw));
                         }
                     }
                 }
@@ -1361,7 +1438,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 350) {
+        // while (t < 8900) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -1447,7 +1524,7 @@ function propsToList(propsMap) {
 }
 
 // Duplicator: Reproduces on hit
-const dmgCooldown = 6, dupeCooldown = 6, dupeLimit = 25;
+const dmgCooldown = 7, dupeCooldown = 7, dupeLimit = 25;
 class DuplicatorBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#f86ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -1481,6 +1558,7 @@ class DuplicatorBall extends Ball {
         if (reflector) {
             child = new MirrorBall(...baseParams, theta, this.battle.rng() < 0.5 ? 1 : -1, hp);
             child.extraUpdates.push(this.handleUpdate.bind(child));
+            child.weapons[0].scaleBy(this.radius / child.radius);
         }
         else {
             child = new DuplicatorBall(...baseParams, hp);
@@ -1498,7 +1576,7 @@ class DuplicatorBall extends Ball {
     }
 
     handleUpdate(dt) {
-        if (this instanceof MirrorBall) console.log("wowow", this.dmgCooldown, this.dupeCooldown);
+        // if (this instanceof MirrorBall) console.log("wowow", this.dmgCooldown, this.dupeCooldown);
         this.dmgCooldown -= dt;
         this.dupeCooldown -= dt;
     }
@@ -1508,26 +1586,16 @@ class DuplicatorBall extends Ball {
             "Population": { text: (this.battle.teamCount ? this.battle.teamCount[this.team] : 1) + "/" + dupeLimit, grad: { from: 1, to: 25 } },
         });
     }
-
-    getDisplayedHP() {
-        let max = 0;
-        for (let b of this.battle.balls) {
-            if (b instanceof DuplicatorBall && b.team == this.team) {
-                max = Math.max(max, b.hp);
-            }
-        }
-        return Math.ceil(max);
-    }
 }
 
 // Dagger: Spins faster
-const baseSpin = Math.PI * 0.071;
+const baseSpin = Math.PI * 0.08;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         const cfg = getWeaponConfig(DaggerBall);
         const dagger = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset);
-        dagger.addCollider(30, 6);
+        dagger.addCollider(25, 6);
         dagger.addSpin(baseSpin * dir);
         // dagger.addParry();
         dagger.addDamage(1, 1, false, 1.5);
@@ -1536,8 +1604,10 @@ class DaggerBall extends Ball {
         this.scalingCooldown = 0;
         dagger.ballColFns.push((b) => {
             if (this.scalingCooldown <= EPS) {
-                dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * (this.battle.isDuel ? 3 / 20 : 3 / 10)) * Math.sign(dagger.angVel);
-                this.scalingCooldown = (this.battle.isDuel ? 6 : 15);
+                // dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * (this.battle.isDuel ? 3 / 20 : 1 / 5)) * Math.sign(dagger.angVel);
+                // this.scalingCooldown = (this.battle.isDuel ? 6 : 10);
+                dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 3 / 20) * Math.sign(dagger.angVel);
+                this.scalingCooldown = 6;
             }
         });
 
@@ -1595,7 +1665,7 @@ class LanceBall extends Ball {
 
         const cfg = getWeaponConfig(LanceBall);
         const lance = new Weapon(Math.atan2(this.vy, this.vx), cfg.sprite, cfg.scale, cfg.offset, 0, cfg.rotation);
-        lance.addCollider(92, 15, 58);
+        lance.addCollider(90, 15, 56);
         lance.iframes = 0;
         lance.DoT = true;
         lance.ballColFns.push((target) => {
@@ -1612,6 +1682,7 @@ class LanceBall extends Ball {
                     const baseSpeed = this.startSpeed + boostSpeed * this.boosts;
                     const newBaseSpeed = baseSpeed + boostSpeed;
                     const energyGain = 0.5 * (newBaseSpeed * newBaseSpeed - baseSpeed * baseSpeed);
+                    // if (t < 8900)
                     this.boostEnergy += energyGain;
                     this.boosts++;
 
@@ -1624,7 +1695,7 @@ class LanceBall extends Ball {
                 if (this.combo == 0 || oldHit < comboLeniency - 1) this.dist = 0;
 
                 this.comboHits.add(target.id);
-                const distToHit = 67 * this.startSpeed;
+                const distToHit = 77 * this.startSpeed;
                 const counts = Math.floor(-this.dist / distToHit) + 1;
                 this.dist += counts * distToHit;
 
@@ -1646,6 +1717,8 @@ class LanceBall extends Ball {
     }
 
     handleUpdate(dt) {
+        // if (t >= 8900) this.boostEnergy = 0;
+
         this.damageThisTick = -1;
         this.weapons[0].theta = Math.atan2(this.vy, this.vx);
         this.dist -= (this.vx ** 2 + this.vy ** 2) * dt;
@@ -1723,7 +1796,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = 92 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (!this.battle.isDuel ? 1.33333 : 1) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -1742,6 +1815,12 @@ class MachineGunBall extends Ball {
         return propsToList({
             "Bullets": { text: this.damagePerRound + this.pendingDamage, grad: { from: 10, to: 150 } },
         });
+    }
+
+    onLoad() {
+        if (!this.battle.isDuel) {
+            this.reloadTime *= 1.33333;
+        }
     }
 }
 
@@ -1779,6 +1858,9 @@ class Bullet extends CircleBody {
     handleCollision(b) {
         if (b instanceof Ball /*&& this.lifetime >= 0.05 * this.maxLifetime*/) {
             const hc = b == this.hitCredit ? this.prevHitCredit : this.hitCredit;
+            // if (t >= 1290 && t <= 1300) {
+            //     console.log(`[t=${t}] bullet handleCollision: hitting ${b.constructor.name}, hitCredit=${this.hitCredit.constructor.name}, prevHitCredit=${this.prevHitCredit?.constructor.name}, using hc=${hc.constructor.name}`);
+            // }
             b.damage(this.dmg, hc.getRootOwner());
         }
         if (b instanceof Turret) this.hp = 0;
@@ -1806,23 +1888,29 @@ class Bullet extends CircleBody {
     }
 
     reflect(wielder, weapon) {
+        // if (t >= 2180 && t <= 2185) {
+        //     const mirrorTheta = ((weapon.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        //     const bulletDir = Math.atan2(this.vy - wielder.vy, this.vx - wielder.vx);
+        //     let velAngleDiff = Math.abs(bulletDir - mirrorTheta);
+        //     if (velAngleDiff > Math.PI) velAngleDiff = 2 * Math.PI - velAngleDiff;
+        //     console.log(`[t=${t}] reflect called: cooldown=${this.reflectCooldown.toFixed(2)}, hitCredit=${this.hitCredit.constructor.name}, overlap=${ballsOverlap(this, wielder)}, mirrorTheta=${(mirrorTheta * 180 / Math.PI).toFixed(1)}°, bulletDir=${(bulletDir * 180 / Math.PI).toFixed(1)}°, velAngleDiff=${(velAngleDiff * 180 / Math.PI).toFixed(1)}° (need >=90°)`);
+        // }
         if (this.reflectCooldown > 0) return;
+        // Don't re-reflect bullets we already own
+        if (this.hitCredit === wielder) return;
 
         this.reflectCooldown = 20;
         if (ballsOverlap(this, wielder)) return;
 
-        // Mirror only reflects from front side
+        const mirrorTheta = ((weapon.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
         if (wielder instanceof MirrorBall) {
-            const mirrorTheta = ((weapon.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-            const toBullet = Math.atan2(this.y - wielder.y, this.x - wielder.x);
-            let angleDiff = Math.abs(toBullet - mirrorTheta);
-            if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
-            if (angleDiff > Math.PI / 2) return;
-
             // Ignore bullets traveling away from mirror (coming from behind)
-            const bulletDir = Math.atan2(this.vy, this.vx);
-            let velAngleDiff = Math.abs(bulletDir - mirrorTheta);
-            if (velAngleDiff > Math.PI) velAngleDiff = 2 * Math.PI - velAngleDiff;
+            let bulletDir = Math.atan2(this.vy, this.vx);
+            let velAngleDiff = bulletDir - mirrorTheta;
+            // Normalize to [-PI, PI]
+            while (velAngleDiff > Math.PI) velAngleDiff -= 2 * Math.PI;
+            while (velAngleDiff < -Math.PI) velAngleDiff += 2 * Math.PI;
+            velAngleDiff = Math.abs(velAngleDiff);
             if (velAngleDiff < Math.PI / 2) return;
         }
 
@@ -1845,8 +1933,8 @@ class Bullet extends CircleBody {
         // Mirror: aim directly at bullet owner with prediction
         if (wielder instanceof MirrorBall) {
             const target = this.owner;
-            this.vx *= 1.2;
-            this.vy *= 1.2;
+            this.vx *= 1.4;
+            this.vy *= 1.4;
             this.dmg *= 2;
             const speed = Math.hypot(this.vx, this.vy);
 
@@ -1878,8 +1966,38 @@ class Bullet extends CircleBody {
 
             if (travelTime > 0) {
                 const g = this.battle.gravity;
-                const predX = target.x + tvx * travelTime;
-                const predY = target.y + tvy * travelTime + 0.5 * g * travelTime * travelTime;
+                let predX = target.x + tvx * travelTime;
+                let predY = target.y + tvy * travelTime + 0.5 * g * travelTime * travelTime;
+
+                // Wall bounce prediction (with gravity for Y walls)
+                const r = target.radius, w = this.battle.width, h = this.battle.height;
+                if (predX < r) predX = r + (r - predX);
+                else if (predX > w - r) predX = w - r - (predX - (w - r));
+
+                // For Y walls, find bounce time via quadratic: y + vy*t + 0.5*g*t^2 = wallY
+                const solveYBounce = (wallY) => {
+                    const a = 0.5 * g, b = tvy, c = target.y - wallY;
+                    if (Math.abs(a) < 1e-9) return b !== 0 ? -c / b : Infinity;
+                    const disc = b * b - 4 * a * c;
+                    if (disc < 0) return Infinity;
+                    const t1 = (-b - Math.sqrt(disc)) / (2 * a);
+                    const t2 = (-b + Math.sqrt(disc)) / (2 * a);
+                    return Math.min(t1 > 0 ? t1 : Infinity, t2 > 0 ? t2 : Infinity);
+                };
+
+                const tTop = solveYBounce(r), tBot = solveYBounce(h - r);
+                const tBounce = Math.min(tTop, tBot);
+                if (tBounce < travelTime) {
+                    const vyAtBounce = tvy + g * tBounce;
+                    const vyAfter = -vyAtBounce * ELASTICITY;
+                    const tRemain = travelTime - tBounce;
+                    const bounceY = tTop < tBot ? r : h - r;
+                    predY = bounceY + vyAfter * tRemain + 0.5 * g * tRemain * tRemain;
+                } else if (predY < r) {
+                    predY = r + (r - predY);
+                } else if (predY > h - r) {
+                    predY = h - r - (predY - (h - r));
+                }
                 const aimDx = predX - this.x;
                 const aimDy = predY - this.y;
                 const aimDist = Math.hypot(aimDx, aimDy);
@@ -1888,30 +2006,17 @@ class Bullet extends CircleBody {
                 const newVy = (aimDy / aimDist) * speed;
 
                 // Only use prediction if it doesn't reflect backwards (into the mirror)
-                // if (this.vx * newVx + this.vy * newVy < 0) {
-                this.vx = newVx;
-                this.vy = newVy;
-                return;
-                // }
+                // if (this.vx * newVx + this.vy * newVy >= 0) console.log(t, "cucurucu");
+                if (this.vx * newVx + this.vy * newVy < 0) {
+                    this.vx = newVx;
+                    this.vy = newVy;
+                    return;
+                }
             }
 
-            // Find closest point on segment to bullet
-            const t = Math.max(0, Math.min(1, ((this.x - seg.x1) * dx + (this.y - seg.y1) * dy) / (len * len)));
-            const closestX = seg.x1 + t * dx;
-            const closestY = seg.y1 + t * dy;
-
-            // Normal from closest point to bullet
-            nx = this.x - closestX;
-            ny = this.y - closestY;
-            const nlen = Math.hypot(nx, ny);
-            if (nlen < EPS) {
-                // Fallback to perpendicular if bullet is exactly on segment
-                nx = -dy / len;
-                ny = dx / len;
-            } else {
-                nx /= nlen;
-                ny /= nlen;
-            }
+            // For mirror, normal is the mirror's facing direction (not perpendicular to segment)
+            nx = Math.cos(mirrorTheta);
+            ny = Math.sin(mirrorTheta);
         }
         else {
             // Normal perpendicular to weapon
@@ -1949,7 +2054,7 @@ class MGBullet extends Bullet {
                 addToHitHistory(h);
             }
 
-            if (hc.team == this.owner.team) {
+            if (hc instanceof MirrorBall || hc.team == this.owner.team) {
                 this.owner.pendingDamage += 1;
             }
         }
@@ -1973,7 +2078,7 @@ class WrenchBall extends Ball {
         this.ticksSinceDamage = 0;
 
         wrench.ballColFns.push((b, reflector) => {
-            if (this.turretCooldown >= EPS) return;
+            if (!reflector && this.turretCooldown >= EPS) return;
 
             const owner = reflector || this;
             // Contact point: on target ball's surface, toward the wrench ball
@@ -1996,7 +2101,7 @@ class WrenchBall extends Ball {
                 );
                 if (overlaps) return;
 
-                this.turretCooldown = 50;
+                if (!reflector) this.turretCooldown = 50;
                 owner.turretCount = (owner.turretCount || 0) + 1;
                 owner.ticksSinceDamage = 0;
 
@@ -2036,7 +2141,7 @@ class WrenchBall extends Ball {
     }
 }
 
-const fireDelay = 34, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
+const fireDelay = 35, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
 class Turret extends CircleBody {
     constructor(x, y, owner, theta, angVel) {
         super(x, y, 0, 0, 1, turretRadius, Infinity, false);
@@ -2149,7 +2254,7 @@ class GrimoireBall extends Ball {
         const cfg = getWeaponConfig(GrimoireBall);
         const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
-        grimoire.addCollider(33, 19);
+        grimoire.addCollider(32, 17);
         grimoire.addSpin(Math.PI * 0.023 * dir);
         // grimoire.addParry();
         grimoire.addDirChange();
@@ -2158,7 +2263,7 @@ class GrimoireBall extends Ball {
 
         grimoire.ballColFns.push((target, reflector) => {
             if (target.depth > 2) return;
-            if (target.depth > 1 && this.battle.rng() < 0.75) return;
+            if (target.depth > 1 && this.battle.rng() < 0.727) return;
             if (this.battle.teamCount[this.team] >= 50) return;
 
             this.nextMinionHP += this.battle.isDuel ? 3 : 1;
@@ -2194,18 +2299,14 @@ class GrimoireBall extends Ball {
         minion.owner = reflector ?? this;
         minion.slowTime = this.slowTime;
         minion.slowFactor = this.slowFactor;
-        minion.mass *= 1 / minionScale ** minion.depth;
+        minion.mass *= 1 / scale;
 
         // Copy boost properties
         this.copyBoosts(target, minion);
 
         // Scale weapon properties
         for (const w of minion.weapons) {
-            w.scale *= scale;
-            w.offset *= scale;
-            w.spriteShift *= scale;
-            if (w.range) w.range *= scale;
-            if (w.thickness) w.thickness *= scale;
+            w.scaleBy(scale * (target.scale ?? 1));
             if (w.theta) w.theta = this.weapons[0].theta + Math.PI;
         }
 
@@ -2241,11 +2342,11 @@ class GrimoireBall extends Ball {
             minion.baseRadius = minion.radius / target.scale;
             minion.baseMass = minion.baseRadius * minion.baseRadius;
             minion.mass = minion.baseMass * minion.scale;
-            minion.boostEnergy = target.boostEnergy;
+            // minion.boostEnergy = target.boostEnergy;
             minion.pastRadii = [minion.radius];
         }
         else if (target instanceof GrimoireBall) {
-            // minion.nextMinionHP = target.nextMinionHP;
+            minion.nextMinionHP = target.nextMinionHP;
         }
     }
 
@@ -2267,6 +2368,11 @@ class GrimoireBall extends Ball {
         if (Constructor === DuplicatorBall) {
             return [...baseArgs, this.nextMinionHP, newRadius];
         }
+        if (Constructor === GrowerBall && !this.battle.isDuel) {
+            const speed = this.startSpeed / (minionScale * Math.sqrt(target.scale));
+            // console.log("teto", speed);
+            return [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed, this.nextMinionHP, newRadius];
+        }
         return [...baseArgs, this.nextMinionHP, newRadius];
     }
 
@@ -2283,7 +2389,7 @@ class GrimoireBall extends Ball {
     // }
 }
 
-const growCooldown = 8;
+const growCooldown = 6;
 const maxScale = 6.56;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
@@ -2309,13 +2415,6 @@ class GrowerBall extends Ball {
         b.slamTimer = this.battle.isDuel ? 10 : 20;
         b.slamSource = owner;
 
-        if (!this.battle.isDuel) {
-            const relSpeed = Math.hypot(owner.vx - b.vx, owner.vy - b.vy);
-            const massRatio = owner.mass / b.mass;
-            const boost = relSpeed * massRatio * 0.15;
-            b._pendingKnockBoost = Math.max(b._pendingKnockBoost || 0, boost);
-        }
-
         if (!(b instanceof GrowerBall || b instanceof DuplicatorBall)) {
             this.hitsThisFrame += 3;
             b.hitsThisFrame += 3;
@@ -2328,13 +2427,14 @@ class GrowerBall extends Ball {
             reflector.baseMass = reflector.mass;
             reflector.growCooldown = 0;
             reflector.pastRadii = [reflector.radius];
+            if (this.battle.isDuel) reflector.getDmgResistance = GrowerBall.prototype.getDmgResistance.bind(reflector);
             reflector.extraUpdates.push(GrowerBall.prototype.handleUpdate.bind(reflector));
         }
 
-        if (owner.scale >= maxScale || owner.growCooldown > EPS || b instanceof GrowerBall) return;
+        if (owner.scale >= maxScale || owner.growCooldown > EPS || (!reflector && (b instanceof GrowerBall))) return;
         owner.growCooldown = growCooldown;
 
-        const targetScale = Math.min(maxScale, Math.sqrt(owner.scale * owner.scale + 0.3));
+        let targetScale = Math.min(maxScale, Math.sqrt(owner.scale * owner.scale + (!this.battle.isDuel && reflector ? 0.2 : 0.3)));
         let targetRadius = owner.baseRadius * targetScale;
 
         if (this.battle.isInsideWall(owner.x, owner.y, targetRadius)) {
@@ -2347,7 +2447,7 @@ class GrowerBall extends Ball {
             targetRadius = lo;
         }
 
-        if (!reflector) this.pastRadii.push(targetRadius);
+        owner.pastRadii.push(targetRadius);
         const prevScale = owner.scale;
         owner.scale = targetRadius / owner.baseRadius;
         owner.mass = owner.baseMass * owner.scale;
@@ -2357,21 +2457,16 @@ class GrowerBall extends Ball {
         if (reflector) {
             const growth = owner.scale / prevScale;
             for (const w of owner.weapons) {
-                w.scale *= growth;
-                w.offset *= growth;
-                w.spriteShift *= growth;
-                if (w.range) w.range *= growth;
-                if (w.thickness) w.thickness *= growth;
+                w.scaleBy(growth);
             }
         }
 
-        if (!this.battle.isDuel) { owner.boostEnergy = 7.5 * (owner.scale - 1); }
+        if (!this.battle.isDuel /*&& t < 8900*/) { owner.boostEnergy = owner.baseRadius * 0.2 * (owner.scale - 1); }
     }
 
     getDmgResistance() {
-        // return this.battle.isDuel ? this.scale ** 2 * 0.4 + 0.6 : this.scale ** 2 * 0.2 + 0.8;
-        return this.battle.isDuel ? this.scale ** 2 * 0.31 + 0.69 : this.scale ** 2 * 0.2 + 0.8;
-        // return this.scale ** 2 * 0.4 + 0.6;
+        // return this.battle.isDuel ? this.scale ** 2 * 0.25 + 0.75 : this.scale ** 2 * 0.2 + 0.8;
+        return this.scale ** 2 * 0.25 + 0.75;
     }
 
     damage(dmg, source = null) {
@@ -2380,6 +2475,7 @@ class GrowerBall extends Ball {
     }
 
     handleUpdate(dt) {
+        // if (t > 8900) this.boostEnergy = 0;
         this.growCooldown -= dt;
 
         for (let b of this.battle.balls) {
@@ -2443,22 +2539,40 @@ class DeathParticle {
 }
 
 // Mirror: Reflects damage back to attackers
-const mirrorCooldown = 5;
+const mirrorCooldown = 8;
 class MirrorBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c0e8ff", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this._cantHitBall = {}; // weapon touched mirror -> can't hit ball
         this._cantReflect = {}; // weapon hit ball -> can't reflect
+        this.collsThisFrame = {};
+        this.collsThisFrame2 = {};
         this.extraUpdates = [];
 
         const cfg = getWeaponConfig(MirrorBall);
         const mirror = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
-        mirror.addCollider(14, 30, 6);
-        mirror.addSpin(Math.PI * 0.02 * dir);
+        mirror.addCollider(13, 30, 2);
+        mirror.addSpin(Math.PI * 0.020 * dir);
         mirror.addParry();
 
+        // Override hit segment to be perpendicular (wide mirror surface)
+        mirror.getHitSegment = function () {
+            const b = this.ball;
+            const dist = b.radius + (this.colliderOffset + this.range) / 2;
+            const nx = Math.cos(this.theta), ny = Math.sin(this.theta);
+            const tx = -ny, ty = nx;  // perpendicular
+            const cx = b.x + nx * dist, cy = b.y + ny * dist;
+            return {
+                x1: cx - tx * this.thickness,
+                y1: cy - ty * this.thickness,
+                x2: cx + tx * this.thickness,
+                y2: cy + ty * this.thickness,
+                r: (this.range - this.colliderOffset) / 2
+            };
+        };
+
         // Reflect damage using attacker's own weapon logic
-        mirror.weaponColFns.push((otherWeapon, hitThisFrame) => {
+        mirror.weaponColFns.push((otherWeapon) => {
             const attacker = otherWeapon.ball;
             if (attacker.team === this.team) return;
 
@@ -2469,7 +2583,7 @@ class MirrorBall extends Ball {
             this._cantHitBall[attacker.id] = mirrorCooldown;
 
             // Mark as hit so iframes don't decrement while in contact
-            hitThisFrame.add(attacker.id + "-" + otherWeapon.theta + "-" + attacker.id);
+            this.battle.hitThisFrame.add(attacker.id + "-" + otherWeapon.theta + "-" + attacker.id);
 
             // Use attacker's ballColFns against themselves
             if (!(attacker.id in otherWeapon.iFrames)) {
@@ -2480,22 +2594,42 @@ class MirrorBall extends Ball {
 
         // Bounce balls that hit the front of the mirror
         mirror.iframes = 0;
+        mirror.DoT = true;
+        mirror._inContact = {};
         mirror.ballColFns.push((b) => {
             const mirrorTheta = ((mirror.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+            const oldvx = this.vx, oldvy = this.vy;
 
             // Mirror normal (perpendicular to mirror surface)
-            const nx = -Math.sin(mirrorTheta);
-            const ny = Math.cos(mirrorTheta);
+            const nx = Math.cos(mirrorTheta);
+            const ny = Math.sin(mirrorTheta);
 
-            applyElasticCollision(this, b, nx, ny);
+            // Skip if ball is already moving away from mirror
+            const relVx = b.vx - this.vx, relVy = b.vy - this.vy;
+            if (relVx * nx + relVy * ny < 0) {
+                decayKnockBoost(this);
+                decayKnockBoost(b);
+                applyElasticCollision(this, b, nx, ny, true);
+            }
 
-            // Reflect weaponless ball abilities back at them
             if (b.dmgWeapons.length === 0 && b.team !== this.team) {
-                b.handleCollision(b, this);
+                const bounced = this.vx != oldvx || this.vy != oldvy;
+                const newContact = !mirror._inContact[b.id];
+                mirror._inContact[b.id] = true;
+
+                const nColl = Math.max(+bounced, +newContact, this.collsThisFrame[b.id] ?? 0);
+                // if (nColl > 0) console.log(+bounced, +newContact, this.collsThisFrame[b.id] ?? 0);
+                for (let i = 0; i < nColl; i++) {
+                    b.handleCollision(b, this);
+                }
             }
         });
 
         this.addWeapon(mirror);
+    }
+
+    handleCollision(b) {
+        this.collsThisFrame2[b.id] = (this.collsThisFrame2[b.id] ?? 0) + 1;
     }
 
     handleUpdate(dt) {
@@ -2508,34 +2642,38 @@ class MirrorBall extends Ball {
             if (this._cantReflect[k] <= 0) delete this._cantReflect[k];
         }
 
+        this.collsThisFrame = this.collsThisFrame2;
+        this.collsThisFrame2 = {};
+
         for (let u of this.extraUpdates) {
             u(dt);
         }
     }
 
     damage(dmg, source) {
-        // Block damage from weapons currently in cooldown with mirror
-        if (source instanceof Ball) {
-            if (source.id in this._cantHitBall) return;
+        if (source.id in this._cantHitBall) {
+            this.weapons[0].weaponColFns.forEach(fn => fn(source.weapons[0]));
+            return;
         }
-        super.damage(dmg, source);
+        super.damage(dmg / (this.getDmgResistance?.() ?? 1), source);
     }
 
     getInfoEl() {
-        return propsToList({
-            "Reflected": { text: Math.round(this.damageDealt), grad: { from: 0, to: 50 } },
-        });
+        const el = document.createElement("span");
+        el.className = "na";
+        el.textContent = "N/A";
+        return el;
     }
 }
 
 const ballClasses = [
     { name: "Duplicator", class: DuplicatorBall, hp: 100, radius: 20, color: "#f86ffa" },
     { name: "Grower", class: GrowerBall, hp: 100, radius: 30, color: "#008a12" },
-    { name: "Dagger", class: DaggerBall, hp: 100, radius: 25, color: "#89d721", weapon: { sprite: "sprites/dagger.png", scale: 3, offset: -9, rotation: Math.PI / 4, spin: true } },
-    { name: "Lance", class: LanceBall, hp: 100, radius: 25, color: "#dfbf9f", weapon: { sprite: "sprites/spear.png", scale: 4, offset: -50, rotation: 3 * Math.PI / 4, spin: false } },
+    { name: "Dagger", class: DaggerBall, hp: 100, radius: 25, color: "#89d721", weapon: { sprite: "sprites/dagger.png", scale: 3, offset: -11, rotation: Math.PI / 4, spin: true } },
+    { name: "Lance", class: LanceBall, hp: 100, radius: 25, color: "#dfbf9f", weapon: { sprite: "sprites/spear.png", scale: 4, offset: -44, rotation: 3 * Math.PI / 4, spin: false } },
     { name: "Machine Gun", class: MachineGunBall, hp: 100, radius: 25, color: "#61a3e9", weapon: { sprite: "sprites/gun.png", scale: 2, offset: -9, shift: 7, rotation: 0, spin: true } },
     { name: "Wrench", class: WrenchBall, hp: 100, radius: 25, color: "#ff9933", weapon: { sprite: "sprites/wrench.png", scale: 2, offset: -6, rotation: 3 * Math.PI / 4, spin: true } },
-    { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.webp", scale: 2.2, offset: -15, shift: -1, rotation: Math.PI / 4, spin: true } },
+    { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.webp", scale: 2, offset: -13, shift: -1, rotation: Math.PI / 4, spin: true } },
     { name: "Sword", class: SwordBall, hp: 100, radius: 25, color: "#ff6464", weapon: { sprite: "sprites/sword.png", scale: 4, offset: -21, rotation: Math.PI / 4, spin: true } },
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
 ];

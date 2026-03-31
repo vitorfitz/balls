@@ -23,83 +23,76 @@ global.MachineGunBall = MachineGunBall;
 global.DuplicatorBall = DuplicatorBall;
 global.WrenchBall = WrenchBall;
 global.GrimoireBall = GrimoireBall;
+global.MirrorBall = MirrorBall;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
 global.createPlusArenaWalls = createPlusArenaWalls;
+global.ballClasses = ballClasses;
 `;
 
 eval(code);
+const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js');
 
-const BALL_TYPES = [
-    { name: "Grower", class: global.GrowerBall, color: "#008a12", spin: false },
-    { name: 'Dagger', class: global.DaggerBall, color: '#5fbf00', spin: true },
-    { name: 'Lance', class: global.LanceBall, color: '#dfbf9f', spin: false },
-    { name: 'Machine Gun', class: global.MachineGunBall, color: '#61a3e9', spin: true },
-    { name: 'Wrench', class: global.WrenchBall, color: '#ff9933', spin: true },
-    { name: 'Grimoire', class: global.GrimoireBall, color: '#a3a3c6', spin: true },
-    { name: 'Sword', class: global.SwordBall, color: '#ff6464', spin: true },
-];
-
-const POSITIONS = [[750, 1350], [150, 450], [150, 1050], [1350, 450], [1350, 1050], [450, 150], [1050, 150]];
+const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 15000;
-const MATCHES = 1000;
+const MATCHES = 100;
 
 function simulate() {
     const seed = Date.now() + Math.random();
-    const rng = new Math.seedrandom(seed);
-    const size = 1500, armWidth = 900, holeSize = 300;
+    const { size } = FFA_CONFIG;
 
-    const balls = BALL_TYPES.map((t, i) => {
-        const [x, y] = POSITIONS[i];
-        const theta = rng() * 2 * Math.PI;
-        const vx = Math.cos(theta) * 5, vy = Math.sin(theta) * 5;
-        const spinArgs = t.spin ? [0, 1] : [];
-        return new t.class(x, y, vx, vy, ...spinArgs, 100);
-    });
+    const result = createFFABattle(global.ballClasses, seed, createFFABall, global.BallBattle, global.createPlusArenaWalls);
+    const battle = result.battle;
 
-    const battle = new global.BallBattle(balls, seed, 0.05);
     battle.width = battle.height = size;
-    battle.walls = global.createPlusArenaWalls(size, armWidth, holeSize);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: size, height: size, style: {} };
-    battle.shrinkConfig = {
-        baseSize: size, baseArmWidth: armWidth, holeSize,
-        stages: [
-            { players: 4, size: 900, zoom: 1.45 },
-            { players: 2, size: 600, holeSize: 200, zoom: 1.8 },
-        ]
-    };
-    battle.isInBounds = () => true;
     global.t = 0;
 
+    // Track all balls before any die
+    const allBalls = battle.balls.filter(b => !b.owner);
+
+    let grimMirrorStalemate = false;
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
         global.t++;
         battle.updateTimeScale();
         battle.update();
+
+        const alive = battle.balls.filter(b => !b.owner);
+        if (alive.length === 2 &&
+            alive.every(b => (b instanceof GrimoireBall || b instanceof MirrorBall) && b.hp > 20)) {
+            grimMirrorStalemate = true;
+            alive.sort((a, b) => b.hp - a.hp);
+            if (alive[0].hp > alive[1].hp) alive[1].hp = 0;
+            else { alive[0].hp = 0; alive[1].hp = 0; } // draw: kill both
+            battle.processDeaths();
+            break;
+        }
     }
 
     const winner = battle.balls.find(b => !b.owner);
     const winnerIdx = winner ? BALL_TYPES.findIndex(t => t.color === winner.team) : -1;
     const damages = BALL_TYPES.map(t => {
-        const b = balls.find(ball => ball.team === t.color);
+        const b = allBalls.find(ball => ball.team === t.color);
         return b ? b.damageDealt : 0;
     });
 
-    return { winnerIdx, damages };
+    return { winnerIdx, damages, grimMirrorStalemate };
 }
 
 if (!isMainThread) {
     const { count } = workerData;
     const wins = new Array(BALL_TYPES.length).fill(0);
     const totalDmg = new Array(BALL_TYPES.length).fill(0);
+    let stalemateCount = 0;
 
     for (let i = 0; i < count; i++) {
-        const { winnerIdx, damages } = simulate();
+        const { winnerIdx, damages, grimMirrorStalemate } = simulate();
         if (winnerIdx >= 0) wins[winnerIdx]++;
         damages.forEach((d, j) => totalDmg[j] += d);
-        // parentPort.postMessage({ type: 'progress' });
+        if (grimMirrorStalemate) stalemateCount++;
     }
-    parentPort.postMessage({ type: 'done', wins, totalDmg, count });
+    parentPort.postMessage({ type: 'done', wins, totalDmg, count, stalemateCount });
 } else {
     const NUM_WORKERS = os.cpus().length;
     // const NUM_WORKERS = 5;
@@ -134,14 +127,17 @@ if (!isMainThread) {
         const wins = new Array(BALL_TYPES.length).fill(0);
         const totalDmg = new Array(BALL_TYPES.length).fill(0);
         let totalMatches = 0;
+        let totalStalemateCount = 0;
 
         results.forEach(r => {
             r.wins.forEach((w, i) => wins[i] += w);
             r.totalDmg.forEach((d, i) => totalDmg[i] += d);
             totalMatches += r.count;
+            totalStalemateCount += r.stalemateCount;
         });
 
         console.log('=== FFA RESULTS ===\n');
+        console.log(`Grimoire/Mirror stalemates: ${totalStalemateCount}/${totalMatches}\n`);
         const stats = BALL_TYPES.map((t, i) => ({
             name: t.name,
             wins: wins[i],

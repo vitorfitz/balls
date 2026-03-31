@@ -205,6 +205,11 @@ body {
     white-space: nowrap;
 }
 
+.na {
+    color: #7f7f7f;
+    font-style: italic;
+}
+
 .hp-bar {
     position: relative;
     display: flex;
@@ -243,7 +248,7 @@ body {
     overflow-y: auto;
     position: relative;
     width: 200px;
-    height: 583px;
+    height: 668px;
 }
 
 .dmg {

@@ -21,6 +21,7 @@ function simulate(t1Idx, t2Idx, seed) {
     t = 0;
 
     let minHpDiff = 0, maxHpDiff = 0;
+    let dupeNearDeath = { [b1.team]: false, [b2.team]: false };
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
         t++;
         battle.updateTimeScale();
@@ -32,19 +33,28 @@ function simulate(t1Idx, t2Idx, seed) {
         minHpDiff = Math.min(minHpDiff, diff);
         maxHpDiff = Math.max(maxHpDiff, diff);
 
+        // Track if dupe ever had <=3 units with <=50 HP
+        for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
+            if (ball instanceof DuplicatorBall) {
+                const units = battle.teamCount?.[team] ?? 1;
+                const maxHp = Math.max(...battle.balls.filter(b => b.team === team).map(b => b.hp));
+                if (units <= 3 && maxHp <= 50) dupeNearDeath[team] = true;
+            }
+        }
+
         if (p1 && !p2) {
             let hp = p1.hp;
             if (p1 instanceof DuplicatorBall) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b1.team).map(b => b.hp));
             }
-            return { winner: 'p1', hp, units: battle.dupeCount?.[b1.team] ?? 1, ticks: t, hpSwing: maxHpDiff - minHpDiff };
+            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team] };
         }
         if (p2 && !p1) {
             let hp = p2.hp;
             if (p2 instanceof DuplicatorBall) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b2.team).map(b => b.hp));
             }
-            return { winner: 'p2', hp, units: battle.dupeCount?.[b2.team] ?? 1, ticks: t, hpSwing: maxHpDiff - minHpDiff };
+            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team] };
         }
     }
     return { winner: 'draw' };
@@ -58,11 +68,17 @@ onmessage = (e) => {
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
             // if (i != 1 && j != 1) continue;
+            if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
+            // if (!(key in DRAMATIC_SEEDS)) continue;
             const results = [];
 
-            for (let seed = 0; seed < matches; seed++) {
+            let m = key == "Duplicator_Mirror" ? 0.1 :
+                key == "Duplicator_Grimoire" ? 0.5 :
+                    1;
+
+            for (let seed = 0; seed < matches * m; seed++) {
                 const r = simulate(i, j, seed);
                 if (r.winner !== 'draw') results.push({ seed, ...r });
             }
@@ -80,9 +96,15 @@ onmessage = (e) => {
                 const loserIdx = r.winner === 'p1' ? j : i;
                 const isDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
+                const winnerIsMirror = BALL_TYPES[winnerIdx].name === 'Mirror';
                 const isDupBeatsWrench = isDupe && BALL_TYPES[loserIdx].name === 'Wrench';
-                const effectiveThreshold = isDupBeatsWrench ? 75 : loserIsDupe ? 5 : threshold;
-                return r.hp <= effectiveThreshold || (isDupe && r.units <= 5);
+                const isDupBeatsSword = isDupe && BALL_TYPES[loserIdx].name === 'Sword';
+                const isDupBeatsMG = isDupe && BALL_TYPES[loserIdx].name === 'Machine Gun';
+                const effectiveThreshold = isDupBeatsWrench ? 65 :
+                    (isDupBeatsSword || isDupBeatsMG) ? 3 :
+                        (loserIsDupe && !winnerIsMirror) ? 5 :
+                            threshold;
+                return r.hp <= effectiveThreshold || (isDupe && r.dupeNearDeath);
             }).map(r => r.seed);
 
             dramaticSeeds[key] = seeds;
