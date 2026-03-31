@@ -215,7 +215,9 @@ class Ball extends CircleBody {
     checkSlamDamage(other = null) {
         if (this.slamTimer > 0) {
             // this.damage(this.slamTimer, this.slamSource);
-            let dmg = this.slamTimer > (this.battle.isDuel ? 8 : 15) ? 2 : 1;
+            let dmg = this.slamTimer > 19 ? 3 :
+                this.slamTimer > (this.battle.isDuel ? 8 : 15) ? 2 :
+                    1;
             this.damage(dmg, this.slamSource);
 
             if (other && other instanceof Ball && other.team != this.team) {
@@ -393,6 +395,14 @@ function createBorderWalls(width, height) {
 
 // Plus-shaped arena with center hole
 // armWidth: width of the plus arms, holeSize: size of center square hole
+function plusArenaInBounds(x, y, r, size, armWidth, holeSize, offset = 0) {
+    const as = offset + (size - armWidth) / 2, ae = offset + (size + armWidth) / 2;
+    const hs = offset + (size - holeSize) / 2, he = offset + (size + holeSize) / 2;
+    if (x - r < offset || x + r > offset + size || y - r < offset || y + r > offset + size) return false;
+    if (x + r > hs && x - r < he && y + r > hs && y - r < he) return false;
+    return (x - r >= as && x + r <= ae) || (y - r >= as && y + r <= ae);
+}
+
 function createPlusArenaWalls(size, armWidth, holeSize) {
     const armStart = (size - armWidth) / 2;
     const armEnd = (size + armWidth) / 2;
@@ -448,6 +458,7 @@ function ballsOverlap(b1, b2) {
 
 // Find time of collision between two balls (returns Infinity if no collision in dt)
 function timeToCollision(b1, b2, dt, r1Override = null, r2Override = null) {
+    const _isDaggerLance = false;
     if (b1 instanceof Ball && b2 instanceof Ball && (b1.inert || b2.inert)) return Infinity;
     if (b1 instanceof Bullet && b2 instanceof Bullet) return Infinity;
     if (b1 instanceof Bullet && b1.prevHitCredit == null && b2.team === b1.owner.team) return Infinity;
@@ -558,7 +569,7 @@ function decayKnockBoost(b, pct = 0.5) {
 const knockBoostEnabled = true;
 function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
     const bothGrowerOrNeither = (b1 instanceof GrowerBall) === (b2 instanceof GrowerBall);
-    const boostScale = bothGrowerOrNeither ? 0 : 1;
+    const boostScale = (b1 instanceof GrowerBall && b2 instanceof GrowerBall) ? 0 : 1;
 
     // Effective boost energy, capped by kinetic energy. Zero if both are growers.
     const effBoost1 = Math.min(b1.boostEnergy || 0, 0.5 * (b1.vx ** 2 + b1.vy ** 2)) * boostScale;
@@ -590,7 +601,9 @@ function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
     };
 
     // Grower-vs-non-grower can still collide even when unboosted velocities diverge
-    const isGrowerKnock = !fromMirror && knockBoostEnabled && !bothGrowerOrNeither;
+    const growerEff = (b1 instanceof GrowerBall && !(b2 instanceof GrowerBall)) ? effBoost1
+        : (b2 instanceof GrowerBall && !(b1 instanceof GrowerBall)) ? effBoost2 : 0;
+    const isGrowerKnock = !fromMirror && knockBoostEnabled && !bothGrowerOrNeither && growerEff > 0;
     if (velAlongNormal > 0 && !isGrowerKnock) {
         tryBoostReflect(b1, b2, 1);
         tryBoostReflect(b2, b1, -1);
@@ -729,10 +742,8 @@ function resolveCollision(b1, b2) {
         const growerAlongN = grower.vx * sa * nx + grower.vy * sa * ny;
         const otherAlongN = other.vx * sb * nx + other.vy * sb * ny;
 
-        if (t == 8932 || t == 9613) console.log(`[t=${t}] sep check: growerAlongN=${growerAlongN.toFixed(4)}, otherAlongN=${otherAlongN.toFixed(4)}, sa=${sa.toFixed(4)}, sb=${sb.toFixed(4)}, grower=${grower.constructor.name}, other=${other.constructor.name}`);
         if (otherAlongN <= growerAlongN && growerAlongN > 0 && otherAlongN >= 0) {
-            const boost = 2 * (growerAlongN / sb - other.vx * nx - other.vy * ny) + 0.001;
-            if (t == 8932 || t == 9613) console.log(`[t=${t}] GOT HERE boost=${boost}`);
+            const boost = 2 * (growerAlongN - other.vx * nx - other.vy * ny) + 0.001;
             other.vx += boost * nx;
             other.vy += boost * ny;
             if (other.team != grower.team) other.damage(2, grower);
@@ -883,7 +894,7 @@ class BallBattle {
             for (let i = 0; i < this.balls.length; i++) {
                 count += (this.balls[i] instanceof DuplicatorBall ? 0.1 : 1) * (this.balls[i].owner ? 0.5 : 1);
             }
-            this.targetTimeScale = 0.95 ** Math.max(0, count - 2);
+            this.targetTimeScale = 0.95 ** Math.max(0, count);
             // this.targetTimeScale = 0.7;
         }
 
@@ -1298,11 +1309,19 @@ class BallBattle {
         const holeDelta = this.arenaHoleSize - targetHoleSize;
         const zoomDelta = targetZoom - this.zoom;
         if (sizeDelta > 0) {
-            const rate = 1 / sizeDelta;
-            this.arenaSize -= 1;
-            if (holeDelta > 0) this.arenaHoleSize -= holeDelta * rate;
-            this.zoom += zoomDelta * rate;
-            this.canvas.style.transform = `scale(${this.zoom})`;
+            const nextSize = this.arenaSize - 1;
+            const nextOffset = (baseSize - nextSize) / 2;
+            const nextArmWidth = Math.min(baseArmWidth, nextSize);
+            const wouldPush = this.balls.some(b =>
+                !plusArenaInBounds(b.x, b.y, b.radius, nextSize, nextArmWidth, this.arenaHoleSize, nextOffset)
+            );
+            if (!wouldPush) {
+                const rate = 1 / sizeDelta;
+                this.arenaSize -= 1;
+                if (holeDelta > 0) this.arenaHoleSize -= holeDelta * rate;
+                this.zoom += zoomDelta * rate;
+                this.canvas.style.transform = `scale(${this.zoom})`;
+            }
         }
         const size = this.arenaSize;
         const curHoleSize = this.arenaHoleSize;
@@ -1323,11 +1342,7 @@ class BallBattle {
         const as = offset + (size - armWidth) / 2, ae = offset + (size + armWidth) / 2;
         const hs = offset + (size - curHoleSize) / 2, he = offset + (size + curHoleSize) / 2;
 
-        this.isInBounds = (x, y, r) => {
-            if (x - r < offset || x + r > offset + size || y - r < offset || y + r > offset + size) return false;
-            if (x + r > hs && x - r < he && y + r > hs && y - r < he) return false;
-            return (x - r >= as && x + r <= ae) || (y - r >= as && y + r <= ae);
-        };
+        this.isInBounds = (x, y, r) => plusArenaInBounds(x, y, r, size, armWidth, curHoleSize, offset);
 
         this.drawArena = (ctx) => {
             ctx.fillStyle = "#fff";
@@ -1438,7 +1453,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 8900) {
+        // while (t < 1010) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -1597,7 +1612,7 @@ class DaggerBall extends Ball {
         const dagger = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset);
         dagger.addCollider(25, 6);
         dagger.addSpin(baseSpin * dir);
-        // dagger.addParry();
+        dagger.addParry();
         dagger.addDamage(1, 1, false, 1.5);
         // dagger.addDirChange();
 
@@ -1796,7 +1811,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = (!this.battle.isDuel ? 1.33333 : 1) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (!this.battle.isDuel ? 1.4 : 1) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -1819,7 +1834,7 @@ class MachineGunBall extends Ball {
 
     onLoad() {
         if (!this.battle.isDuel) {
-            this.reloadTime *= 1.33333;
+            this.reloadTime *= 1.4;
         }
     }
 }
@@ -2342,7 +2357,7 @@ class GrimoireBall extends Ball {
             minion.baseRadius = minion.radius / target.scale;
             minion.baseMass = minion.baseRadius * minion.baseRadius;
             minion.mass = minion.baseMass * minion.scale;
-            // minion.boostEnergy = target.boostEnergy;
+            minion.boostEnergy = target.boostEnergy / minionScale;
             minion.pastRadii = [minion.radius];
         }
         else if (target instanceof GrimoireBall) {
@@ -2673,7 +2688,7 @@ const ballClasses = [
     { name: "Lance", class: LanceBall, hp: 100, radius: 25, color: "#dfbf9f", weapon: { sprite: "sprites/spear.png", scale: 4, offset: -44, rotation: 3 * Math.PI / 4, spin: false } },
     { name: "Machine Gun", class: MachineGunBall, hp: 100, radius: 25, color: "#61a3e9", weapon: { sprite: "sprites/gun.png", scale: 2, offset: -9, shift: 7, rotation: 0, spin: true } },
     { name: "Wrench", class: WrenchBall, hp: 100, radius: 25, color: "#ff9933", weapon: { sprite: "sprites/wrench.png", scale: 2, offset: -6, rotation: 3 * Math.PI / 4, spin: true } },
-    { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.webp", scale: 2, offset: -13, shift: -1, rotation: Math.PI / 4, spin: true } },
+    { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.png", scale: 2, offset: -13, shift: -1, rotation: Math.PI / 4, spin: true } },
     { name: "Sword", class: SwordBall, hp: 100, radius: 25, color: "#ff6464", weapon: { sprite: "sprites/sword.png", scale: 4, offset: -21, rotation: Math.PI / 4, spin: true } },
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
 ];
