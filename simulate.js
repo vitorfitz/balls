@@ -45,7 +45,7 @@ const BALL_TYPES = [
 ];
 
 const MAX_TICKS = 10000;
-const MATCHES = 100;
+const MATCHES = 1000;
 
 function simulate(t1Idx, t2Idx) {
     const rng = new Math.seedrandom();
@@ -108,11 +108,12 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                // if (i != 8 && j != 8) continue;
+                // if (i != 2 && j != 2) continue;
                 if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;
                 if (i == 0 && j == 8 /* Dupe vs Mirror */) { w1 = MATCHES * 0.4; w2 = MATCHES * 0.6; draws = 0 }
+                else if (i == 0 && j == 6 /* Dupe vs Grim */) { w1 = MATCHES * 0.8; w2 = MATCHES * 0.2; draws = 0 }
                 else
                     ({ w1, w2, draws } = await runMatchup(i, j));
                 const t1 = BALL_TYPES[i], t2 = BALL_TYPES[j];

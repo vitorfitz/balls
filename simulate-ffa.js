@@ -35,7 +35,7 @@ const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js'
 
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 15000;
-const MATCHES = 100;
+const MATCHES = 1000;
 
 function simulate() {
     const seed = Date.now() + Math.random();
@@ -84,18 +84,19 @@ if (!isMainThread) {
     const { count } = workerData;
     const wins = new Array(BALL_TYPES.length).fill(0);
     const totalDmg = new Array(BALL_TYPES.length).fill(0);
+    const totalDmgSq = new Array(BALL_TYPES.length).fill(0);
     let stalemateCount = 0;
 
     for (let i = 0; i < count; i++) {
         const { winnerIdx, damages, grimMirrorStalemate } = simulate();
         if (winnerIdx >= 0) wins[winnerIdx]++;
-        damages.forEach((d, j) => totalDmg[j] += d);
+        damages.forEach((d, j) => { totalDmg[j] += d; totalDmgSq[j] += d * d; });
         if (grimMirrorStalemate) stalemateCount++;
     }
-    parentPort.postMessage({ type: 'done', wins, totalDmg, count, stalemateCount });
+    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, count, stalemateCount });
 } else {
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 5;
+    // const NUM_WORKERS = 3;
 
     (async () => {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
@@ -126,12 +127,14 @@ if (!isMainThread) {
 
         const wins = new Array(BALL_TYPES.length).fill(0);
         const totalDmg = new Array(BALL_TYPES.length).fill(0);
+        const totalDmgSq = new Array(BALL_TYPES.length).fill(0);
         let totalMatches = 0;
         let totalStalemateCount = 0;
 
         results.forEach(r => {
             r.wins.forEach((w, i) => wins[i] += w);
             r.totalDmg.forEach((d, i) => totalDmg[i] += d);
+            r.totalDmgSq.forEach((d, i) => totalDmgSq[i] += d);
             totalMatches += r.count;
             totalStalemateCount += r.stalemateCount;
         });
@@ -142,13 +145,14 @@ if (!isMainThread) {
             name: t.name,
             wins: wins[i],
             winrate: (wins[i] / totalMatches * 100).toFixed(1),
-            avgDmg: Math.round(totalDmg[i] / totalMatches)
+            avgDmg: Math.round(totalDmg[i] / totalMatches),
+            stdDmg: Math.round(Math.sqrt(totalDmgSq[i] / totalMatches - (totalDmg[i] / totalMatches) ** 2))
         })).sort((a, b) => b.wins - a.wins);
 
-        console.log('Name'.padEnd(12) + 'Wins'.padStart(6) + 'Winrate'.padStart(10) + 'Avg Dmg'.padStart(10));
-        console.log('-'.repeat(38));
+        console.log('Name'.padEnd(12) + 'Wins'.padStart(6) + 'Winrate'.padStart(10) + 'Avg Dmg'.padStart(10) + 'Std Dmg'.padStart(10));
+        console.log('-'.repeat(48));
         stats.forEach(s => {
-            console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10));
+            console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10) + String(s.stdDmg).padStart(10));
         });
     })();
 }

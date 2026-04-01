@@ -845,8 +845,8 @@ class BallBattle {
         this.gravity = gravity;
 
         this.nextID = 0;
-        // this.debug = true;
-        this.debug = false;
+        this.debug = true;
+        // this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -1604,15 +1604,51 @@ class DuplicatorBall extends Ball {
 }
 
 // Dagger: Spins faster
-const baseSpin = Math.PI * 0.08;
+// const baseSpin = Math.PI * 0.08;
+// class DaggerBall extends Ball {
+//     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
+//         super(x, y, vx, vy, hp, radius, color, mass);
+//         const cfg = getWeaponConfig(DaggerBall);
+//         const dagger = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset);
+//         dagger.addCollider(28, 6);
+//         dagger.addSpin(baseSpin * dir);
+//         dagger.addParry();
+//         dagger.addDamage(1, 1, false, 1.5);
+//         // dagger.addDirChange();
+
+//         this.scalingCooldown = 0;
+//         dagger.ballColFns.push((b) => {
+//             if (this.scalingCooldown <= EPS) {
+//                 // dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * (this.battle.isDuel ? 3 / 20 : 1 / 5)) * Math.sign(dagger.angVel);
+//                 // this.scalingCooldown = (this.battle.isDuel ? 6 : 10);
+//                 dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 0.15) * Math.sign(dagger.angVel);
+//                 this.scalingCooldown = 8;
+//             }
+//         });
+
+//         this.addWeapon(dagger);
+//     }
+
+//     handleUpdate(dt) {
+//         this.scalingCooldown -= dt;
+//     }
+
+//     getInfoEl() {
+//         return propsToList({
+//             "Spin Boost": { text: Math.round((Math.abs(this.weapons[0].angVel) - baseSpin) * 100 / baseSpin) + "%", grad: { from: 0, to: 1000 } },
+//         });
+//     }
+// }
+
+const baseSpin = Math.PI * 0.07;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         const cfg = getWeaponConfig(DaggerBall);
         const dagger = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset);
-        dagger.addCollider(25, 6);
+        dagger.addCollider(28, 6);
         dagger.addSpin(baseSpin * dir);
-        dagger.addParry();
+        // dagger.addParry();
         dagger.addDamage(1, 1, false, 1.5);
         // dagger.addDirChange();
 
@@ -1621,7 +1657,7 @@ class DaggerBall extends Ball {
             if (this.scalingCooldown <= EPS) {
                 // dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * (this.battle.isDuel ? 3 / 20 : 1 / 5)) * Math.sign(dagger.angVel);
                 // this.scalingCooldown = (this.battle.isDuel ? 6 : 10);
-                dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 3 / 20) * Math.sign(dagger.angVel);
+                dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 0.15) * Math.sign(dagger.angVel);
                 this.scalingCooldown = 6;
             }
         });
@@ -1710,7 +1746,7 @@ class LanceBall extends Ball {
                 if (this.combo == 0 || oldHit < comboLeniency - 1) this.dist = 0;
 
                 this.comboHits.add(target.id);
-                const distToHit = 77 * this.startSpeed;
+                const distToHit = 78 * this.startSpeed;
                 const counts = Math.floor(-this.dist / distToHit) + 1;
                 this.dist += counts * distToHit;
 
@@ -1811,7 +1847,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = (!this.battle.isDuel ? 1.4 : 1) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (!this.battle.isDuel ? 1.5 : 1) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -1834,7 +1870,7 @@ class MachineGunBall extends Ball {
 
     onLoad() {
         if (!this.battle.isDuel) {
-            this.reloadTime *= 1.4;
+            this.reloadTime *= 1.5;
         }
     }
 }
@@ -2684,7 +2720,7 @@ class MirrorBall extends Ball {
 const ballClasses = [
     { name: "Duplicator", class: DuplicatorBall, hp: 100, radius: 20, color: "#f86ffa" },
     { name: "Grower", class: GrowerBall, hp: 100, radius: 30, color: "#008a12" },
-    { name: "Dagger", class: DaggerBall, hp: 100, radius: 25, color: "#89d721", weapon: { sprite: "sprites/dagger.png", scale: 3, offset: -11, rotation: Math.PI / 4, spin: true } },
+    { name: "Dagger", class: DaggerBall, hp: 100, radius: 25, color: "#89d721", weapon: { sprite: "sprites/dagger.png", scale: 3, offset: -9, rotation: Math.PI / 4, spin: true } },
     { name: "Lance", class: LanceBall, hp: 100, radius: 25, color: "#dfbf9f", weapon: { sprite: "sprites/spear.png", scale: 4, offset: -44, rotation: 3 * Math.PI / 4, spin: false } },
     { name: "Machine Gun", class: MachineGunBall, hp: 100, radius: 25, color: "#61a3e9", weapon: { sprite: "sprites/gun.png", scale: 2, offset: -9, shift: 7, rotation: 0, spin: true } },
     { name: "Wrench", class: WrenchBall, hp: 100, radius: 25, color: "#ff9933", weapon: { sprite: "sprites/wrench.png", scale: 2, offset: -6, rotation: 3 * Math.PI / 4, spin: true } },

@@ -44,14 +44,14 @@ function simulate(t1Idx, t2Idx, seed) {
 
         if (p1 && !p2) {
             let hp = p1.hp;
-            if (p1 instanceof DuplicatorBall) {
+            if (p1 instanceof DuplicatorBall || ((p1 instanceof MirrorBall) && (p2 instanceof DuplicatorBall))) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b1.team).map(b => b.hp));
             }
             return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team] };
         }
         if (p2 && !p1) {
             let hp = p2.hp;
-            if (p2 instanceof DuplicatorBall) {
+            if (p2 instanceof DuplicatorBall || ((p2 instanceof MirrorBall) && (p1 instanceof DuplicatorBall))) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b2.team).map(b => b.hp));
             }
             return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team] };
@@ -68,6 +68,7 @@ onmessage = (e) => {
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
             // if (i != 1 && j != 1) continue;
+            if (i != 0 || j != 8) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -102,7 +103,7 @@ onmessage = (e) => {
                 const isDupBeatsMG = isDupe && BALL_TYPES[loserIdx].name === 'Machine Gun';
                 const effectiveThreshold = isDupBeatsWrench ? 65 :
                     (isDupBeatsSword || isDupBeatsMG) ? 3 :
-                        (loserIsDupe && !winnerIsMirror) ? 5 :
+                        (loserIsDupe || (isDupe && winnerIsMirror)) ? 5 :
                             threshold;
                 return r.hp <= effectiveThreshold || (isDupe && r.dupeNearDeath);
             }).map(r => r.seed);
