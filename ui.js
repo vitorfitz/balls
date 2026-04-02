@@ -3,7 +3,7 @@
 const d = new Date().getTime();
 console.log(d);
 let battleSeed = d;
-// let battleSeed = 1775097368574;
+// let battleSeed = 1775148714492;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
