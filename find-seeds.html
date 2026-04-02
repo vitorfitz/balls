@@ -19,7 +19,6 @@
     <h3>Dramatic Seed Finder</h3>
     <div>
         <label>Matches per matchup: <input type="number" id="matches" value="100"></label>
-        <label>HP Threshold: <input type="number" id="threshold" value="10"></label>
         <button id="start">Start</button>
     </div>
     <div id="output"></div>
@@ -28,12 +27,11 @@
         document.getElementById('start').onclick = () => {
             const output = document.getElementById('output');
             const matches = +document.getElementById('matches').value;
-            const threshold = +document.getElementById('threshold').value;
 
             output.textContent = 'Running in worker...\n';
 
             const worker = new Worker('find-seeds-worker.js');
-            worker.postMessage({ matches, threshold });
+            worker.postMessage({ matches });
             worker.onmessage = (e) => {
                 if (e.data.progress) {
                     output.textContent = 'Running in worker...\n' + e.data.progress;

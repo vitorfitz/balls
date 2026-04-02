@@ -2,6 +2,7 @@ importScripts('seedrandom.js', 'index.js');
 
 const MAX_TICKS = 10000;
 const BALL_TYPES = ballClasses.map(b => ({ name: b.name }));
+const threshold = 10;
 
 function makeBall(i, pos, rng) {
     const data = ballClasses[i];
@@ -22,6 +23,8 @@ function simulate(t1Idx, t2Idx, seed) {
 
     let minHpDiff = 0, maxHpDiff = 0;
     let dupeNearDeath = { [b1.team]: false, [b2.team]: false };
+    let swordDaggerDramaticTick = { [b1.team]: null, [b2.team]: null };
+    const isSwordDagger = (b1 instanceof SwordBall && b2 instanceof DaggerBall) || (b1 instanceof DaggerBall && b2 instanceof SwordBall);
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
         t++;
         battle.updateTimeScale();
@@ -32,6 +35,14 @@ function simulate(t1Idx, t2Idx, seed) {
         const diff = (p1 ? p1.hp : 0) - (p2 ? p2.hp : 0);
         minHpDiff = Math.min(minHpDiff, diff);
         maxHpDiff = Math.max(maxHpDiff, diff);
+
+        if (isSwordDagger) {
+            for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
+                if (ball instanceof DaggerBall && swordDaggerDramaticTick[team] === null && ball.hp <= threshold) {
+                    swordDaggerDramaticTick[team] = t;
+                }
+            }
+        }
 
         // Track if dupe ever had <=3 units with <=50 HP
         for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
@@ -47,28 +58,27 @@ function simulate(t1Idx, t2Idx, seed) {
             if (p1 instanceof DuplicatorBall || ((p1 instanceof MirrorBall) && (p2 instanceof DuplicatorBall))) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b1.team).map(b => b.hp));
             }
-            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team] };
+            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b1.team] };
         }
         if (p2 && !p1) {
             let hp = p2.hp;
             if (p2 instanceof DuplicatorBall || ((p2 instanceof MirrorBall) && (p1 instanceof DuplicatorBall))) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b2.team).map(b => b.hp));
             }
-            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team] };
+            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b2.team] };
         }
     }
     return { winner: 'draw' };
 }
 
 onmessage = (e) => {
-    const { matches, threshold } = e.data;
+    const { matches } = e.data;
     const dramaticSeeds = {};
     let progress = '';
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i != 1 && j != 1) continue;
-            if (i != 0 || j != 8) continue;
+            if (i != 2 || j != 7) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -90,6 +100,7 @@ onmessage = (e) => {
             const maxTicks = Math.max(durLimit, median);
 
             const hasDupe = BALL_TYPES[i].name === 'Duplicator' || BALL_TYPES[j].name === 'Duplicator';
+            const isSwordDagger = (BALL_TYPES[i].name === 'Sword' && BALL_TYPES[j].name === 'Dagger') || (BALL_TYPES[i].name === 'Dagger' && BALL_TYPES[j].name === 'Sword');
             const seeds = results.filter(r => {
                 if (r.ticks > maxTicks) return false;
                 if (!hasDupe && r.hpSwing < 25) return false;
@@ -105,7 +116,8 @@ onmessage = (e) => {
                     (isDupBeatsSword || isDupBeatsMG) ? 3 :
                         (loserIsDupe || (isDupe && winnerIsMirror)) ? 5 :
                             threshold;
-                return r.hp <= effectiveThreshold || (isDupe && r.dupeNearDeath);
+                return (r.hp <= effectiveThreshold || (isDupe && r.dupeNearDeath))
+                    && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 20);
             }).map(r => r.seed);
 
             dramaticSeeds[key] = seeds;
