@@ -847,8 +847,8 @@ class BallBattle {
         this.gravity = gravity;
 
         this.nextID = 0;
-        // this.debug = true;
-        this.debug = false;
+        this.debug = true;
+        // this.debug = false;
         this.isDuel = balls.length == 2;
         for (let b of balls) {
             this.addBall(b);
@@ -2684,6 +2684,51 @@ class MirrorBall extends Ball {
     }
 }
 
+const hammerBaseSpin = Math.PI * 0.01;
+const hammerBaseDmg = 1;
+const hammerAccel = 0.002;
+
+class HammerBall extends Ball {
+    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        this.spinRate = 1;
+
+        const cfg = getWeaponConfig(HammerBall);
+        const hammer = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, 0, cfg.rotation);
+        hammer.addCollider(50, 15, 30);
+        hammer.addSpin(hammerBaseSpin * dir);
+        hammer.addParry();
+        hammer.dmg = hammerBaseDmg;
+        hammer.addDamage(hammerBaseDmg, 1);
+
+        // Override dmg to use live hammer.dmg
+        hammer.ballColFns.push(() => {
+            // Reset spin and dmg, increase buildup rate
+            this.spinRate += 0.1;
+            hammer.angVel = Math.min(Math.abs(hammer.angVel), this.spinRate * hammerBaseSpin) * Math.sign(hammer.angVel);
+            hammer.dmg = Math.min(hammer.dmg, this.spinRate * hammerBaseDmg);
+            // hammer.angVel = hammerBaseSpin * Math.sign(hammer.angVel);
+            // hammer.dmg = hammerBaseDmg;
+        });
+
+        this.addWeapon(hammer);
+    }
+
+    handleUpdate(dt) {
+        const hammer = this.weapons[0];
+        const newSpin = Math.abs(hammer.angVel) + (hammerAccel * hammerBaseSpin * this.spinRate) * dt;
+        hammer.angVel = newSpin * Math.sign(hammer.angVel);
+        hammer.dmg += (hammerAccel * hammerBaseDmg * this.spinRate) * dt;
+        hammer.iframes = Math.min(40, Math.PI / hammer.angVel);
+    }
+
+    getInfoEl() {
+        return propsToList({
+            "Acceleration": { text: this.spinRate.toFixed(1) + "x", grad: { from: 1, to: 15 } },
+        });
+    }
+}
+
 const ballClasses = [
     { name: "Duplicator", class: DuplicatorBall, hp: 100, radius: 20, color: "#f86ffa" },
     { name: "Grower", class: GrowerBall, hp: 100, radius: 30, color: "#008a12" },
@@ -2694,6 +2739,7 @@ const ballClasses = [
     { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.png", scale: 2, offset: -13, shift: -1, rotation: Math.PI / 4, spin: true } },
     { name: "Sword", class: SwordBall, hp: 100, radius: 25, color: "#ff6464", weapon: { sprite: "sprites/sword.png", scale: 4, offset: -21, rotation: Math.PI / 4, spin: true } },
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
+    { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c87941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
 ];
 
 function getWeaponConfig(BallClass) {
