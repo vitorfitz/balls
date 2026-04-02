@@ -457,17 +457,26 @@ function ballsOverlap(b1, b2) {
 
 // Find time of collision between two balls (returns Infinity if no collision in dt)
 function timeToCollision(b1, b2, dt, r1Override = null, r2Override = null) {
-    const _isDaggerLance = false;
     if (b1 instanceof Ball && b2 instanceof Ball && (b1.inert || b2.inert)) return Infinity;
     if (b1 instanceof Bullet && b2 instanceof Bullet) return Infinity;
     if (b1 instanceof Bullet && b1.prevHitCredit == null && b2.team === b1.owner.team) return Infinity;
     if (b2 instanceof Bullet && b2.prevHitCredit == null && b1.team === b2.owner.team) return Infinity;
 
+    // const isDebug = t >= 5900 && t <= 5950 && ((b1 instanceof GrimoireBall && b2 instanceof GrowerBall) || (b1 instanceof GrowerBall && b2 instanceof GrimoireBall));
+
     const r1 = r1Override ?? b1.radius;
     const r2 = r2Override ?? b2.radius;
     const R = r1 + r2;
 
-    if (Math.hypot(b2.x - b1.x, b2.y - b1.y) < R) return Infinity;
+    const dist0 = Math.hypot(b2.x - b1.x, b2.y - b1.y);
+    if (dist0 < R) {
+        // if (isDebug) {
+        //     const [m, g] = b1 instanceof MirrorBall ? [b1, b2] : [b2, b1];
+        //     console.log(`[t=${t}] timeToCollision SKIP (already overlapping) dist=${dist0.toFixed(2)} R=${R.toFixed(2)} r1=${r1.toFixed(2)}(actual=${b1.radius.toFixed(2)}) r2=${r2.toFixed(2)}(actual=${b2.radius.toFixed(2)}) Mirror.v=(${m.vx.toFixed(2)},${m.vy.toFixed(2)}) Grower.v=(${g.vx.toFixed(2)},${g.vy.toFixed(2)}) Grower.scale=${g.scale?.toFixed(3)}`);
+        // }
+        // if ((b1 instanceof GrowerBall || b2 instanceof GrowerBall) && (b1 instanceof MirrorBall || b2 instanceof MirrorBall)) console.log(t, "oof");
+        return Infinity;
+    }
 
     const s1 = b1.getTimeScale();
     const s2 = b2.getTimeScale();
@@ -695,7 +704,13 @@ function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
 }
 
 // Elastic collision response
-function resolveCollision(b1, b2) {
+function resolveCollision(b1, b2, r1Override, r2Override) {
+    // const isDebugPair = t >= 7775 && t <= 7785 && ((b1 instanceof GrimoireBall && b2 instanceof GrowerBall) || (b1 instanceof GrowerBall && b2 instanceof GrimoireBall));
+    // if (isDebugPair) {
+    //     const [gr, gi] = b1 instanceof GrowerBall ? [b1, b2] : [b2, b1];
+    //     console.log(`[t=${t}] resolveCollision Grower(${gr.x.toFixed(1)},${gr.y.toFixed(1)} v=${gr.vx.toFixed(2)},${gr.vy.toFixed(2)} r=${gr.radius.toFixed(2)}) Grimoire(${gi.x.toFixed(1)},${gi.y.toFixed(1)} v=${gi.vx.toFixed(2)},${gi.vy.toFixed(2)} r=${gi.radius.toFixed(2)}) dist=${Math.hypot(gr.x - gi.x, gr.y - gi.y).toFixed(2)} sumR=${(gr.radius + gi.radius).toFixed(2)}`);
+    // }
+
     if (!(b2 instanceof Bullet)) decayKnockBoost(b1);
     if (!(b1 instanceof Bullet)) decayKnockBoost(b2);
 
@@ -726,7 +741,7 @@ function resolveCollision(b1, b2) {
                 b.vx *= newSpeed / speed;
                 b.vy *= newSpeed / speed;
             }
-            b.knockBoost = Math.sqrt(2 * b._pendingKnockEnergy);
+            b.knockBoost = Math.sqrt(b.knockBoost ** 2 + 2 * b._pendingKnockEnergy);
             b._pendingKnockEnergy = 0;
         }
     }
@@ -741,13 +756,32 @@ function resolveCollision(b1, b2) {
         const growerAlongN = grower.vx * sa * nx + grower.vy * sa * ny;
         const otherAlongN = other.vx * sb * nx + other.vy * sb * ny;
 
-        if (otherAlongN <= growerAlongN && growerAlongN > 0 && otherAlongN >= 0) {
-            const boost = Math.abs(2 * (growerAlongN - otherAlongN)) + 0.001;
-            other.vx += boost * nx;
-            other.vy += boost * ny;
-            if (other.team != grower.team) {
-                // if (t == 4863) console.log(t, "GOT HERE", boost);
-                other.damage(2, grower);
+        // if (isDebugPair && t >= 5900 && t <= 5950) {
+        //     console.log(`[t=${t}] post-elastic growerAlongN=${growerAlongN.toFixed(3)} otherAlongN=${otherAlongN.toFixed(3)} grower.v=(${grower.vx.toFixed(2)},${grower.vy.toFixed(2)}) other.v=(${other.vx.toFixed(2)},${other.vy.toFixed(2)}) nx=${nx.toFixed(3)} ny=${ny.toFixed(3)} grower.boostEnergy=${grower.boostEnergy?.toFixed(3)} other.boostEnergy=${other.boostEnergy?.toFixed(3)}`);
+        //     console.log(`[t=${t}] GOT HERE condition: otherAlongN(${otherAlongN.toFixed(3)}) <= growerAlongN(${growerAlongN.toFixed(3)}): ${otherAlongN <= growerAlongN}, growerAlongN>0: ${growerAlongN > 0}, otherAlongN>=0: ${otherAlongN >= 0}`);
+        // }
+
+        if (growerAlongN - otherAlongN > 0) {
+            const sign = grower === b1 ? 1 : -1;
+            const gy = grower.battle.gravity;
+            const gx1 = grower.x + grower.vx * sa, gy1 = grower.y + grower.vy * sa + 0.5 * gy * sa * sa;
+            const ox1 = other.x + other.vx * sb, oy1 = other.y + other.vy * sb + 0.5 * gy * sb * sb;
+            const gr = (grower === b1 ? r1Override : r2Override) ?? grower.radius;
+            const or_ = (other === b1 ? r1Override : r2Override) ?? other.radius;
+            const overlap = (gr + or_) - Math.hypot(gx1 - ox1, gy1 - oy1);
+            if (overlap > 0) {
+                const boost = (overlap + 0.001) / (sb || 1);
+                const speedBefore = Math.hypot(other.vx, other.vy);
+                other.vx += boost * sign * nx;
+                other.vy += boost * sign * ny;
+                const addedSpeed = Math.hypot(other.vx, other.vy) - speedBefore;
+
+                // const oldBoost = other.knockBoost;
+                if (addedSpeed > 0) other.knockBoost = Math.sqrt(other.knockBoost ** 2 + addedSpeed ** 2);
+                // console.log(t, "GOT HERE", "boost", boost, "oldBoost", oldBoost, "addedSpeed", addedSpeed, "other.knockBoost", other.knockBoost);
+            }
+            else {
+                // console.log(t, "GOT HERE no boost");
             }
         }
     }
@@ -1033,7 +1067,7 @@ class BallBattle {
 
                             if (tCol < tBall) {
                                 tBall = tCol;
-                                pair = [b1, b2];
+                                pair = [b1, b2, r1, r2];
                                 break radiiLoop;
                             }
                         }
@@ -1069,7 +1103,7 @@ class BallBattle {
 
             // Ball-ball
             if (tBall <= tNext + EPS) {
-                resolveCollision(pair[0], pair[1]);
+                resolveCollision(pair[0], pair[1], pair[2], pair[3]);
             }
 
             // Walls
@@ -1458,7 +1492,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 4850) {
+        // while (t < 9750) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -2371,6 +2405,8 @@ class GrimoireBall extends Ball {
     }
 
     getMinionArgs(target, Constructor, newRadius) {
+        // if (Constructor === GrowerBall || Constructor === MirrorBall) return null;
+
         const theta = Math.atan2(target.vy, target.vx) + Math.PI;
         const speed = this.battle.lol ? this.startSpeed : this.startSpeed / minionScale;
         const baseArgs = [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed];
@@ -2418,6 +2454,12 @@ class GrowerBall extends Ball {
         this.baseRadius = radius;
         this.boostEnergy = 0;
         this.pastRadii = [radius];
+
+        // this.scale = 4.5;
+        // this.boostEnergy = this.baseRadius * 0.2 * (this.scale - 1);
+        // this.mass = this.baseMass * this.scale;
+        // this.radius = this.baseRadius * this.scale;
+        // this.pastRadii = [this.radius];
     }
 
     getInfoEl() {
@@ -2453,6 +2495,7 @@ class GrowerBall extends Ball {
         owner.growCooldown = growCooldown;
 
         let targetScale = Math.min(maxScale, Math.sqrt(owner.scale * owner.scale + (!this.battle.isDuel && reflector ? 0.2 : 0.3)));
+        // targetScale = owner.scale;
         let targetRadius = owner.baseRadius * targetScale;
 
         if (this.battle.isInsideWall(owner.x, owner.y, targetRadius)) {
@@ -2506,7 +2549,7 @@ class GrowerBall extends Ball {
         }
 
         // Clean up pastRadii: remove radii smaller than closest ball distance, but keep the largest one
-        // return;
+        // if (t >= 7205) return;
         let minDist = Infinity;
         for (let b of this.battle.bodies) {
             if (!(b instanceof Bullet) && b != this) {
