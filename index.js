@@ -895,6 +895,8 @@ class BallBattle {
             }
         }
 
+        this.buffHammer = this.isDuel && ((balls[0] instanceof HammerBall && balls[1] instanceof GrowerBall) || (balls[1] instanceof HammerBall && balls[0] instanceof GrowerBall));
+
         this.lastTime = null;
         this.accumulator = 0;
         this.timeScaleAccum = 0;
@@ -2405,7 +2407,7 @@ class GrimoireBall extends Ball {
         }
         else if (target instanceof HammerBall) {
             minion.spinRate = target.spinRate;
-            // minion.power = target.power;
+            minion.power = -1;
         }
     }
 
@@ -2531,6 +2533,7 @@ class GrowerBall extends Ball {
     }
 
     getDmgResistance() {
+        if (this.battle.buffHammer) return 1;
         return this.scale ** 2 * 0.25 + 0.75;
     }
 
@@ -2747,7 +2750,7 @@ class HammerBall extends Ball {
 
         hammer.ballColFns.push(() => {
             this.spinRate += 0.25;
-            this.power = Math.min((this.spinRate - 1) / 5, this.power);
+            this.power = Math.min((this.spinRate - 1) * 0.3, this.power);
         });
 
         this.addWeapon(hammer);
@@ -2759,9 +2762,9 @@ class HammerBall extends Ball {
         const hammer = this.weapons[0];
         // hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power);
         // hammer.dmg = Math.max(1, 1 + this.power ** 2 * 0.75);
-        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * Math.exp(this.power * 0.25 + 0.75);
-        hammer.dmg = Math.exp(this.power * 0.5 + 0.5);
-        hammer.iframes = Math.min(40, Math.PI / hammer.angVel);
+        hammer.angVel = Math.sign(hammer.angVel) * 0.009 * Math.PI * Math.exp(this.power * 0.25 + 0.75);
+        hammer.dmg = Math.min(5 + this.spinRate * 5, Math.exp(this.power * 0.5 + 0.5));
+        hammer.iframes = Math.min(40, Math.PI / Math.abs(hammer.angVel));
     }
 
     getInfoEl() {
