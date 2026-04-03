@@ -214,14 +214,24 @@ class Ball extends CircleBody {
     checkSlamDamage(other = null) {
         if (this.slamTimer > 0) {
             // this.damage(this.slamTimer, this.slamSource);
-            let dmg = this.slamTimer > 19 ? 3 :
-                this.slamTimer > (this.battle.isDuel ? 8 : 15) ? 2 :
-                    1;
+            let dmg;
+            if (this.battle.isDuel) {
+                dmg = this.slamTimer > 9 ? 3 :
+                    this.slamTimer > 6 ? 2 :
+                        1;
+            }
+            else {
+                dmg = this.slamTimer > 19 ? 3 :
+                    this.slamTimer > 15 ? 2 :
+                        1;
+            }
             this.damage(dmg, this.slamSource);
 
-            if (other && other instanceof Ball && other.team != this.team) {
-                other.damage(1, this.slamSource);
-            }
+            // if (other && other instanceof Ball && other.team != this.team) {
+            //     if (t >= 6435 && t <= 6440) console.log(`[t=${t}] checkSlamDamage: this=${this.constructor.name} hp=${this.hp.toFixed(2)} dmg=${dmg} other=${other.constructor.name} other.hp=${other.hp.toFixed(2)}`);
+            //     if (t >= 8700 && t <= 8710 && (this instanceof MachineGunBall || other instanceof MachineGunBall)) console.log(`[t=${t}] checkSlamDamage: this=${this.constructor.name} slamTimer=${this.slamTimer?.toFixed(2)} dmg=${dmg} other=${other.constructor.name}`);
+            //     other.damage(1, this.slamSource);
+            // }
 
             if (!(this instanceof GrowerBall || this instanceof DuplicatorBall)) {
                 this.hitsThisFrame += 3 * dmg;
@@ -251,6 +261,7 @@ class Ball extends CircleBody {
 
     damage(dmg, source = null) {
         const hpBefore = this.hp;
+        // if (t >= 8700 && t <= 8710 && this instanceof MachineGunBall) console.log(`[t=${t}] MachineGunBall.damage: dmg=${dmg.toFixed(2)} src=${source?.constructor.name} hp=${hpBefore.toFixed(2)}->${Math.max(0, hpBefore - dmg).toFixed(2)} speed=${Math.hypot(this.vx, this.vy).toFixed(2)} pos=(${this.x.toFixed(1)},${this.y.toFixed(1)})`, new Error().stack.split('\n').slice(1, 4).join(' | '));
         super.damage(dmg);
         this.flashTime = flashDur;
         if (source && !this.owner) {
@@ -276,6 +287,16 @@ class Ball extends CircleBody {
 
     potentialEnergy() {
         return this.mass * this.battle.gravity * (this.battle.height - this.radius - this.y);
+    }
+
+    totalEnergy() {
+        const b = this;
+        let E = 0;
+        E += 0.5 * b.mass * (b.vx ** 2 + b.vy ** 2);
+        E += b.mass * b.battle.gravity * (b.battle.height - b.radius - b.y);
+        E -= b.mass * (b.boostEnergy || 0);
+        E -= b.mass * (b.knockBoost || 0);
+        return E;
     }
 
     onUpdate(dt) {
@@ -365,9 +386,10 @@ class Wall {
     }
 
     resolve(b) {
+        if (t >= 8700 && t <= 8710 && b instanceof MachineGunBall) console.log(`[t=${t}] wall.resolve: MachineGunBall speed=${Math.hypot(b.vx, b.vy).toFixed(2)} pos=(${b.x.toFixed(1)},${b.y.toFixed(1)}) axis=${this.axis} normal=${this.normal} pos=${this.pos}`);
         b.onWallCollision();
         if (!b.shouldBounceWall(this)) return;
-        decayKnockBoost(b);
+        b._pendingKnockDecay = true;
         const wallVel = this.velocity || 0;
         if (this.axis === VERTICAL) {
             b.x = this.pos + this.normal * b.radius;
@@ -683,8 +705,7 @@ function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
         const keOtherBefore = 0.5 * other.mass * (oOrigX ** 2 + oOrigY ** 2);
         const keOtherAfter = 0.5 * other.mass * (other.vx ** 2 + other.vy ** 2);
         const injected = (keGrowerAfter + keOtherAfter) - (keGrowerBefore + keOtherBefore);
-        if (other._pendingKnockEnergy) console.log("asdasd", other._pendingKnockEnergy);
-        other._pendingKnockEnergy = injected / other.mass;
+        other.knockBoost += injected / other.mass;
     } else {
         // Standard case: apply unboosted collision + re-add each ball's boost
         setVelWithBoost(b1, post1x, post1y, -1, effBoost1);
@@ -722,14 +743,17 @@ function shareKnockBoost(b1, b2, prevBoost1 = b1.knockBoost, prevBoost2 = b2.kno
 
 // Elastic collision response
 function resolveCollision(b1, b2, r1Override, r2Override) {
-    // const isDebugPair = t >= 13100 && t <= 13140 && ((b1 instanceof GrimoireBall && b2 instanceof GrowerBall) || (b1 instanceof GrowerBall && b2 instanceof GrimoireBall));
+    if (t >= 8700 && t <= 8710 && (b1 instanceof MachineGunBall || b2 instanceof MachineGunBall)) {
+        const [mg, other] = b1 instanceof MachineGunBall ? [b1, b2] : [b2, b1];
+        console.log(`[t=${t}] resolveCollision MG vs ${other.constructor.name}: MG speed=${Math.hypot(mg.vx, mg.vy).toFixed(2)} pos=(${mg.x.toFixed(1)},${mg.y.toFixed(1)}) other speed=${Math.hypot(other.vx, other.vy).toFixed(2)} pos=(${other.x.toFixed(1)},${other.y.toFixed(1)}) dist=${Math.hypot(mg.x - other.x, mg.y - other.y).toFixed(2)}`);
+    }
     // if (isDebugPair) {
     //     const [gr, gi] = b1 instanceof GrowerBall ? [b1, b2] : [b2, b1];
     //     console.log(`[t=${t}] resolveCollision Grower(id=${gr.id} pos=(${gr.x.toFixed(1)},${gr.y.toFixed(1)}) v=(${gr.vx.toFixed(3)},${gr.vy.toFixed(3)}) r=${gr.radius.toFixed(2)}) Grimoire(id=${gi.id} pos=(${gi.x.toFixed(1)},${gi.y.toFixed(1)}) v=(${gi.vx.toFixed(3)},${gi.vy.toFixed(3)}) r=${gi.radius.toFixed(2)}) dist=${Math.hypot(gr.x - gi.x, gr.y - gi.y).toFixed(2)} sumR=${(gr.radius + gi.radius).toFixed(2)} r1Ov=${r1Override?.toFixed(2)} r2Ov=${r2Override?.toFixed(2)} bounce1=${b1.shouldBounce(b2)} bounce2=${b2.shouldBounce(b1)}`);
     // }
 
-    if (!(b2 instanceof Bullet)) decayKnockBoost(b1);
-    if (!(b1 instanceof Bullet)) decayKnockBoost(b2);
+    if (!(b2 instanceof Bullet)) b1._pendingKnockDecay = true;
+    if (!(b1 instanceof Bullet)) b2._pendingKnockDecay = true;
 
     const prevBoost1 = b1.knockBoost;
     const prevBoost2 = b2.knockBoost;
@@ -752,25 +776,10 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
 
     applyElasticCollision(b1, b2, nx, ny);
 
-    // Apply pending knockEnergy after collision resolution
-    for (const b of [b1, b2]) {
-        if (b._pendingKnockEnergy > 0) {
-            const speed = Math.hypot(b.vx, b.vy);
-            if (speed > 0) {
-                const newSpeed = Math.sqrt(speed * speed + 2 * b._pendingKnockEnergy);
-                b.vx *= newSpeed / speed;
-                b.vy *= newSpeed / speed;
-            }
-            b.knockBoost += 2 * b._pendingKnockEnergy;
-            // console.log(`[t=${t}] pendingKnock on ${b.constructor.name}: injected=${b._pendingKnockEnergy.toFixed(2)} knockBoost=${b.knockBoost.toFixed(2)}`);
-            b._pendingKnockEnergy = 0;
-        }
-    }
-
     // Ensure separation after all velocity modifications (including knockEnergy)
     const grower = (b1 instanceof GrowerBall && !(b2 instanceof GrowerBall)) ? b1 :
         (b2 instanceof GrowerBall && !(b1 instanceof GrowerBall)) ? b2 : null;
-    if (grower) {
+    if (grower && grower.boostEnergy > 0) {
         const other = grower === b1 ? b2 : b1;
         const sa = grower.getTimeScale();
         const sb = other.getTimeScale();
@@ -784,26 +793,29 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
         // }
 
         const sign = grower === b1 ? 1 : -1;
-        if ((growerAlongN - otherAlongN) * sign > 0) {
+        const boostLeniency = 1;
+
+        if ((growerAlongN - otherAlongN) * sign > -boostLeniency) {
             const gy = grower.battle.gravity;
             const gx1 = grower.x + grower.vx * sa, gy1 = grower.y + grower.vy * sa + 0.5 * gy * sa * sa;
             const ox1 = other.x + other.vx * sb, oy1 = other.y + other.vy * sb + 0.5 * gy * sb * sb;
             const gr = (grower === b1 ? r1Override : r2Override) ?? grower.radius;
             const or_ = (other === b1 ? r1Override : r2Override) ?? other.radius;
             const overlap = (gr + or_) - Math.hypot(gx1 - ox1, gy1 - oy1);
-            if (overlap > 0) {
-                const boost = overlap * 1.5 / (sb || 1) + 69 * EPS;
+            if (overlap > -boostLeniency) {
+                const boost = (overlap + 5) / (sb || 1);
                 const speedBefore = Math.hypot(other.vx, other.vy);
                 other.vx += boost * sign * nx;
                 other.vy += boost * sign * ny;
                 const addedKE = 0.5 * (Math.hypot(other.vx, other.vy) ** 2 - speedBefore ** 2);
 
-                // const oldBoost = other.knockBoost;
+                const oldBoost = other.knockBoost;
                 if (addedKE > 0) {
-                    other.knockBoost += addedKE / other.mass;
+                    other.knockBoost += addedKE;
+                    // if (t >= 8700 && t <= 8710) console.log(`[t=${t}] sep-push: other=${other.constructor.name} boost=${boost.toFixed(2)} overlap=${overlap.toFixed(2)} addedKE=${addedKE.toFixed(2)} speed=${Math.hypot(other.vx, other.vy).toFixed(2)} pos=(${other.x.toFixed(1)},${other.y.toFixed(1)})`);
                     other.damage(2, grower);
                 }
-                // console.log(t, "GOT HERE", "boost", boost, "oldBoost", oldBoost, "addedKE", addedKE, "other.knockBoost", other.knockBoost);
+                console.log(t, "GOT HERE", "boost", boost, "oldBoost", oldBoost, "addedKE", addedKE, "other.knockBoost", other.knockBoost);
             }
             else {
                 // console.log(t, "GOT HERE no boost");
@@ -1059,7 +1071,8 @@ class BallBattle {
     updatePhysics() {
         // Decay knock boost once per tick
         for (const b of this.bodies) {
-            decayKnockBoost(b, 0.01);
+            decayKnockBoost(b, b._pendingKnockDecay ? 0.5 : 0.01);
+            b._pendingKnockDecay = false;
         }
 
         // Reactivate inert balls that have escaped overlap
@@ -1126,6 +1139,11 @@ class BallBattle {
                 return;
             }
 
+            if (t >= 8700 && t <= 8710 && (pair?.[0] instanceof MachineGunBall || pair?.[1] instanceof MachineGunBall || wallEvents.some(e => e.ball instanceof MachineGunBall))) {
+                const mg = pair?.[0] instanceof MachineGunBall ? pair[0] : pair?.[1] instanceof MachineGunBall ? pair[1] : wallEvents.find(e => e.ball instanceof MachineGunBall)?.ball;
+                console.log(`[t=${t}] physics step: dt_remaining=${dt.toFixed(6)} tNext=${tNext.toFixed(6)} tBall=${tBall.toFixed(6)} tWall=${tWall.toFixed(6)} MG pos=(${mg?.x.toFixed(3)},${mg?.y.toFixed(3)}) speed=${Math.hypot(mg?.vx, mg?.vy).toFixed(3)}`);
+            }
+
             this.advanceAll(tNext);
             dt -= tNext;
 
@@ -1138,6 +1156,14 @@ class BallBattle {
             if (tWall <= tNext + EPS) {
                 for (const ev of wallEvents) {
                     ev.wall.resolve(ev.ball);
+                }
+            }
+
+            if (t >= 8700 && t <= 8710) {
+                for (const b of this.bodies) {
+                    if (b instanceof MachineGunBall && this.isInBounds && !this.isInBounds(b.x, b.y, b.radius)) {
+                        console.log(`[t=${t}] *** MG OUT OF BOUNDS after step: pos=(${b.x.toFixed(3)},${b.y.toFixed(3)}) radius=${b.radius} dt_remaining=${dt.toFixed(6)}`);
+                    }
                 }
             }
         }
@@ -1450,11 +1476,8 @@ class BallBattle {
     totalEnergy() {
         let E = 0;
         for (const b of this.bodies) {
-            if (b instanceof Ball || b instanceof Bullet) {
-                E += 0.5 * b.mass * (b.vx ** 2 + b.vy ** 2);
-                E += b.mass * this.gravity * (this.height - b.radius - b.y);
-                E -= b.mass * (b.boostEnergy || 0);
-                E -= b.mass * (b.knockBoost || 0);
+            if (b instanceof Ball) {
+                E += b.totalEnergy();
             }
         }
         return E;
@@ -1476,12 +1499,12 @@ class BallBattle {
             b.hitsThisFrame = 0;
         }
 
-        if (t == 638) {
-            for (const b of this.bodies) {
-                if (b instanceof MachineGunBall || b instanceof GrowerBall)
-                    console.log(`[t=${t}] PRE-physics ${b.constructor.name}#${b.id}: knockBoost=${b.knockBoost.toFixed(4)} boostEnergy=${(b.boostEnergy || 0).toFixed(4)}`);
-            }
-        }
+        // if (t == 638) {
+        //     for (const b of this.bodies) {
+        //         if (b instanceof MachineGunBall || b instanceof GrowerBall)
+        //             console.log(`[t=${t}] PRE-physics ${b.constructor.name}#${b.id}: knockBoost=${b.knockBoost.toFixed(4)} boostEnergy=${(b.boostEnergy || 0).toFixed(4)}`);
+        //     }
+        // }
 
         this.updatePhysics();
 
@@ -1509,7 +1532,7 @@ class BallBattle {
 
         this.bodies.sort((a, b) => a.id - b.id);
         this.bodies.forEach((b) => b.onUpdate(b.getTimeScale()));
-        console.log(`[t=${t}] E after onUpdate=${this.totalEnergy().toFixed(2)}`);
+        // console.log(`[t=${t}] E after onUpdate=${this.totalEnergy().toFixed(2)}`);
 
         // t0 = performance.now();
         this.updateWeapons();
@@ -1557,7 +1580,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 2800) {
+        // while (t < 9450) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -1813,7 +1836,7 @@ class LanceBall extends Ball {
                 if (this.combo == 0 || oldHit < comboLeniency - 1) this.dist = 0;
 
                 this.comboHits.add(target.id);
-                const distToHit = 78 * this.startSpeed;
+                const distToHit = 77 * this.startSpeed;
                 const counts = Math.floor(-this.dist / distToHit) + 1;
                 this.dist += counts * distToHit;
 
@@ -1878,6 +1901,8 @@ class MachineGunBall extends Ball {
     }
 
     handleUpdate(dt) {
+        if (t == 8000) this.hp = 100;
+
         this.reloadTime -= dt;
         if (this.reloadTime > EPS) return;
 
@@ -2263,7 +2288,7 @@ class WrenchBall extends Ball {
     }
 }
 
-const fireDelay = 35, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
+const fireDelay = 34, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
 class Turret extends CircleBody {
     constructor(x, y, owner, theta, angVel) {
         super(x, y, 0, 0, 1, turretRadius, Infinity, false);
@@ -2376,7 +2401,7 @@ class GrimoireBall extends Ball {
         const cfg = getWeaponConfig(GrimoireBall);
         const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
-        grimoire.addCollider(32, 17);
+        grimoire.addCollider(31, 17);
         grimoire.addSpin(Math.PI * 0.023 * dir);
         // grimoire.addParry();
         grimoire.addDirChange();
@@ -2472,8 +2497,9 @@ class GrimoireBall extends Ball {
             minion.baseRadius = minion.radius / target.scale;
             minion.baseMass = minion.baseRadius * minion.baseRadius;
             minion.mass = minion.baseMass * minion.scale;
-            minion.boostEnergy = target.boostEnergy * minionScale;
+            minion.boostEnergy = target.boostEnergy;
             minion.pastRadii = [minion.radius];
+            minion._engulfImmune = { [target.id]: 5 };
         }
         else if (target instanceof GrimoireBall) {
             minion.nextMinionHP = target.nextMinionHP;
@@ -2519,7 +2545,7 @@ class GrimoireBall extends Ball {
     }
 }
 
-const growCooldown = 6;
+const growCooldown = 7;
 const maxScale = 6.56;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
@@ -2569,14 +2595,14 @@ class GrowerBall extends Ball {
 
         if (owner.scale >= maxScale || owner.growCooldown > EPS || (!reflector && (b instanceof GrowerBall))) return;
         owner.growCooldown = growCooldown;
-        owner._pendingGrow = { isDuel: this.battle.isDuel, reflector, grower: this };
+        owner._pendingGrow = { reflector, grower: this };
     }
 
     applyGrow(owner) {
-        const { isDuel, reflector } = owner._pendingGrow;
+        const { reflector } = owner._pendingGrow;
         owner._pendingGrow = null;
 
-        let targetScale = Math.min(maxScale, Math.sqrt(owner.scale * owner.scale + (!isDuel && reflector ? 0.2 : 0.3)));
+        let targetScale = Math.min(maxScale, Math.sqrt(owner.scale * owner.scale + (!this.battle.isDuel && reflector ? 0.2 : 0.3)));
         let targetRadius = owner.baseRadius * targetScale;
 
         if (this.battle.isInsideWall(owner.x, owner.y, targetRadius)) {
@@ -2605,22 +2631,23 @@ class GrowerBall extends Ball {
             for (const w of owner.weapons) w.scaleBy(growth);
         }
 
-        if (!isDuel) { owner.boostEnergy = owner.baseRadius * 0.2 * (owner.scale - 1); }
-
-        const newKE = 0.5 * owner.mass * (owner.vx ** 2 + owner.vy ** 2);
-        const newPE = owner.mass * this.battle.gravity * (this.battle.height - owner.radius - owner.y);
-        const newBoostEnergy = owner.boostEnergy || 0;
-        const prevTotal = prevKE + prevPE - prevMass * prevBoostEnergy - prevMass * (owner.knockBoost || 0);
-        const newTotalBeforeAdj = newKE + newPE - owner.mass * newBoostEnergy - owner.mass * (owner.knockBoost || 0);
-        const dE = newTotalBeforeAdj - prevTotal;
-        if (dE > 0) owner.knockBoost += dE / owner.mass;
-        else if (dE < 0) {
-            const speed = Math.hypot(owner.vx, owner.vy);
-            const newSpeed = Math.sqrt(Math.max(0, speed * speed - 2 * dE / owner.mass));
-            if (speed > EPS) { owner.vx *= newSpeed / speed; owner.vy *= newSpeed / speed; }
+        if (!this.battle.isDuel) {
+            owner.boostEnergy = 6 * (owner.scale - 1);
+            const newKE = 0.5 * owner.mass * (owner.vx ** 2 + owner.vy ** 2);
+            const newPE = owner.mass * this.battle.gravity * (this.battle.height - owner.radius - owner.y);
+            const newBoostEnergy = owner.boostEnergy || 0;
+            const prevTotal = prevKE + prevPE - prevMass * prevBoostEnergy - prevMass * (owner.knockBoost || 0);
+            const newTotalBeforeAdj = newKE + newPE - owner.mass * newBoostEnergy - owner.mass * (owner.knockBoost || 0);
+            const dE = newTotalBeforeAdj - prevTotal;
+            if (dE > 0) owner.knockBoost += dE / owner.mass;
+            else if (dE < 0) {
+                const speed = Math.hypot(owner.vx, owner.vy);
+                const newSpeed = Math.sqrt(Math.max(0, speed * speed - 2 * dE / owner.mass));
+                if (speed > EPS) { owner.vx *= newSpeed / speed; owner.vy *= newSpeed / speed; }
+            }
+            // const adjKE = 0.5 * owner.mass * (owner.vx ** 2 + owner.vy ** 2);
+            // console.log(`[t=${t}] grow energy: prevTotal=${prevTotal.toFixed(2)} newTotal=${(adjKE + newPE - owner.mass * (owner.boostEnergy || 0) - owner.mass * owner.knockBoost).toFixed(2)} dE=${dE.toFixed(2)} knockBoost=${owner.knockBoost.toFixed(4)} prevKE=${prevKE.toFixed(2)} newKE=${newKE.toFixed(2)} prevPE=${prevPE.toFixed(2)} newPE=${newPE.toFixed(2)} prevBoost=${(prevMass * prevBoostEnergy).toFixed(2)} newBoost=${(owner.mass * newBoostEnergy).toFixed(2)}`);
         }
-        // const adjKE = 0.5 * owner.mass * (owner.vx ** 2 + owner.vy ** 2);
-        // console.log(`[t=${t}] grow energy: prevTotal=${prevTotal.toFixed(2)} newTotal=${(adjKE + newPE - owner.mass * (owner.boostEnergy || 0) - owner.mass * owner.knockBoost).toFixed(2)} dE=${dE.toFixed(2)} knockBoost=${owner.knockBoost.toFixed(4)} prevKE=${prevKE.toFixed(2)} newKE=${newKE.toFixed(2)} prevPE=${prevPE.toFixed(2)} newPE=${newPE.toFixed(2)} prevBoost=${(prevMass * prevBoostEnergy).toFixed(2)} newBoost=${(owner.mass * newBoostEnergy).toFixed(2)}`);
     }
 
     getDmgResistance() {
@@ -2639,6 +2666,10 @@ class GrowerBall extends Ball {
 
         for (let b of this.battle.balls) {
             if (b.team != this.team) {
+                if (b._engulfImmune?.[this.id] > 0) {
+                    b._engulfImmune[this.id] -= dt;
+                    continue;
+                }
                 const dist = Math.hypot(this.x - b.x, this.y - b.y);
                 if (dist < this.radius - b.radius) {
                     b.damage(1, this);
@@ -2710,7 +2741,7 @@ class MirrorBall extends Ball {
 
         const cfg = getWeaponConfig(MirrorBall);
         const mirror = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
-        mirror.addCollider(13, 30, 2);
+        mirror.addCollider(13, 31, 2);
         mirror.addSpin(Math.PI * 0.020 * dir);
         mirror.addParry();
 
@@ -2765,9 +2796,14 @@ class MirrorBall extends Ball {
 
             // Skip if ball is already moving away from mirror
             const relVx = b.vx - this.vx, relVy = b.vy - this.vy;
-            if (relVx * nx + relVy * ny < 0) {
-                decayKnockBoost(this);
-                decayKnockBoost(b);
+            const velAlongNormal = relVx * nx + relVy * ny;
+            let bounced = velAlongNormal <= -1;
+
+            if (velAlongNormal < 0) {
+                if (bounced) {
+                    this._pendingKnockDecay = true;
+                    b._pendingKnockDecay = true;
+                }
                 const prevBoost1 = this.knockBoost;
                 const prevBoost2 = b.knockBoost
                 applyElasticCollision(this, b, nx, ny, true);
@@ -2775,7 +2811,6 @@ class MirrorBall extends Ball {
             }
 
             if (b.dmgWeapons.length === 0 && b.team !== this.team) {
-                const bounced = this.vx != oldvx || this.vy != oldvy;
                 const newContact = !mirror._inContact[b.id];
                 mirror._inContact[b.id] = true;
 
@@ -2814,6 +2849,7 @@ class MirrorBall extends Ball {
     }
 
     damage(dmg, source) {
+        // if (t >= 6435 && t <= 6440) console.log(`[t=${t}] MirrorBall.damage: dmg=${dmg.toFixed(2)} source=${source?.constructor.name} hp=${this.hp.toFixed(2)} cantHit=${source?.id in this._cantHitBall}`, new Error().stack.split('\n')[2].trim());
         if (source.id in this._cantHitBall) {
             this.weapons[0].weaponColFns.forEach(fn => fn(source.weapons[0]));
             return;
