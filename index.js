@@ -111,9 +111,9 @@ class Weapon {
 
     getIFrames(target) {
         let iframes = this.iframes;
-        // if (target instanceof GrowerBall) {
-        //     iframes = Math.min(target.battle.isDuel ? 7 : 20, iframes);
-        // }
+        if (target instanceof GrowerBall) {
+            iframes = Math.min(target.battle.isDuel ? 7 : 20, iframes);
+        }
         return iframes;
     }
 
@@ -881,17 +881,18 @@ class BallBattle {
         this.gravity = gravity;
 
         this.nextID = 0;
-        this.debug = true;
-        // this.debug = false;
+        // this.debug = true;
+        this.debug = false;
         this.isDuel = balls.length == 2;
         for (let b of balls) {
             this.addBall(b);
         }
+
         this.lol = this.isDuel && ((balls[0] instanceof GrimoireBall && balls[1] instanceof MirrorBall) || (balls[1] instanceof GrimoireBall && balls[0] instanceof MirrorBall));
         if (this.lol) {
-            // for (let b of balls) {
-            //     b.hp *= 0.2;
-            // }
+            for (let b of balls) {
+                b.hp *= 0.2;
+            }
         }
 
         this.lastTime = null;
@@ -2402,6 +2403,10 @@ class GrimoireBall extends Ball {
         else if (target instanceof GrimoireBall) {
             minion.nextMinionHP = target.nextMinionHP;
         }
+        else if (target instanceof HammerBall) {
+            minion.spinRate = target.spinRate;
+            // minion.power = target.power;
+        }
     }
 
     getMinionArgs(target, Constructor, newRadius) {
@@ -2411,7 +2416,7 @@ class GrimoireBall extends Ball {
         const speed = this.battle.lol ? this.startSpeed : this.startSpeed / minionScale;
         const baseArgs = [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed];
 
-        if (Constructor === DaggerBall || Constructor === SwordBall || Constructor === MachineGunBall || Constructor === WrenchBall || Constructor === MirrorBall) {
+        if (Constructor === DaggerBall || Constructor === SwordBall || Constructor === MachineGunBall || Constructor === WrenchBall || Constructor === MirrorBall || Constructor === HammerBall) {
             return [...baseArgs, target.weapons[0]?.theta || 0, 1, this.nextMinionHP, newRadius];
         }
         if (Constructor === GrimoireBall) {
@@ -2526,7 +2531,6 @@ class GrowerBall extends Ball {
     }
 
     getDmgResistance() {
-        // return this.battle.isDuel ? this.scale ** 2 * 0.25 + 0.75 : this.scale ** 2 * 0.2 + 0.8;
         return this.scale ** 2 * 0.25 + 0.75;
     }
 
@@ -2727,47 +2731,42 @@ class MirrorBall extends Ball {
     }
 }
 
-const hammerBaseSpin = Math.PI * 0.01;
-const hammerBaseDmg = 1;
-const hammerAccel = 0.002;
-
+const hammerAccel = 0.005;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.spinRate = 1;
+        this.power = 0;
 
         const cfg = getWeaponConfig(HammerBall);
         const hammer = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, 0, cfg.rotation);
         hammer.addCollider(50, 15, 30);
-        hammer.addSpin(hammerBaseSpin * dir);
+        hammer.addSpin(dir);
         hammer.addParry();
-        hammer.dmg = hammerBaseDmg;
-        hammer.addDamage(hammerBaseDmg, 1);
+        hammer.addDamage(0, 1);
 
-        // Override dmg to use live hammer.dmg
         hammer.ballColFns.push(() => {
-            // Reset spin and dmg, increase buildup rate
-            this.spinRate += 0.1;
-            hammer.angVel = Math.min(Math.abs(hammer.angVel), this.spinRate * hammerBaseSpin) * Math.sign(hammer.angVel);
-            hammer.dmg = Math.min(hammer.dmg, this.spinRate * hammerBaseDmg);
-            // hammer.angVel = hammerBaseSpin * Math.sign(hammer.angVel);
-            // hammer.dmg = hammerBaseDmg;
+            this.spinRate += 0.25;
+            this.power = Math.min((this.spinRate - 1) / 5, this.power);
         });
 
         this.addWeapon(hammer);
     }
 
     handleUpdate(dt) {
+        this.power += hammerAccel * dt;
+
         const hammer = this.weapons[0];
-        const newSpin = Math.abs(hammer.angVel) + (hammerAccel * hammerBaseSpin * this.spinRate) * dt;
-        hammer.angVel = newSpin * Math.sign(hammer.angVel);
-        hammer.dmg += (hammerAccel * hammerBaseDmg * this.spinRate) * dt;
+        // hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power);
+        // hammer.dmg = Math.max(1, 1 + this.power ** 2 * 0.75);
+        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * Math.exp(this.power * 0.25 + 0.75);
+        hammer.dmg = Math.exp(this.power * 0.5 + 0.5);
         hammer.iframes = Math.min(40, Math.PI / hammer.angVel);
     }
 
     getInfoEl() {
         return propsToList({
-            "Acceleration": { text: this.spinRate.toFixed(1) + "x", grad: { from: 1, to: 15 } },
+            "Acceleration": { text: Math.round(this.spinRate * 100) / 100 + "x", grad: { from: 1, to: 15 } },
         });
     }
 }

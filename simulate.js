@@ -24,6 +24,7 @@ global.DuplicatorBall = DuplicatorBall;
 global.WrenchBall = WrenchBall;
 global.GrimoireBall = GrimoireBall;
 global.MirrorBall = MirrorBall;
+global.HammerBall = HammerBall;
 
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -41,11 +42,12 @@ const BALL_TYPES = [
     { name: 'Wrench', create: (pos, rng) => new global.WrenchBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
     { name: 'Grimoire', create: (pos, rng) => new global.GrimoireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
     { name: 'Sword', create: (pos, rng) => new global.SwordBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
-    { name: 'Mirror', create: (pos, rng) => new global.MirrorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) }
+    { name: 'Mirror', create: (pos, rng) => new global.MirrorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) },
+    { name: 'Hammer', create: (pos, rng) => new global.HammerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, 100) }
 ];
 
 const MAX_TICKS = 10000;
-const MATCHES = 1000;
+const MATCHES = 100;
 
 function simulate(t1Idx, t2Idx) {
     const rng = new Math.seedrandom();
@@ -108,7 +110,7 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                // if (i != 2 && j != 2) continue;
+                if (i != 9 && j != 9) continue;
                 if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;
