@@ -78,7 +78,7 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            if (i != 2 || j != 7) continue;
+            // if (i != 2 || j != 7) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
