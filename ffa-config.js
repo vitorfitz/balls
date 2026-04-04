@@ -28,7 +28,8 @@ function createFFABattle(ballClasses, seed, createBallFn, BallBattle, createPlus
         .filter(({ b }) => b.name !== "Duplicator")
         .map(({ i }) => i);
 
-    const balls = combatants.map((i, j) => createBallFn(ballClasses, i, pos[j], rng, speed));
+    let balls = combatants.map((i, j) => createBallFn(ballClasses, i, pos[j], rng, speed));
+    // balls = balls.filter((b) => !(b instanceof GrimoireBall));
 
     const battle = new BallBattle(balls, seed, gravity);
     battle.walls = createPlusArenaWalls(size, armWidth, holeSize);

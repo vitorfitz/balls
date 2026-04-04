@@ -3,7 +3,8 @@
 const d = new Date().getTime();
 console.log(d);
 let battleSeed = d;
-// let battleSeed = 1775148714492;
+// let battleSeed = 1775302319792;
+// dupe vs grower 1775303433217
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
