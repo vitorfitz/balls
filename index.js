@@ -1680,7 +1680,7 @@ function propsToList(propsMap) {
 }
 
 // Duplicator: Reproduces on hit
-const dmgCooldown = 7, dupeCooldown = 7, dupeLimit = 25;
+const dmgCooldown = 6, dupeCooldown = 6, dupeLimit = 25;
 class DuplicatorBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#f86ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -1970,12 +1970,6 @@ class MachineGunBall extends Ball {
         return propsToList({
             "Bullets": { text: this.damagePerRound + this.pendingDamage, grad: { from: 10, to: 110 } },
         });
-    }
-
-    onLoad() {
-        if (!this.battle.isDuel) {
-            this.reloadTime *= 1.5;
-        }
     }
 }
 
@@ -2648,7 +2642,7 @@ class GrowerBall extends Ball {
             for (const w of owner.weapons) w.scaleBy(growth);
         }
 
-        if (!this.battle.isDuel) {
+        if (true || !this.battle.isDuel) {
             owner.boostEnergy = 6 * (owner.scale - 1);
             const newKE = 0.5 * owner.mass * (owner.vx ** 2 + owner.vy ** 2);
             const newPE = owner.mass * this.battle.gravity * (this.battle.height - owner.radius - owner.y);
@@ -2668,7 +2662,7 @@ class GrowerBall extends Ball {
     }
 
     getDmgResistance() {
-        if (this.battle.buffHammer) return 1;
+        // if (this.battle.buffHammer) return 1;
         return this.scale ** 2 * 0.25 + 0.75;
     }
 
@@ -2883,11 +2877,11 @@ class MirrorBall extends Ball {
     }
 }
 
-const hammerAccel = 0.005;
+const hammerAccel = 0.0012;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.spinRate = 1;
+        this.spinRate = 2;
         this.power = 0;
 
         const cfg = getWeaponConfig(HammerBall);
@@ -2895,30 +2889,34 @@ class HammerBall extends Ball {
         hammer.addCollider(50, 15, 30);
         hammer.addSpin(dir);
         hammer.addParry();
+        hammer.addDirChange();
         hammer.addDamage(0, 1);
 
         hammer.ballColFns.push(() => {
-            this.spinRate += 0.25;
-            this.power = Math.min((this.spinRate - 1) * 0.3, this.power);
+            this.spinRate += 1;
+            this.power = Math.min(this.spinRate ** 2 * 0.003, this.power);
         });
 
         this.addWeapon(hammer);
     }
 
     handleUpdate(dt) {
-        this.power += hammerAccel * dt;
+        // const maxDmg = this.spinRate * 3, curDmg = (1 + this.power * 0.5) ** 2;
+        // if (curDmg < maxDmg) {
+        const m = this.spinRate - this.power;
+        // if (t % 50 == 0) console.log(Math.abs(this.weapons[0].angVel / Math.PI));
+        this.power += hammerAccel * m * dt * (this.mass / 625);
+        // }
 
         const hammer = this.weapons[0];
-        // hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power);
-        // hammer.dmg = Math.max(1, 1 + this.power ** 2 * 0.75);
-        hammer.angVel = Math.sign(hammer.angVel) * 0.009 * Math.PI * Math.exp(this.power * 0.25 + 0.75);
-        hammer.dmg = Math.min(5 + this.spinRate * 5, Math.exp(this.power * 0.5 + 0.5));
+        hammer.angVel = Math.sign(hammer.angVel) * 0.012 * Math.PI * (1 + 0.5 * this.power);
+        hammer.dmg = (1 + this.power * 0.5) ** 2;
         hammer.iframes = Math.min(40, Math.PI / Math.abs(hammer.angVel));
     }
 
     getInfoEl() {
         return propsToList({
-            "Acceleration": { text: Math.round(this.spinRate * 100) / 100 + "x", grad: { from: 1, to: 15 } },
+            "Acceleration": { text: Math.round(this.spinRate * 100) / 100 + "x", grad: { from: 1, to: 5 } },
         });
     }
 }

@@ -23,8 +23,8 @@ let ballBtns = [];
 let mode = 0;
 
 {
-    // const theta0 = 13 * Math.PI / 8;
-    const theta0 = 3 * Math.PI / 2;
+    const theta0 = 16 * Math.PI / 10;
+    // const theta0 = 3 * Math.PI / 2;
     for (let i = 0; i < ballClasses.length; i++) {
         const btn = document.createElement("button");
         btn.style.width = btn.style.height = ballBtnDiameter + "px";
