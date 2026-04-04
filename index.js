@@ -964,7 +964,7 @@ class BallBattle {
         this.lol = this.isDuel && ((balls[0] instanceof GrimoireBall && balls[1] instanceof MirrorBall) || (balls[1] instanceof GrimoireBall && balls[0] instanceof MirrorBall));
         if (this.lol) {
             for (let b of balls) {
-                b.hp *= 0.2;
+                b.hp *= 0.5;
             }
         }
 
@@ -1967,12 +1967,6 @@ class MachineGunBall extends Ball {
         return propsToList({
             "Bullets": { text: this.damagePerRound + this.pendingDamage, grad: { from: 10, to: 110 } },
         });
-    }
-
-    onLoad() {
-        if (!this.battle.isDuel) {
-            this.reloadTime *= 1.5;
-        }
     }
 }
 
