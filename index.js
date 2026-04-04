@@ -965,7 +965,7 @@ class BallBattle {
         this.lol = this.isDuel && ((balls[0] instanceof GrimoireBall && balls[1] instanceof MirrorBall) || (balls[1] instanceof GrimoireBall && balls[0] instanceof MirrorBall));
         if (this.lol) {
             for (let b of balls) {
-                b.hp *= 0.2;
+                b.hp *= 0.5;
             }
         }
 

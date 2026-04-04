@@ -20,6 +20,7 @@ global.SwordBall = SwordBall;
 global.LanceBall = LanceBall;
 global.MachineGunBall = MachineGunBall;
 global.WrenchBall = WrenchBall;
+global.GrowerBall = GrowerBall;
 global.Ball = Ball;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -28,10 +29,9 @@ global.createBorderWalls = createBorderWalls;
 
 eval(code);
 
-// Dummy ball - 100 HP, does nothing
 class DummyBall extends global.Ball {
     constructor(x, y) {
-        super(x, y, 0, 0, 100, 25, "#888888");
+        super(x, y, 0, 0, 999, 25, "#888888");
     }
 }
 
@@ -40,11 +40,13 @@ const BALL_TYPES = [
     { name: 'Lance', create: (rng) => new global.LanceBall(50, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Machine Gun', create: (rng) => new global.MachineGunBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
     { name: 'Wrench', create: (rng) => new global.WrenchBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
-    { name: 'Sword', create: (rng) => new global.SwordBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) }
+    { name: 'Sword', create: (rng) => new global.SwordBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
+    { name: 'Grower', create: (rng) => new global.GrowerBall(50, 200, ...global.randomVel(5, rng), 100) },
 ];
 
-const MAX_TICKS = 20000;
-const MATCHES = 500;
+const MAX_TICKS = 50000;
+const MATCHES = 1000;
+const THRESHOLDS = [20, 100, 500];
 
 function simulate(typeIdx) {
     const rng = new Math.seedrandom();
@@ -58,12 +60,21 @@ function simulate(typeIdx) {
     battle.canvas = { width: 400, height: 400 };
     global.t = 0;
 
+    const results = [];
+    let threshIdx = 0;
+
     for (let tick = 1; tick <= MAX_TICKS; tick++) {
         global.t = tick;
         battle.update();
-        if (dummy.hp <= 0) return tick;
+        while (threshIdx < THRESHOLDS.length && attacker.damageDealt >= THRESHOLDS[threshIdx]) {
+            results.push(tick);
+            threshIdx++;
+        }
+        if (threshIdx === THRESHOLDS.length) break;
     }
-    return MAX_TICKS; // timeout
+
+    while (results.length < THRESHOLDS.length) results.push(MAX_TICKS);
+    return results;
 }
 
 if (!isMainThread) {
@@ -96,18 +107,20 @@ if (!isMainThread) {
     }
 
     (async () => {
-        console.log(`Simulating ${MATCHES} matches per ball type vs dummy (100 HP)...\n`);
-        console.log('Ball Type      | Avg Ticks | Min   | Max   | Std Dev');
-        console.log('---------------|-----------|-------|-------|--------');
+        console.log(`Simulating ${MATCHES} matches per ball type...\n`);
+        const header = 'Ball Type     | ' + THRESHOLDS.map(t => `dmg≥${t}`.padStart(13)).join(' | ');
+        console.log(header);
+        console.log('-'.repeat(header.length));
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
-            const times = await runTests(i);
-            const avg = times.reduce((a, b) => a + b, 0) / times.length;
-            const min = Math.min(...times);
-            const max = Math.max(...times);
-            const std = Math.sqrt(times.reduce((s, t) => s + (t - avg) ** 2, 0) / times.length);
-
-            console.log(`${BALL_TYPES[i].name.padEnd(14)} | ${avg.toFixed(1).padStart(9)} | ${String(min).padStart(5)} | ${String(max).padStart(5)} | ${std.toFixed(1).padStart(6)}`);
+            const allResults = await runTests(i);
+            const cols = THRESHOLDS.map((_, ti) => {
+                const vals = allResults.map(r => r[ti]);
+                const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+                const std = Math.sqrt(vals.reduce((s, v) => s + (v - avg) ** 2, 0) / vals.length);
+                return `${avg.toFixed(0).padStart(5)}` + `(±${std.toFixed(0)})`.padStart(8);
+            });
+            console.log(`${BALL_TYPES[i].name.padEnd(13)} | ${cols.join(' | ')}`);
         }
     })();
 }
