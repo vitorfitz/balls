@@ -2675,15 +2675,17 @@ class GrowerBall extends Ball {
         // if (t > 8900) this.boostEnergy = 0;
         this.growCooldown -= dt;
 
-        for (let b of this.battle.balls) {
-            if (b.team != this.team) {
-                if (b._engulfImmune?.[this.id] > 0) {
-                    b._engulfImmune[this.id] -= dt;
-                    continue;
-                }
-                const dist = Math.hypot(this.x - b.x, this.y - b.y);
-                if (dist < this.radius - b.radius) {
-                    b.damage(1, this);
+        if (!this.inert) {
+            for (let b of this.battle.balls) {
+                if (b.team != this.team) {
+                    if (b._engulfImmune?.[this.id] > 0) {
+                        b._engulfImmune[this.id] -= dt;
+                        continue;
+                    }
+                    const dist = Math.hypot(this.x - b.x, this.y - b.y);
+                    if (dist < this.radius - b.radius) {
+                        b.damage(1, this);
+                    }
                 }
             }
         }
