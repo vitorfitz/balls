@@ -248,8 +248,8 @@ class Ball extends CircleBody {
     }
 
     onCollision(b) {
+        if (!(b instanceof Bullet) && (b != this.slamSource || !this.battle.isDuel)) this.checkSlamDamage(b);
         this.handleCollision(b);
-        if (!(b instanceof Bullet) && b != this.slamSource) this.checkSlamDamage(b);
     }
 
     addWeapon(w, canParry = w.range && w.thickness) {
@@ -676,6 +676,20 @@ function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
         // Grower: unboosted collision result + its own boost re-added
         setVelWithBoost(grower, gPost.x, gPost.y, gSign, gEff);
 
+        // Cap grower's velocity toward other to its pre-collision value.
+        // Excess KE is saved and applied to other's speed at the end.
+        const toOther = isB1 ? 1 : -1;
+        const gOrigN = ((isB1 ? orig1x : orig2x) * nx + (isB1 ? orig1y : orig2y) * ny) * toOther;
+        const gPostN = (grower.vx * nx + grower.vy * ny) * toOther;
+        if (gPostN > gOrigN) {
+            const delta = gPostN - gOrigN;
+            const keTransfer = 0.5 * grower.mass * (gPostN * gPostN - gOrigN * gOrigN);
+            grower.vx -= delta * toOther * nx;
+            grower.vy -= delta * toOther * ny;
+            grower._pendingOtherKE = (grower._pendingOtherKE || 0) + keTransfer;
+            // if (t >= 2420 && t <= 2440) console.log(`[t=${t}] grower cap: gOrigN=${gOrigN.toFixed(3)} gPostN=${gPostN.toFixed(3)} delta=${delta.toFixed(3)} keTransfer=${keTransfer.toFixed(2)} _pendingOtherKE=${grower._pendingOtherKE.toFixed(2)}`);
+        }
+
         // Other: elastic collision against grower's FULL (boosted) original velocity
         const oOrigX = isB1 ? orig2x : orig1x;
         const oOrigY = isB1 ? orig2y : orig1y;
@@ -722,6 +736,18 @@ function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
             if (relVel > 0) tryBoostReflect(a, b, toB);
         }
     }
+
+    // Apply KE transferred from grower cap to other's speed
+    if (grower && other && grower._pendingOtherKE) {
+        const spd = Math.hypot(other.vx, other.vy);
+        const newSpd = Math.sqrt(spd * spd + 2 * grower._pendingOtherKE / other.mass);
+        if (spd > EPS) { other.vx *= newSpd / spd; other.vy *= newSpd / spd; }
+        else { other.vx = newSpd * nx * (isB1 ? 1 : -1); other.vy = newSpd * ny * (isB1 ? 1 : -1); }
+        const actualAddedKE = 0.5 * other.mass * (newSpd * newSpd - spd * spd);
+        other.knockBoost += actualAddedKE / other.mass;
+        grower._pendingOtherKE = 0;
+        // if (t >= 2420 && t <= 2440) console.log(`[t=${t}] E after pendingOtherKE=${grower.battle.totalEnergy().toFixed(2)} pendingOtherKE=${grower._pendingOtherKE?.toFixed(2)} actualAddedKE=${actualAddedKE.toFixed(2)}`);
+    }
 }
 
 // Share knockBoost proportional to post-collision KE weighted by mass
@@ -739,17 +765,14 @@ function shareKnockBoost(b1, b2, prevBoost1 = b1.knockBoost, prevBoost2 = b2.kno
             b2.knockBoost += totalBoost * ke2 / total / b2.mass;
         }
     }
+    // if (b1.knockBoost < 0 || b2.knockBoost < 0) console.log(`[t=${t}] b1.knockBoost=${b1.knockBoost} b2.knockBoost=${b2.knockBoost}`);
 }
 
 // Elastic collision response
 function resolveCollision(b1, b2, r1Override, r2Override) {
-    if (t >= 8700 && t <= 8710 && (b1 instanceof MachineGunBall || b2 instanceof MachineGunBall)) {
-        const [mg, other] = b1 instanceof MachineGunBall ? [b1, b2] : [b2, b1];
-        console.log(`[t=${t}] resolveCollision MG vs ${other.constructor.name}: MG speed=${Math.hypot(mg.vx, mg.vy).toFixed(2)} pos=(${mg.x.toFixed(1)},${mg.y.toFixed(1)}) other speed=${Math.hypot(other.vx, other.vy).toFixed(2)} pos=(${other.x.toFixed(1)},${other.y.toFixed(1)}) dist=${Math.hypot(mg.x - other.x, mg.y - other.y).toFixed(2)}`);
-    }
-    // if (isDebugPair) {
-    //     const [gr, gi] = b1 instanceof GrowerBall ? [b1, b2] : [b2, b1];
-    //     console.log(`[t=${t}] resolveCollision Grower(id=${gr.id} pos=(${gr.x.toFixed(1)},${gr.y.toFixed(1)}) v=(${gr.vx.toFixed(3)},${gr.vy.toFixed(3)}) r=${gr.radius.toFixed(2)}) Grimoire(id=${gi.id} pos=(${gi.x.toFixed(1)},${gi.y.toFixed(1)}) v=(${gi.vx.toFixed(3)},${gi.vy.toFixed(3)}) r=${gi.radius.toFixed(2)}) dist=${Math.hypot(gr.x - gi.x, gr.y - gi.y).toFixed(2)} sumR=${(gr.radius + gi.radius).toFixed(2)} r1Ov=${r1Override?.toFixed(2)} r2Ov=${r2Override?.toFixed(2)} bounce1=${b1.shouldBounce(b2)} bounce2=${b2.shouldBounce(b1)}`);
+    // if (t >= 8700 && t <= 8710 && (b1 instanceof MachineGunBall || b2 instanceof MachineGunBall)) {
+    //     const [mg, other] = b1 instanceof MachineGunBall ? [b1, b2] : [b2, b1];
+    //     console.log(`[t=${t}] resolveCollision MG vs ${other.constructor.name}: MG speed=${Math.hypot(mg.vx, mg.vy).toFixed(2)} pos=(${mg.x.toFixed(1)},${mg.y.toFixed(1)}) other speed=${Math.hypot(other.vx, other.vy).toFixed(2)} pos=(${other.x.toFixed(1)},${other.y.toFixed(1)}) dist=${Math.hypot(mg.x - other.x, mg.y - other.y).toFixed(2)}`);
     // }
 
     if (!(b2 instanceof Bullet)) b1._pendingKnockDecay = true;
@@ -805,17 +828,17 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
             if (overlap > -boostLeniency) {
                 const boost = (overlap + 5) / (sb || 1);
                 const speedBefore = Math.hypot(other.vx, other.vy);
+                // const eBefore = grower.battle.totalEnergy();
                 other.vx += boost * sign * nx;
                 other.vy += boost * sign * ny;
                 const addedKE = 0.5 * (Math.hypot(other.vx, other.vy) ** 2 - speedBefore ** 2);
 
-                const oldBoost = other.knockBoost;
+                // const oldBoost = other.knockBoost;
                 if (addedKE > 0) {
                     other.knockBoost += addedKE;
-                    // if (t >= 8700 && t <= 8710) console.log(`[t=${t}] sep-push: other=${other.constructor.name} boost=${boost.toFixed(2)} overlap=${overlap.toFixed(2)} addedKE=${addedKE.toFixed(2)} speed=${Math.hypot(other.vx, other.vy).toFixed(2)} pos=(${other.x.toFixed(1)},${other.y.toFixed(1)})`);
-                    other.damage(2, grower);
                 }
-                console.log(t, "GOT HERE", "boost", boost, "oldBoost", oldBoost, "addedKE", addedKE, "other.knockBoost", other.knockBoost);
+                // const eAfter = grower.battle.totalEnergy();
+                // console.log(t, "GOT HERE", "boost", boost, "oldBoost", oldBoost, "addedKE", addedKE, "other.knockBoost", other.knockBoost, "dE", eAfter - eBefore);
             }
             else {
                 // console.log(t, "GOT HERE no boost");
@@ -1159,14 +1182,6 @@ class BallBattle {
             if (tWall <= tNext + EPS) {
                 for (const ev of wallEvents) {
                     ev.wall.resolve(ev.ball);
-                }
-            }
-
-            if (t >= 8700 && t <= 8710) {
-                for (const b of this.bodies) {
-                    if (b instanceof MachineGunBall && this.isInBounds && !this.isInBounds(b.x, b.y, b.radius)) {
-                        console.log(`[t=${t}] *** MG OUT OF BOUNDS after step: pos=(${b.x.toFixed(3)},${b.y.toFixed(3)}) radius=${b.radius} dt_remaining=${dt.toFixed(6)}`);
-                    }
                 }
             }
         }
@@ -1516,30 +1531,10 @@ class BallBattle {
             if (b._pendingGrow) b._pendingGrow.grower.applyGrow(b);
         }
 
-        // if (t == 231 || t == 232 || t == 2817 || t == 2818) {
-        //     console.log(`[t=${t}] E after physics=${this.totalEnergy().toFixed(2)}`);
-        //     for (const b of this.bodies) {
-        //         if (!(b instanceof Ball || b instanceof Bullet)) continue;
-        //         const ke = 0.5 * b.mass * (b.vx ** 2 + b.vy ** 2);
-        //         const pe = b.mass * this.gravity * (this.height - b.radius - b.y);
-        //         const net = ke + pe - b.mass * (b.boostEnergy || 0) - b.mass * (b.knockBoost || 0);
-        //         console.log(`  ${b.constructor.name}#${b.id}: KE=${ke.toFixed(2)} PE=${pe.toFixed(2)} boost=${(b.mass * (b.boostEnergy || 0)).toFixed(2)} knock=${(b.mass * (b.knockBoost || 0)).toFixed(2)} net=${net.toFixed(2)}`);
-        //     }
-        // }
-
-        // Debug log at key frames
-        // if (t >= 2360 && t <= 2380) {
-        //     const state = this.balls.map(b => `${b.constructor.name}:hp=${b.hp.toFixed(2)},x=${b.x.toFixed(2)},y=${b.y.toFixed(2)}`).join(' | ');
-        //     console.log(`t=${t} bodies=${this.bodies.length} ${state}`);
-        // }
-
         this.bodies.sort((a, b) => a.id - b.id);
         this.bodies.forEach((b) => b.onUpdate(b.getTimeScale()));
-        // console.log(`[t=${t}] E after onUpdate=${this.totalEnergy().toFixed(2)}`);
 
-        // t0 = performance.now();
         this.updateWeapons();
-        // profiler.weapons += performance.now() - t0;
 
         this.processDeaths();
 
@@ -1563,6 +1558,11 @@ class BallBattle {
             this.teamCount[b.team] = (this.teamCount[b.team] ?? 0) + 1
         });
         // console.log({ ...this.teamCount });
+
+        // if (t >= 2420 && t <= 2440) {
+        //     const rg = this.balls[8];
+        //     console.log(`[t=${t}] rogue grower x=${rg.x} y=${rg.y} vx=${rg.vx} vy=${rg.vy}`);
+        // }
     }
 
     inBounds(x, y, radius) {
@@ -1583,7 +1583,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 9450) {
+        // while (t < 6500) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -1904,8 +1904,6 @@ class MachineGunBall extends Ball {
     }
 
     handleUpdate(dt) {
-        if (t == 8000) this.hp = 100;
-
         this.reloadTime -= dt;
         if (this.reloadTime > EPS) return;
 
@@ -1942,7 +1940,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = (!this.battle.isDuel ? 1.4 : 1) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (!this.battle.isDuel ? 1.5 : 1) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -1965,7 +1963,7 @@ class MachineGunBall extends Ball {
 
     onLoad() {
         if (!this.battle.isDuel) {
-            this.reloadTime *= 1.4;
+            this.reloadTime *= 1.5;
         }
     }
 }
