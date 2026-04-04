@@ -212,8 +212,9 @@ class Ball extends CircleBody {
     }
 
     checkSlamDamage(other = null) {
-        if (this.slamTimer > 0) {
+        if (this.slamTimer > 0 && !(this.slamSource == other && this.slamTimer == (this.battle.isDuel ? duelSlam : FFASlam))) {
             // this.damage(this.slamTimer, this.slamSource);
+
             let dmg;
             if (this.battle.isDuel) {
                 dmg = this.slamTimer > 9 ? 3 :
@@ -225,12 +226,11 @@ class Ball extends CircleBody {
                     this.slamTimer > 15 ? 2 :
                         1;
             }
+            // if (this.slamSource == other) console.log(t, "sadasdasd", this.slamTimer, dmg);
             this.damage(dmg, this.slamSource);
 
             // if (other && other instanceof Ball && other.team != this.team) {
-            //     if (t >= 6435 && t <= 6440) console.log(`[t=${t}] checkSlamDamage: this=${this.constructor.name} hp=${this.hp.toFixed(2)} dmg=${dmg} other=${other.constructor.name} other.hp=${other.hp.toFixed(2)}`);
-            //     if (t >= 8700 && t <= 8710 && (this instanceof MachineGunBall || other instanceof MachineGunBall)) console.log(`[t=${t}] checkSlamDamage: this=${this.constructor.name} slamTimer=${this.slamTimer?.toFixed(2)} dmg=${dmg} other=${other.constructor.name}`);
-            //     other.damage(1, this.slamSource);
+            //     other.damage(dmg, this.slamSource);
             // }
 
             if (!(this instanceof GrowerBall || this instanceof DuplicatorBall)) {
@@ -248,7 +248,9 @@ class Ball extends CircleBody {
     }
 
     onCollision(b) {
-        if (!(b instanceof Bullet) && (b != this.slamSource || !this.battle.isDuel)) this.checkSlamDamage(b);
+        if (!(b instanceof Bullet)) {
+            this.checkSlamDamage(b);
+        }
         this.handleCollision(b);
     }
 
@@ -386,7 +388,6 @@ class Wall {
     }
 
     resolve(b) {
-        if (t >= 8700 && t <= 8710 && b instanceof MachineGunBall) console.log(`[t=${t}] wall.resolve: MachineGunBall speed=${Math.hypot(b.vx, b.vy).toFixed(2)} pos=(${b.x.toFixed(1)},${b.y.toFixed(1)}) axis=${this.axis} normal=${this.normal} pos=${this.pos}`);
         b.onWallCollision();
         if (!b.shouldBounceWall(this)) return;
         b._pendingKnockDecay = true;
@@ -768,6 +769,15 @@ function shareKnockBoost(b1, b2, prevBoost1 = b1.knockBoost, prevBoost2 = b2.kno
     // if (b1.knockBoost < 0 || b2.knockBoost < 0) console.log(`[t=${t}] b1.knockBoost=${b1.knockBoost} b2.knockBoost=${b2.knockBoost}`);
 }
 
+function applyPendingSlam(b) {
+    if (b._pendingSlamTimer) {
+        b.slamTimer = b._pendingSlamTimer;
+        b.slamSource = b._pendingSlamSource;
+        b._pendingSlamTimer = null;
+        b._pendingSlamSource = null;
+    }
+}
+
 // Elastic collision response
 function resolveCollision(b1, b2, r1Override, r2Override) {
     // if (t >= 8700 && t <= 8710 && (b1 instanceof MachineGunBall || b2 instanceof MachineGunBall)) {
@@ -783,6 +793,8 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
 
     b1.onCollision(b2);
     b2.onCollision(b1);
+    applyPendingSlam(b1);
+    applyPendingSlam(b2);
 
     const bounce1 = b1.shouldBounce(b2);
     const bounce2 = b2.shouldBounce(b1);
@@ -826,7 +838,8 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
             const or_ = (other === b1 ? r1Override : r2Override) ?? other.radius;
             const overlap = (gr + or_) - Math.hypot(gx1 - ox1, gy1 - oy1);
             if (overlap > -boostLeniency) {
-                const boost = (overlap + 5) / (sb || 1);
+                const vDotN = other.vx * nx + other.vy * ny; // ensure addedKE always positive
+                const boost = Math.max((overlap + 5) / (sb || 1), -2 * sign * vDotN);
                 const speedBefore = Math.hypot(other.vx, other.vy);
                 // const eBefore = grower.battle.totalEnergy();
                 other.vx += boost * sign * nx;
@@ -834,9 +847,7 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
                 const addedKE = 0.5 * (Math.hypot(other.vx, other.vy) ** 2 - speedBefore ** 2);
 
                 // const oldBoost = other.knockBoost;
-                if (addedKE > 0) {
-                    other.knockBoost += addedKE;
-                }
+                other.knockBoost += addedKE;
                 // const eAfter = grower.battle.totalEnergy();
                 // console.log(t, "GOT HERE", "boost", boost, "oldBoost", oldBoost, "addedKE", addedKE, "other.knockBoost", other.knockBoost, "dE", eAfter - eBefore);
             }
@@ -1165,10 +1176,10 @@ class BallBattle {
                 return;
             }
 
-            if (t >= 8700 && t <= 8710 && (pair?.[0] instanceof MachineGunBall || pair?.[1] instanceof MachineGunBall || wallEvents.some(e => e.ball instanceof MachineGunBall))) {
-                const mg = pair?.[0] instanceof MachineGunBall ? pair[0] : pair?.[1] instanceof MachineGunBall ? pair[1] : wallEvents.find(e => e.ball instanceof MachineGunBall)?.ball;
-                console.log(`[t=${t}] physics step: dt_remaining=${dt.toFixed(6)} tNext=${tNext.toFixed(6)} tBall=${tBall.toFixed(6)} tWall=${tWall.toFixed(6)} MG pos=(${mg?.x.toFixed(3)},${mg?.y.toFixed(3)}) speed=${Math.hypot(mg?.vx, mg?.vy).toFixed(3)}`);
-            }
+            // if (t >= 8700 && t <= 8710 && (pair?.[0] instanceof MachineGunBall || pair?.[1] instanceof MachineGunBall || wallEvents.some(e => e.ball instanceof MachineGunBall))) {
+            //     const mg = pair?.[0] instanceof MachineGunBall ? pair[0] : pair?.[1] instanceof MachineGunBall ? pair[1] : wallEvents.find(e => e.ball instanceof MachineGunBall)?.ball;
+            //     console.log(`[t=${t}] physics step: dt_remaining=${dt.toFixed(6)} tNext=${tNext.toFixed(6)} tBall=${tBall.toFixed(6)} tWall=${tWall.toFixed(6)} MG pos=(${mg?.x.toFixed(3)},${mg?.y.toFixed(3)}) speed=${Math.hypot(mg?.vx, mg?.vy).toFixed(3)}`);
+            // }
 
             this.advanceAll(tNext);
             dt -= tNext;
@@ -1583,7 +1594,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 6500) {
+        // while (t < 7070) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -1969,7 +1980,7 @@ class MachineGunBall extends Ball {
 }
 
 class Bullet extends CircleBody {
-    constructor(x, y, vx, vy, owner, dmg = 1, lifetime = 30) {
+    constructor(x, y, vx, vy, owner, dmg = 1, lifetime = 31) {
         super(x, y, vx, vy, 1, bulletRadius, 0, false);
         this.owner = owner;
         this.reflectCooldown = 0;
@@ -2383,7 +2394,7 @@ class Turret extends CircleBody {
                 Math.sin(this.theta) * speed,
                 this.owner,
                 power,
-                42
+                43
             );
             this.battle.addBody(bullet);
         }
@@ -2552,6 +2563,7 @@ class GrimoireBall extends Ball {
 
 const growCooldown = 7;
 const maxScale = 6.56;
+const duelSlam = 10, FFASlam = 20;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2579,8 +2591,8 @@ class GrowerBall extends Ball {
         const owner = reflector || this;
         if ((!reflector && (this.inert || b.team == this.team)) || !(b instanceof Ball)) return;
         b.damage(1, owner);
-        b.slamTimer = this.battle.isDuel ? 10 : 20;
-        b.slamSource = owner;
+        b._pendingSlamTimer = this.battle.isDuel ? duelSlam : FFASlam;
+        b._pendingSlamSource = owner;
 
         if (!(b instanceof GrowerBall || b instanceof DuplicatorBall)) {
             this.hitsThisFrame += 3;
@@ -2746,7 +2758,7 @@ class MirrorBall extends Ball {
 
         const cfg = getWeaponConfig(MirrorBall);
         const mirror = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
-        mirror.addCollider(13, 31, 2);
+        mirror.addCollider(13, 30.5, 2);
         mirror.addSpin(Math.PI * 0.020 * dir);
         mirror.addParry();
 
@@ -2823,6 +2835,7 @@ class MirrorBall extends Ball {
                 // if (nColl > 0) console.log(+bounced, +newContact, this.collsThisFrame[b.id] ?? 0);
                 for (let i = 0; i < nColl; i++) {
                     b.handleCollision(b, this);
+                    applyPendingSlam(b);
                     if (b._pendingGrow) b._pendingGrow.grower.applyGrow(b);
                 }
             }

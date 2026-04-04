@@ -110,7 +110,7 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                if (i != 9 && j != 9) continue;
+                if (i != 8 && j != 8) continue;
                 if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;
