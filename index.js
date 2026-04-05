@@ -77,6 +77,7 @@ class Weapon {
     }
 
     addParry() {
+        // return;
         this.flipped = this.angVel < 0;
         this.weaponColFns.push((other) => {
             if (other.ball.team == this.ball.team) return;
@@ -1680,7 +1681,7 @@ function propsToList(propsMap) {
 }
 
 // Duplicator: Reproduces on hit
-const dmgCooldown = 6, dupeCooldown = 6, dupeLimit = 25;
+const dmgCooldown = 7, dupeCooldown = 7, dupeLimit = 25;
 class DuplicatorBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#f86ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2512,7 +2513,6 @@ class GrimoireBall extends Ball {
         }
         else if (target instanceof HammerBall) {
             minion.spinRate = target.spinRate;
-            minion.power = -1;
         }
     }
 
@@ -2832,7 +2832,7 @@ class MirrorBall extends Ball {
                 for (let i = 0; i < nColl; i++) {
                     b.handleCollision(b, this);
                     applyPendingSlam(b);
-                    if (b._pendingGrow) b._pendingGrow.grower.applyGrow(b);
+                    if (ƒb._pendingGrow) b._pendingGrow.grower.applyGrow(b);
                 }
             }
         });
@@ -2879,17 +2879,14 @@ class MirrorBall extends Ball {
     }
 }
 
-const hammerAccel = 0.00105;
-function hammerMidgameBoost(sr) {
-    return 0.00021 * (sr < 30 ? sr ** 3 : 54000 - Math.max(60 - sr, 0) ** 3);
-}
-
+const hammerAccel = 0.0016;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.spinRate = 5;
         this.power = 0;
-        this.midgameBoost = hammerMidgameBoost(this.spinRate);
+        this.antiSwarmBoost = 0;
+        this.pendingBoost = 0;
 
         const cfg = getWeaponConfig(HammerBall);
         const hammer = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, 0, cfg.rotation);
@@ -2899,30 +2896,42 @@ class HammerBall extends Ball {
         hammer.addDirChange();
         hammer.addDamage(0, 1);
 
-        hammer.ballColFns.push(() => {
+        hammer.ballColFns.push((b) => {
+            let addedAntiSwarm = Math.sqrt(this.power / Math.sqrt(this.spinRate));
+            addedAntiSwarm /= Math.exp(this.antiSwarmBoost * 0.2);
+            const a = this.antiSwarmBoost * Math.sqrt(this.spinRate) * 0.05;
+            this.power = a;
+            if (t > 0) console.warn(t, "1 added", a, this.antiSwarmBoost);
+
+            // console.log(t, "antiSwarmBoost", this.antiSwarmBoost, "addedAntiSwarm", addedAntiSwarm);
+            this.pendingBoost += this.antiSwarmBoost;
+            this.antiSwarmBoost += addedAntiSwarm;
+
             this.spinRate += 1;
-            this.midgameBoost = hammerMidgameBoost(this.spinRate);
-            // console.log("f", this.spinRate, f);
-            this.power = Math.min(this.midgameBoost, this.power);
-            // this.power = 0;
         });
 
         this.addWeapon(hammer);
     }
 
     handleUpdate(dt) {
-        // const maxDmg = this.spinRate * 3, curDmg = (1 + this.power * 0.5) ** 2;
-        // if (curDmg < maxDmg) {
-        const m = this.spinRate - this.power;
-        this.power += Math.max(hammerAccel, this.midgameBoost * (m / this.spinRate) / 100) * m * dt;
-        // }
+        const m = 3 * Math.sqrt(this.spinRate) - this.power;
+        if (m < 0) console.warn("tetotoe");
+        this.power += hammerAccel * m * dt;
+        if (t % 50 == 1) console.log(t, "3 added", hammerAccel * m * dt);
+
+        const oldAntiSwarm = this.pendingBoost;
+        this.antiSwarmBoost *= Math.exp(-dt / 1000);
+        this.pendingBoost *= Math.exp(-dt / 1000);
+        const a = (oldAntiSwarm - this.pendingBoost) * (3 * Math.sqrt(this.spinRate) - this.power) * 0.22;
+        this.power += a;
+        if (t % 50 == 1) console.log(t, "2 added", a);
 
         const hammer = this.weapons[0];
-        hammer.angVel = Math.sign(hammer.angVel) * 0.012 * Math.PI * (1 + 0.315 * this.power);
-        hammer.dmg = (1 + this.power * 0.21) ** 3;
+        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power * 0.1) ** 2;
+        hammer.dmg = (1 + this.power * 0.3) ** 2;
         hammer.iframes = Math.min(40, Math.PI / Math.abs(hammer.angVel));
 
-        if (t % 50 == 1) console.log("spin", Math.abs(this.weapons[0].angVel / Math.PI).toFixed(3), "dmg", hammer.dmg, "m", hammerAccel, this.midgameBoost * (m / this.spinRate) / 100);
+        // if (t % 50 == 1) console.log(t, "spin", Math.abs(this.weapons[0].angVel / Math.PI).toFixed(3), "dmg", hammer.dmg, "antiSwarm", this.pendingBoost);
     }
 
     getInfoEl() {
