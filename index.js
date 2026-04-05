@@ -218,8 +218,8 @@ class Ball extends CircleBody {
 
             let dmg;
             if (this.battle.isDuel) {
-                dmg = this.slamTimer > 9 ? 3 :
-                    this.slamTimer > 6 ? 2 :
+                dmg = this.slamTimer > 8 ? 3 :
+                    this.slamTimer > 5 ? 2 :
                         1;
             }
             else {
@@ -1681,7 +1681,7 @@ function propsToList(propsMap) {
 }
 
 // Duplicator: Reproduces on hit
-const dmgCooldown = 7, dupeCooldown = 7, dupeLimit = 25;
+const dmgCooldown = 8, dupeCooldown = 8, dupeLimit = 25;
 class DuplicatorBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#f86ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -1745,7 +1745,7 @@ class DuplicatorBall extends Ball {
     }
 }
 
-const baseSpin = Math.PI * 0.07;
+const baseSpin = Math.PI * 0.069;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -1894,14 +1894,14 @@ class LanceBall extends Ball {
 }
 
 // Machine Gun: fires bullets
-const bulletRadius = 5, maxVolley = 110;
+const bulletRadius = 5, maxVolley = 110, reloadTime = 59;
 class MachineGunBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#61a3e9", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.damagePerRound = 10;
         this.pendingDamage = 0;
         this.bulletsPerRound = this.damagePerRound;
-        this.reloadTime = 60;
+        this.reloadTime = reloadTime;
         this.fireDelay = 0;
         this.bonusDmg = 0;
         this.bonusDmgRate = 0;
@@ -1910,7 +1910,7 @@ class MachineGunBall extends Ball {
         const cfg = getWeaponConfig(MachineGunBall);
         const gun = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         gun.addCollider(45, 5);
-        gun.addSpin(Math.PI * 0.017 * dir);
+        gun.addSpin(Math.PI * 0.0175 * dir);
         gun.addParry();
         this.addWeapon(gun);
     }
@@ -1962,7 +1962,7 @@ class MachineGunBall extends Ball {
             this.pendingDamage = 0;
             this.bonusDmgRate = Math.max(0, this.damagePerRound - maxVolley) / maxVolley;
             this.bulletsPerRound = Math.min(maxVolley, this.damagePerRound);
-            this.reloadTime = 60;
+            this.reloadTime = reloadTime;
             this.fireDelay = 0;
         }
     }
@@ -2295,7 +2295,7 @@ class WrenchBall extends Ball {
     }
 }
 
-const fireDelay = 34, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
+const fireDelay = 32, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
 class Turret extends CircleBody {
     constructor(x, y, owner, theta, angVel) {
         super(x, y, 0, 0, 1, turretRadius, Infinity, false);
@@ -2408,7 +2408,7 @@ class GrimoireBall extends Ball {
         const cfg = getWeaponConfig(GrimoireBall);
         const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
-        grimoire.addCollider(31, 17);
+        grimoire.addCollider(32, 17);
         grimoire.addSpin(Math.PI * 0.023 * dir);
         // grimoire.addParry();
         grimoire.addDirChange();
@@ -2555,9 +2555,9 @@ class GrimoireBall extends Ball {
     }
 }
 
-const growCooldown = 7;
+const growCooldown = 8;
 const maxScale = 6.56;
-const duelSlam = 10, FFASlam = 20;
+const duelSlam = 9, FFASlam = 20;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2832,7 +2832,7 @@ class MirrorBall extends Ball {
                 for (let i = 0; i < nColl; i++) {
                     b.handleCollision(b, this);
                     applyPendingSlam(b);
-                    if (ƒb._pendingGrow) b._pendingGrow.grower.applyGrow(b);
+                    if (b._pendingGrow) b._pendingGrow.grower.applyGrow(b);
                 }
             }
         });
@@ -2879,11 +2879,11 @@ class MirrorBall extends Ball {
     }
 }
 
-const hammerAccel = 0.0016;
+const hammerAccel = 0.0016, baseSpinRate = 5;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.spinRate = 5;
+        this.spinRate = baseSpinRate;
         this.power = 0;
         this.antiSwarmBoost = 0;
         this.pendingBoost = 0;
@@ -2897,11 +2897,10 @@ class HammerBall extends Ball {
         hammer.addDamage(0, 1);
 
         hammer.ballColFns.push((b) => {
-            let addedAntiSwarm = Math.sqrt(this.power / Math.sqrt(this.spinRate));
-            addedAntiSwarm /= Math.exp(this.antiSwarmBoost * 0.2);
-            const a = this.antiSwarmBoost * Math.sqrt(this.spinRate) * 0.05;
+            let addedAntiSwarm = 1 / Math.exp(this.antiSwarmBoost * 0.2);
+            const a = this.antiSwarmBoost * Math.sqrt(this.spinRate) * 0.00;
             this.power = a;
-            if (t > 0) console.warn(t, "1 added", a, this.antiSwarmBoost);
+            // if (t > 0) console.warn(t, "1 added", a, this.antiSwarmBoost);
 
             // console.log(t, "antiSwarmBoost", this.antiSwarmBoost, "addedAntiSwarm", addedAntiSwarm);
             this.pendingBoost += this.antiSwarmBoost;
@@ -2914,21 +2913,26 @@ class HammerBall extends Ball {
     }
 
     handleUpdate(dt) {
-        const m = 3 * Math.sqrt(this.spinRate) - this.power;
-        if (m < 0) console.warn("tetotoe");
+        const ceiling = 3 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 2);
+        const m = (ceiling - this.power) * (this.battle.isDuel ? 1 : 1 / 3);
+        if (m < 0) console.warn(t, "asdasdas");
+
         this.power += hammerAccel * m * dt;
-        if (t % 50 == 1) console.log(t, "3 added", hammerAccel * m * dt);
+        // if (t % 50 == 1) console.log(t, "3 added", hammerAccel * m * dt);
+
+        this.antiSwarmBoost = Math.max(0, this.antiSwarmBoost - 0.003 * dt);
+        this.antiSwarmBoost *= Math.exp(-dt / 1000);
 
         const oldAntiSwarm = this.pendingBoost;
-        this.antiSwarmBoost *= Math.exp(-dt / 1000);
+        this.pendingBoost = Math.max(0, this.pendingBoost - 0.001 * dt);
         this.pendingBoost *= Math.exp(-dt / 1000);
-        const a = (oldAntiSwarm - this.pendingBoost) * (3 * Math.sqrt(this.spinRate) - this.power) * 0.22;
+        const a = (oldAntiSwarm - this.pendingBoost) * m * 0.25;
         this.power += a;
-        if (t % 50 == 1) console.log(t, "2 added", a);
+        // if (t % 50 == 1) console.log(t, "2 added", a);
 
         const hammer = this.weapons[0];
-        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power * 0.1) ** 2;
-        hammer.dmg = (1 + this.power * 0.3) ** 2;
+        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power * 0.121) ** 2;
+        hammer.dmg = (1 + this.power * 0.363) ** 2;
         hammer.iframes = Math.min(40, Math.PI / Math.abs(hammer.angVel));
 
         // if (t % 50 == 1) console.log(t, "spin", Math.abs(this.weapons[0].angVel / Math.PI).toFixed(3), "dmg", hammer.dmg, "antiSwarm", this.pendingBoost);
@@ -2936,7 +2940,7 @@ class HammerBall extends Ball {
 
     getInfoEl() {
         return propsToList({
-            "Acceleration": { text: Math.round(this.spinRate * 100) / 100 + "x", grad: { from: 1, to: 5 } },
+            "Acceleration": { text: Math.round(this.spinRate / baseSpinRate * 100) / 100 + "x", grad: { from: 1, to: 5 } },
         });
     }
 }
