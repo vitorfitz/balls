@@ -2642,7 +2642,7 @@ class GrowerBall extends Ball {
             for (const w of owner.weapons) w.scaleBy(growth);
         }
 
-        if (true || !this.battle.isDuel) {
+        if (!this.battle.isDuel) {
             owner.boostEnergy = 6 * (owner.scale - 1);
             const newKE = 0.5 * owner.mass * (owner.vx ** 2 + owner.vy ** 2);
             const newPE = owner.mass * this.battle.gravity * (this.battle.height - owner.radius - owner.y);
@@ -2879,12 +2879,17 @@ class MirrorBall extends Ball {
     }
 }
 
-const hammerAccel = 0.0012;
+const hammerAccel = 0.00105;
+function hammerMidgameBoost(sr) {
+    return 0.00021 * (sr < 30 ? sr ** 3 : 54000 - Math.max(60 - sr, 0) ** 3);
+}
+
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.spinRate = 2;
+        this.spinRate = 5;
         this.power = 0;
+        this.midgameBoost = hammerMidgameBoost(this.spinRate);
 
         const cfg = getWeaponConfig(HammerBall);
         const hammer = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, 0, cfg.rotation);
@@ -2896,7 +2901,10 @@ class HammerBall extends Ball {
 
         hammer.ballColFns.push(() => {
             this.spinRate += 1;
-            this.power = Math.min(this.spinRate ** 2 * 0.003, this.power);
+            this.midgameBoost = hammerMidgameBoost(this.spinRate);
+            // console.log("f", this.spinRate, f);
+            this.power = Math.min(this.midgameBoost, this.power);
+            // this.power = 0;
         });
 
         this.addWeapon(hammer);
@@ -2906,14 +2914,15 @@ class HammerBall extends Ball {
         // const maxDmg = this.spinRate * 3, curDmg = (1 + this.power * 0.5) ** 2;
         // if (curDmg < maxDmg) {
         const m = this.spinRate - this.power;
-        // if (t % 50 == 0) console.log(Math.abs(this.weapons[0].angVel / Math.PI));
-        this.power += hammerAccel * m * dt * (this.mass / 625);
+        this.power += Math.max(hammerAccel, this.midgameBoost * (m / this.spinRate) / 100) * m * dt;
         // }
 
         const hammer = this.weapons[0];
-        hammer.angVel = Math.sign(hammer.angVel) * 0.012 * Math.PI * (1 + 0.5 * this.power);
-        hammer.dmg = (1 + this.power * 0.5) ** 2;
+        hammer.angVel = Math.sign(hammer.angVel) * 0.012 * Math.PI * (1 + 0.315 * this.power);
+        hammer.dmg = (1 + this.power * 0.21) ** 3;
         hammer.iframes = Math.min(40, Math.PI / Math.abs(hammer.angVel));
+
+        if (t % 50 == 1) console.log("spin", Math.abs(this.weapons[0].angVel / Math.PI).toFixed(3), "dmg", hammer.dmg, "m", hammerAccel, this.midgameBoost * (m / this.spinRate) / 100);
     }
 
     getInfoEl() {
