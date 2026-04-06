@@ -179,8 +179,6 @@ class CircleBody {
 
     shouldBounce(other) { return false; }
 
-    shouldBounceWall(wall) { return true; }
-
     damage(dmg) {
         this.hp = Math.max(0, this.hp - dmg);
     }
@@ -218,8 +216,8 @@ class Ball extends CircleBody {
 
             let dmg;
             if (this.battle.isDuel) {
-                dmg = this.slamTimer > 8 ? 3 :
-                    this.slamTimer > 5 ? 2 :
+                dmg = this.slamTimer > 10 ? 3 :
+                    this.slamTimer > 7 ? 2 :
                         1;
             }
             else {
@@ -269,6 +267,7 @@ class Ball extends CircleBody {
         this.flashTime = flashDur;
         if (source && !this.owner) {
             source.getRootOwner().damageDealt += Math.min(dmg, hpBefore);
+            if (this.hp <= 0) this.killer = source;
         }
     }
 
@@ -390,7 +389,6 @@ class Wall {
 
     resolve(b) {
         b.onWallCollision();
-        if (!b.shouldBounceWall(this)) return;
         b._pendingKnockDecay = true;
         const wallVel = this.velocity || 0;
         if (this.axis === VERTICAL) {
@@ -952,6 +950,7 @@ class BallBattle {
     constructor(balls, seed, gravity = 0.1) {
         this.balls = [];
         this.bodies = [];
+        this.dots = [];
         this.particles = [];
         this.gravity = gravity;
 
@@ -1277,6 +1276,16 @@ class BallBattle {
             for (let i = 0; i < count; i++) {
                 this.particles.push(new DeathParticle(this, b.x, b.y, b.color));
             }
+            if (!this.isDuel && !b.owner) {
+                const killer = b.killer && b.killer.hp > 0 ? b.killer : null;
+                for (let i = 0; i < 10; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 1 + Math.random() * 1;
+                    const dot = new SoulDot(b.x + Math.cos(angle) * b.radius, b.y + Math.sin(angle) * b.radius, killer, Math.cos(angle) * speed, Math.sin(angle) * speed);
+                    dot.battle = this;
+                    this.dots.push(dot);
+                }
+            }
         });
         this.balls = this.balls.filter((b) => b.hp > 0);
         this.bodies = this.bodies.filter((b) => b.hp > 0);
@@ -1387,17 +1396,18 @@ class BallBattle {
             this.ctx.globalAlpha = 1;
         }
 
-        this.bodies
-            .sort((a, b) => (a.getZIndex() - b.getZIndex()))
-            .forEach(b => b.draw());
-
-        // Update and draw particles
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
             p.update();
             if (p.life <= 0) this.particles.splice(i, 1);
             else p.draw(this.ctx);
         }
+
+        for (const dot of this.dots) dot.draw();
+
+        this.bodies
+            .sort((a, b) => (a.getZIndex() - b.getZIndex()))
+            .forEach(b => b.draw());
     }
 
     updateArenaShrink() {
@@ -1547,6 +1557,11 @@ class BallBattle {
         this.bodies.forEach((b) => b.onUpdate(b.getTimeScale()));
 
         this.updateWeapons();
+
+        for (let i = this.dots.length - 1; i >= 0; i--) {
+            this.dots[i].onUpdate(this.dots[i].getTimeScale());
+        }
+        this.dots = this.dots.filter((d) => d.hp > 0);
 
         this.processDeaths();
 
@@ -1745,7 +1760,7 @@ class DuplicatorBall extends Ball {
     }
 }
 
-const baseSpin = Math.PI * 0.069;
+const baseSpin = Math.PI * 0.0695;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2408,8 +2423,8 @@ class GrimoireBall extends Ball {
         const cfg = getWeaponConfig(GrimoireBall);
         const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
-        grimoire.addCollider(32, 17);
-        grimoire.addSpin(Math.PI * 0.023 * dir);
+        grimoire.addCollider(30, 17);
+        grimoire.addSpin(Math.PI * 0.0225 * dir);
         // grimoire.addParry();
         grimoire.addDirChange();
 
@@ -2557,7 +2572,7 @@ class GrimoireBall extends Ball {
 
 const growCooldown = 8;
 const maxScale = 6.56;
-const duelSlam = 9, FFASlam = 20;
+const duelSlam = 11, FFASlam = 20;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2711,6 +2726,89 @@ function randomVel(abs, rng) {
     return [Math.cos(theta) * abs, Math.sin(theta) * abs];
 }
 
+class SoulDot extends CircleBody {
+    constructor(x, y, target, vx = 0, vy = 0) {
+        super(x, y, vx, vy, 1, 5, 1, false);
+        this.target = target;
+        this.color = "#00cc44";
+        this.zIndex = -1;
+    }
+
+    onUpdate(dt) {
+        if (this.target && this.target.hp <= 0) this.target = null;
+
+        let target = this.target;
+        if (!target) {
+            // Find nearest ball, pickable by anyone
+            let minDist = Infinity;
+            for (const b of this.battle.balls) {
+                if (b.owner) continue;
+                const d = Math.hypot(b.x - this.x, b.y - this.y);
+                if (d < minDist) { minDist = d; target = b; }
+            }
+        }
+
+        if (target) {
+            const dx = target.x - this.x, dy = target.y - this.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < target.radius) {
+                if (target.hp > 0) target.hp++;
+                this.hp = 0;
+                return;
+            }
+
+            {
+                const drag = Math.exp(-dt * 1 / (0.1 * dist));
+                const dirX = dx / dist, dirY = dy / dist;
+
+                // Split velocity into toward-target and perpendicular components
+                const along = this.vx * dirX + this.vy * dirY;
+                const perpX = this.vx - along * dirX;
+                const perpY = this.vy - along * dirY;
+
+                // Drag only on perpendicular component
+                this.vx = along * dirX + perpX * drag;
+                this.vy = along * dirY + perpY * drag;
+            }
+
+            {
+                const drag = Math.exp(-dt * 1 / 100);
+                this.vx *= drag;
+                this.vy *= drag;
+            }
+
+            const accel = 0.3;
+            this.vx += (dx / dist) * accel * dt;
+            this.vy += (dy / dist) * accel * dt;
+        }
+
+        for (const other of this.battle.dots) {
+            if (other === this) continue;
+            const dx = this.x - other.x, dy = this.y - other.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 20 && dist > 0) {
+                const force = (20 - dist) * 0.01 / dist;
+                this.vx += dx * force * dt;
+                this.vy += dy * force * dt;
+            }
+        }
+
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+    }
+
+    shouldBounce() { return false; }
+
+    draw() {
+        const ctx = this.battle.ctx;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this._renderX ?? this.x, this._renderY ?? this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+
 class DeathParticle {
     constructor(battle, x, y, color) {
         const angle = Math.random() * Math.PI * 2;
@@ -2754,7 +2852,7 @@ class MirrorBall extends Ball {
 
         const cfg = getWeaponConfig(MirrorBall);
         const mirror = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
-        mirror.addCollider(13, 30.5, 2);
+        mirror.addCollider(13, 30, 2);
         mirror.addSpin(Math.PI * 0.020 * dir);
         mirror.addParry();
 
@@ -2879,6 +2977,7 @@ class MirrorBall extends Ball {
     }
 }
 
+// Hammer: Builds up power for next attack
 const hammerAccel = 0.0016, baseSpinRate = 5;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
@@ -2898,8 +2997,7 @@ class HammerBall extends Ball {
 
         hammer.ballColFns.push((b) => {
             let addedAntiSwarm = 1 / Math.exp(this.antiSwarmBoost * 0.2);
-            const a = this.antiSwarmBoost * Math.sqrt(this.spinRate) * 0.00;
-            this.power = a;
+            this.power = 0;
             // if (t > 0) console.warn(t, "1 added", a, this.antiSwarmBoost);
 
             // console.log(t, "antiSwarmBoost", this.antiSwarmBoost, "addedAntiSwarm", addedAntiSwarm);
@@ -2931,8 +3029,8 @@ class HammerBall extends Ball {
         // if (t % 50 == 1) console.log(t, "2 added", a);
 
         const hammer = this.weapons[0];
-        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power * 0.121) ** 2;
-        hammer.dmg = (1 + this.power * 0.363) ** 2;
+        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power * 0.122) ** 2;
+        hammer.dmg = (1 + this.power * 0.366) ** 2;
         hammer.iframes = Math.min(40, Math.PI / Math.abs(hammer.angVel));
 
         // if (t % 50 == 1) console.log(t, "spin", Math.abs(this.weapons[0].angVel / Math.PI).toFixed(3), "dmg", hammer.dmg, "antiSwarm", this.pendingBoost);
@@ -2940,7 +3038,7 @@ class HammerBall extends Ball {
 
     getInfoEl() {
         return propsToList({
-            "Acceleration": { text: Math.round(this.spinRate / baseSpinRate * 100) / 100 + "x", grad: { from: 1, to: 5 } },
+            "Acceleration": { text: Math.round(this.spinRate / baseSpinRate * 100) / 100 + "x", grad: { from: 1, to: 4 } },
         });
     }
 }
@@ -2952,7 +3050,7 @@ const ballClasses = [
     { name: "Lance", class: LanceBall, hp: 100, radius: 25, color: "#dfbf9f", weapon: { sprite: "sprites/spear.png", scale: 4, offset: -44, rotation: 3 * Math.PI / 4, spin: false } },
     { name: "Machine Gun", class: MachineGunBall, hp: 100, radius: 25, color: "#61a3e9", weapon: { sprite: "sprites/gun.png", scale: 2, offset: -9, shift: 7, rotation: 0, spin: true } },
     { name: "Wrench", class: WrenchBall, hp: 100, radius: 25, color: "#ff9933", weapon: { sprite: "sprites/wrench.png", scale: 2, offset: -6, rotation: 3 * Math.PI / 4, spin: true } },
-    { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.png", scale: 2, offset: -13, shift: -1, rotation: Math.PI / 4, spin: true } },
+    { name: "Grimoire", class: GrimoireBall, hp: 100, radius: 25, color: "#a3a3c6", weapon: { sprite: "sprites/grimoire.png", scale: 2, offset: -15, shift: -1, rotation: Math.PI / 4, spin: true } },
     { name: "Sword", class: SwordBall, hp: 100, radius: 25, color: "#ff6464", weapon: { sprite: "sprites/sword.png", scale: 4, offset: -21, rotation: Math.PI / 4, spin: true } },
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
     { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c87941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
