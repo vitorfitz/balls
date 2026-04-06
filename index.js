@@ -969,8 +969,6 @@ class BallBattle {
             }
         }
 
-        this.buffHammer = this.isDuel && ((balls[0] instanceof HammerBall && balls[1] instanceof GrowerBall) || (balls[1] instanceof HammerBall && balls[0] instanceof GrowerBall));
-
         this.lastTime = null;
         this.accumulator = 0;
         this.timeScaleAccum = 0;
@@ -1610,7 +1608,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 7070) {
+        // while (t < 6500) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -2677,7 +2675,6 @@ class GrowerBall extends Ball {
     }
 
     getDmgResistance() {
-        // if (this.battle.buffHammer) return 1;
         return this.scale ** 2 * 0.25 + 0.75;
     }
 
@@ -2758,7 +2755,9 @@ class SoulDot extends CircleBody {
             }
 
             {
-                const drag = Math.exp(-dt * 1 / (0.1 * dist));
+                const speed = Math.hypot(this.vx, this.vy);
+
+                const drag = Math.exp(-dt * speed / (0.005 * dist));
                 const dirX = dx / dist, dirY = dy / dist;
 
                 // Split velocity into toward-target and perpendicular components
@@ -2771,11 +2770,11 @@ class SoulDot extends CircleBody {
                 this.vy = along * dirY + perpY * drag;
             }
 
-            {
-                const drag = Math.exp(-dt * 1 / 100);
-                this.vx *= drag;
-                this.vy *= drag;
-            }
+            // {
+            //     const drag = Math.exp(-dt * 1 / 100);
+            //     this.vx *= drag;
+            //     this.vy *= drag;
+            // }
 
             const accel = 0.3;
             this.vx += (dx / dist) * accel * dt;
