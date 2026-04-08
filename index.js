@@ -221,8 +221,8 @@ class Ball extends CircleBody {
                         1;
             }
             else {
-                dmg = this.slamTimer > 19 ? 3 :
-                    this.slamTimer > 15 ? 2 :
+                dmg = this.slamTimer > 20 ? 3 :
+                    this.slamTimer > 14 ? 2 :
                         1;
             }
             // if (this.slamSource == other) console.log(t, "sadasdasd", this.slamTimer, dmg);
@@ -1068,6 +1068,7 @@ class BallBattle {
         this.canvas = canvas;
         this.ctx = canvas.getContext("2d");
         this.ctx.imageSmoothingEnabled = false;
+        this.ctx.resetTransform();
         if (offset) this.ctx.translate(offset, offset);
         this.width = canvas.width - 2 * offset;
         this.height = canvas.height - 2 * offset;
@@ -1659,10 +1660,14 @@ class BallBattle {
             // Interpolate for smooth rendering
             this.renderAlpha = this.accumulator / dt;
             this.render();
-            requestAnimationFrame(loop);
+            if (!this.stopped) requestAnimationFrame(loop);
         };
 
         requestAnimationFrame(loop);
+    }
+
+    stop() {
+        this.stopped = true;
     }
 }
 
@@ -1776,7 +1781,7 @@ class DaggerBall extends Ball {
                 // dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * (this.battle.isDuel ? 3 / 20 : 1 / 5)) * Math.sign(dagger.angVel);
                 // this.scalingCooldown = (this.battle.isDuel ? 6 : 10);
                 dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 0.15) * Math.sign(dagger.angVel);
-                this.scalingCooldown = 6;
+                this.scalingCooldown = this.battle.isDuel ? 6 : 8;
             }
         });
 
@@ -1851,7 +1856,6 @@ class LanceBall extends Ball {
                     const baseSpeed = this.startSpeed + boostSpeed * this.boosts;
                     const newBaseSpeed = baseSpeed + boostSpeed;
                     const energyGain = 0.5 * (newBaseSpeed * newBaseSpeed - baseSpeed * baseSpeed);
-                    // if (t < 8900)
                     this.boostEnergy += energyGain;
                     this.boosts++;
 
@@ -1865,12 +1869,12 @@ class LanceBall extends Ball {
 
                 this.comboHits.add(target.id);
                 const distToHit = 77 * this.startSpeed;
-                const counts = Math.floor(-this.dist / distToHit) + 1;
-                this.dist += counts * distToHit;
+                const procs = Math.floor(-this.dist / distToHit) + 1;
+                this.dist += procs * distToHit;
 
                 const oldCombo = this.combo;
-                this.combo += counts;
-                this.damageThisTick = (oldCombo + this.combo + 1) * counts / 2;
+                this.combo += procs;
+                this.damageThisTick = (oldCombo + this.combo + 1) * procs / 2;
             }
 
             target.damage(this.damageThisTick, this);
@@ -2421,7 +2425,7 @@ class GrimoireBall extends Ball {
         const cfg = getWeaponConfig(GrimoireBall);
         const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
-        grimoire.addCollider(30, 17);
+        grimoire.addCollider(31, 17);
         grimoire.addSpin(Math.PI * 0.0225 * dir);
         // grimoire.addParry();
         grimoire.addDirChange();
@@ -2570,7 +2574,7 @@ class GrimoireBall extends Ball {
 
 const growCooldown = 8;
 const maxScale = 6.56;
-const duelSlam = 11, FFASlam = 20;
+const duelSlam = 11, FFASlam = 22;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2718,126 +2722,6 @@ class GrowerBall extends Ball {
     }
 }
 
-function randomVel(abs, rng) {
-    const theta = rng() * 2 * Math.PI;
-    return [Math.cos(theta) * abs, Math.sin(theta) * abs];
-}
-
-class SoulDot extends CircleBody {
-    constructor(x, y, target, vx = 0, vy = 0) {
-        super(x, y, vx, vy, 1, 5, 1, false);
-        this.target = target;
-        this.color = "#00cc44";
-        this.zIndex = -1;
-    }
-
-    onUpdate(dt) {
-        if (this.target && this.target.hp <= 0) this.target = null;
-
-        let target = this.target;
-        if (!target) {
-            // Find nearest ball, pickable by anyone
-            let minDist = Infinity;
-            for (const b of this.battle.balls) {
-                if (b.owner) continue;
-                const d = Math.hypot(b.x - this.x, b.y - this.y);
-                if (d < minDist) { minDist = d; target = b; }
-            }
-        }
-
-        if (target) {
-            const dx = target.x - this.x, dy = target.y - this.y;
-            const dist = Math.hypot(dx, dy);
-            if (dist < target.radius) {
-                if (target.hp > 0) target.hp++;
-                this.hp = 0;
-                return;
-            }
-
-            {
-                const speed = Math.hypot(this.vx, this.vy);
-
-                const drag = Math.exp(-dt * speed / (0.005 * dist));
-                const dirX = dx / dist, dirY = dy / dist;
-
-                // Split velocity into toward-target and perpendicular components
-                const along = this.vx * dirX + this.vy * dirY;
-                const perpX = this.vx - along * dirX;
-                const perpY = this.vy - along * dirY;
-
-                // Drag only on perpendicular component
-                this.vx = along * dirX + perpX * drag;
-                this.vy = along * dirY + perpY * drag;
-            }
-
-            // {
-            //     const drag = Math.exp(-dt * 1 / 100);
-            //     this.vx *= drag;
-            //     this.vy *= drag;
-            // }
-
-            const accel = 0.3;
-            this.vx += (dx / dist) * accel * dt;
-            this.vy += (dy / dist) * accel * dt;
-        }
-
-        for (const other of this.battle.dots) {
-            if (other === this) continue;
-            const dx = this.x - other.x, dy = this.y - other.y;
-            const dist = Math.hypot(dx, dy);
-            if (dist < 20 && dist > 0) {
-                const force = (20 - dist) * 0.01 / dist;
-                this.vx += dx * force * dt;
-                this.vy += dy * force * dt;
-            }
-        }
-
-        this.x += this.vx * dt;
-        this.y += this.vy * dt;
-    }
-
-    shouldBounce() { return false; }
-
-    draw() {
-        const ctx = this.battle.ctx;
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this._renderX ?? this.x, this._renderY ?? this.y, this.radius, 0, Math.PI * 2);
-        ctx.fill();
-    }
-}
-
-
-class DeathParticle {
-    constructor(battle, x, y, color) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = 1 + Math.random() * 3;
-        this.x = x;
-        this.y = y;
-        this.vx = Math.cos(angle) * speed;
-        this.vy = Math.sin(angle) * speed;
-        this.radius = 3 + Math.random() * 4;
-        this.color = color;
-        this.life = 1;
-        this.decay = 0.02 + Math.random() * 0.02;
-    }
-
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.life -= this.decay;
-    }
-
-    draw(ctx) {
-        ctx.globalAlpha = this.life;
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius * this.life, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
-    }
-}
-
 // Mirror: Reflects damage back to attackers
 const mirrorCooldown = 8;
 class MirrorBall extends Ball {
@@ -2977,7 +2861,7 @@ class MirrorBall extends Ball {
 }
 
 // Hammer: Builds up power for next attack
-const hammerAccel = 0.0016, baseSpinRate = 5;
+const hammerAccel = 0.00074, baseSpinRate = 5;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2995,27 +2879,24 @@ class HammerBall extends Ball {
         hammer.addDamage(0, 1);
 
         hammer.ballColFns.push((b) => {
-            let addedAntiSwarm = 1 / Math.exp(this.antiSwarmBoost * 0.2);
             this.power = 0;
-            // if (t > 0) console.warn(t, "1 added", a, this.antiSwarmBoost);
+            this.spinRate += 1;
 
-            // console.log(t, "antiSwarmBoost", this.antiSwarmBoost, "addedAntiSwarm", addedAntiSwarm);
+            let addedAntiSwarm = 1 / Math.exp(this.antiSwarmBoost * 0.2);
             this.pendingBoost += this.antiSwarmBoost;
             this.antiSwarmBoost += addedAntiSwarm;
-
-            this.spinRate += 1;
         });
 
         this.addWeapon(hammer);
     }
 
     handleUpdate(dt) {
-        const ceiling = 3 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 2);
-        const m = (ceiling - this.power) * (this.battle.isDuel ? 1 : 1 / 3);
+        const ceiling = 5 * Math.sqrt(this.spinRate)/* * (this.battle.isDuel ? 1 : 2)*/;
+        const m = (ceiling - this.power)/* * (this.battle.isDuel ? 1 : 1 / 3)*/;
         if (m < 0) console.warn(t, "asdasdas");
 
         this.power += hammerAccel * m * dt;
-        // if (t % 50 == 1) console.log(t, "3 added", hammerAccel * m * dt);
+        // if (t % 50 == 1) console.log(t, "2 added", hammerAccel * m * dt);
 
         this.antiSwarmBoost = Math.max(0, this.antiSwarmBoost - 0.003 * dt);
         this.antiSwarmBoost *= Math.exp(-dt / 1000);
@@ -3023,13 +2904,13 @@ class HammerBall extends Ball {
         const oldAntiSwarm = this.pendingBoost;
         this.pendingBoost = Math.max(0, this.pendingBoost - 0.001 * dt);
         this.pendingBoost *= Math.exp(-dt / 1000);
-        const a = (oldAntiSwarm - this.pendingBoost) * m * 0.25;
+        const a = (oldAntiSwarm - this.pendingBoost) * m * 0.155;
         this.power += a;
-        // if (t % 50 == 1) console.log(t, "2 added", a);
+        // if (t % 50 == 1) console.log(t, "1 added", a);
 
         const hammer = this.weapons[0];
-        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power * 0.122) ** 2;
-        hammer.dmg = (1 + this.power * 0.366) ** 2;
+        hammer.angVel = Math.sign(hammer.angVel) * 0.011 * Math.PI * (1 + this.power * 0.09) ** 2;
+        hammer.dmg = (1 + this.power * 0.36) ** 2;
         hammer.iframes = Math.min(40, Math.PI / Math.abs(hammer.angVel));
 
         // if (t % 50 == 1) console.log(t, "spin", Math.abs(this.weapons[0].angVel / Math.PI).toFixed(3), "dmg", hammer.dmg, "antiSwarm", this.pendingBoost);
@@ -3039,6 +2920,125 @@ class HammerBall extends Ball {
         return propsToList({
             "Acceleration": { text: Math.round(this.spinRate / baseSpinRate * 100) / 100 + "x", grad: { from: 1, to: 4 } },
         });
+    }
+}
+
+function randomVel(abs, rng) {
+    const theta = rng() * 2 * Math.PI;
+    return [Math.cos(theta) * abs, Math.sin(theta) * abs];
+}
+
+class SoulDot extends CircleBody {
+    constructor(x, y, target, vx = 0, vy = 0) {
+        super(x, y, vx, vy, 1, 5, 1, false);
+        this.target = target;
+        this.color = "#00cc44";
+        this.zIndex = -1;
+    }
+
+    onUpdate(dt) {
+        if (this.target && this.target.hp <= 0) this.target = null;
+
+        let target = this.target;
+        if (!target) {
+            // Find nearest ball, pickable by anyone
+            let minDist = Infinity;
+            for (const b of this.battle.balls) {
+                const d = Math.hypot(b.x - this.x, b.y - this.y);
+                if (d < minDist) { minDist = d; target = b; }
+            }
+        }
+
+        if (target) {
+            const dx = target.x - this.x, dy = target.y - this.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < target.radius) {
+                if (target.hp > 0) target.hp++;
+                this.hp = 0;
+                return;
+            }
+
+            {
+                const speed = Math.hypot(this.vx, this.vy);
+
+                const drag = Math.exp(-dt * speed / (0.005 * dist));
+                const dirX = dx / dist, dirY = dy / dist;
+
+                // Split velocity into toward-target and perpendicular components
+                const along = this.vx * dirX + this.vy * dirY;
+                const perpX = this.vx - along * dirX;
+                const perpY = this.vy - along * dirY;
+
+                // Drag only on perpendicular component
+                this.vx = along * dirX + perpX * drag;
+                this.vy = along * dirY + perpY * drag;
+            }
+
+            // {
+            //     const drag = Math.exp(-dt * 1 / 100);
+            //     this.vx *= drag;
+            //     this.vy *= drag;
+            // }
+
+            const accel = 0.3;
+            this.vx += (dx / dist) * accel * dt;
+            this.vy += (dy / dist) * accel * dt;
+        }
+
+        for (const other of this.battle.dots) {
+            if (other === this) continue;
+            const dx = this.x - other.x, dy = this.y - other.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 20 && dist > 0) {
+                const force = (20 - dist) * 0.01 / dist;
+                this.vx += dx * force * dt;
+                this.vy += dy * force * dt;
+            }
+        }
+
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+    }
+
+    shouldBounce() { return false; }
+
+    draw() {
+        const ctx = this.battle.ctx;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this._renderX ?? this.x, this._renderY ?? this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+
+class DeathParticle {
+    constructor(battle, x, y, color) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1 + Math.random() * 3;
+        this.x = x;
+        this.y = y;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        this.radius = 3 + Math.random() * 4;
+        this.color = color;
+        this.life = 1;
+        this.decay = 0.02 + Math.random() * 0.02;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+    }
+
+    draw(ctx) {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius * this.life, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
     }
 }
 

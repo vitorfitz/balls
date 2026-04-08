@@ -1,6 +1,6 @@
 importScripts('seedrandom.js', 'index.js', 'ffa-config.js');
 
-const MAX_TICKS = 15000;
+const MAX_TICKS = 20000;
 
 function simulate(seed) {
     const { size } = FFA_CONFIG;
@@ -12,6 +12,8 @@ function simulate(seed) {
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: size, height: size, style: {} };
     t = 0;
+    let runnerUp = null;
+    let prevAlive = battle.balls.filter(b => !b.owner);
 
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
         t++;
@@ -19,6 +21,10 @@ function simulate(seed) {
         battle.update();
 
         const alive = battle.balls.filter(b => !b.owner);
+        const eliminated = prevAlive.filter(b => !alive.includes(b));
+        if (eliminated.length) runnerUp = eliminated[eliminated.length - 1];
+        prevAlive = alive;
+
         if (alive.length === 2 &&
             alive.every(b => (b instanceof GrimoireBall || b instanceof MirrorBall) && b.hp > 20)) {
             alive.sort((a, b) => b.hp - a.hp);
@@ -32,8 +38,17 @@ function simulate(seed) {
     const winner = battle.balls.find(b => !b.owner);
     if (!winner) return null;
 
+    let hammerDmg = null;
+
+    if (winner instanceof HammerBall) {
+        if (runnerUp instanceof MirrorBall) hammerDmg = winner.weapons[0].dmg;
+    }
+    else if (runnerUp instanceof HammerBall) { // winner instanceof MirrorBall
+        hammerDmg = runnerUp.weapons[0].dmg / (winner.getDmgResistance?.() ?? 1);
+    }
+
     const winnerData = ballClasses.find(b => b.color === winner.team);
-    return { winnerName: winnerData.name, hp: Math.ceil(winner.hp), ticks: t };
+    return { winnerName: winnerData.name, hp: Math.ceil(winner.hp), ticks: t, hammerDmg };
 }
 
 onmessage = (e) => {
@@ -53,7 +68,8 @@ onmessage = (e) => {
         }
 
         const result = simulate(seed);
-        if (result && result.hp <= threshold) {
+        const effectiveThreshold = result?.hammerDmg ?? threshold;
+        if (result && result.hp <= effectiveThreshold) {
             dramatic.push({ seed, ...result });
         }
     }

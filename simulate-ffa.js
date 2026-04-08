@@ -24,6 +24,7 @@ global.DuplicatorBall = DuplicatorBall;
 global.WrenchBall = WrenchBall;
 global.GrimoireBall = GrimoireBall;
 global.MirrorBall = MirrorBall;
+global.HammerBall = HammerBall;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
 global.createPlusArenaWalls = createPlusArenaWalls;
@@ -34,8 +35,8 @@ eval(code);
 const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js');
 
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
-const MAX_TICKS = 15000;
-const MATCHES = 1000;
+const MAX_TICKS = 20000;
+const MATCHES = 500;
 
 function simulate() {
     const seed = Date.now() + Math.random();

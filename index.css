@@ -247,8 +247,8 @@ body {
     margin-left: 60px;
     overflow-y: auto;
     position: relative;
-    width: 200px;
-    height: 668px;
+    width: 175px;
+    height: 753px;
 }
 
 .dmg {
@@ -278,4 +278,25 @@ body {
 
 .lb-entry .hp-bar>:first-child {
     left: 7px;
+}
+
+#back {
+    border: 0;
+    padding: 0;
+    font-size: 22px;
+    background: linear-gradient(to bottom right, #982a2a, #9c4949);
+    background-clip: text;
+    color: transparent;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+
+    position: absolute;
+    bottom: -48px;
+    right: 0;
+}
+
+.ffa-mode #back {
+    bottom: 15px;
+    right: auto;
+    left: -25px;
 }

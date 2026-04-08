@@ -1,10 +1,7 @@
 "use strict"
 
-const d = new Date().getTime();
-console.log(d);
-let battleSeed = d;
-// let battleSeed = 1775302319792;
-// dupe vs grower 1775303433217
+const seedOverride = null;
+// const seedOverride = 999;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
@@ -19,8 +16,10 @@ const ballBtnDiameter = 120;
 const canvasPadding = 70;
 const wallThickness = 3;
 let combatants = [];
+let ffaCombatants = [];
 let ballBtns = [];
 let mode = 0;
+let battleSeed;
 
 {
     const theta0 = 16 * Math.PI / 10;
@@ -213,7 +212,7 @@ function updateFFALeaderboard() {
     const lb = document.getElementById("leaderboard");
 
     // Build sorted list of combatants by HP, freezing dead ball positions
-    const entries = combatants.map(i => {
+    const entries = ffaCombatants.map(i => {
         const data = ballClasses[i];
         const b = battle.balls.find(ball => ball.team === data.color && !ball.owner);
         if (!b && !deathOrder.includes(i)) deathOrder.push(i);
@@ -271,8 +270,18 @@ function updateFFALeaderboard() {
 }
 
 fightBtn.addEventListener("click", function () {
+    if (seedOverride != null) {
+        battleSeed = seedOverride;
+    }
+    else {
+        const d = new Date().getTime();
+        console.log(d);
+        battleSeed = d;
+    }
+
     if (mode == 1) {
         startFFA();
+        return;
     }
 
     if (!fightBtn.classList.contains("disabled")) {
@@ -297,7 +306,7 @@ function startFFA() {
 
     const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, createPlusArenaWalls);
     battle = result.battle;
-    combatants = result.combatants;
+    ffaCombatants = result.combatants;
     const { armStart, armEnd } = result;
 
     battle.addCanvas(canvas, wallThickness);
@@ -341,15 +350,32 @@ function startDuel() {
 
     const rng = new Math.seedrandom(battleSeed);
     const positions = [[50, 200], [350, 200]];
+    canvas.width = canvas.height = "406";
+
     battle = new BallBattle(combatants.map((comb, i) => makeBall(comb, positions[i], rng)), battleSeed, 0.1);
     battle.addCanvas(document.getElementById("canvas"), wallThickness);
+    const closureBattle = battle;
     battle.drawArena = (ctx) => {
         ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, battle.width, battle.height);
+        ctx.fillRect(0, 0, closureBattle.width, closureBattle.height);
         ctx.lineWidth = 2 * wallThickness;
-        ctx.strokeRect(0, 0, battle.width, battle.height);
-        ctx.fillRect(0, 0, battle.width, battle.height);
+        ctx.strokeRect(0, 0, closureBattle.width, closureBattle.height);
+        ctx.fillRect(0, 0, closureBattle.width, closureBattle.height);
     };
     battle.run(10);
     updateBattleUI();
 }
+
+document.getElementById("back").addEventListener("click", () => {
+    battle?.stop();
+    battle = null;
+    displayedHP = {};
+    deathOrder = [];
+    battleDiv.classList.add("hidden");
+    battleDiv.classList.remove("ffa-mode");
+    menuDiv.classList.remove("hidden");
+    document.getElementById("leaderboard").innerHTML = "";
+    document.getElementById("canvas").style.transform = "";
+    document.getElementById("canvas").style.width = "";
+    document.getElementById("canvas").style.height = "";
+}); 
