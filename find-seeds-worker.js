@@ -24,7 +24,11 @@ function simulate(t1Idx, t2Idx, seed) {
     let minHpDiff = 0, maxHpDiff = 0;
     let dupeNearDeath = { [b1.team]: false, [b2.team]: false };
     let swordDaggerDramaticTick = { [b1.team]: null, [b2.team]: null };
+    let dupeReachedMax = false;
+
     const isSwordDagger = (b1 instanceof SwordBall && b2 instanceof DaggerBall) || (b1 instanceof DaggerBall && b2 instanceof SwordBall);
+    const isDupeHammer = (b1 instanceof DuplicatorBall && b2 instanceof HammerBall) || (b1 instanceof HammerBall && b2 instanceof DuplicatorBall);
+
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
         t++;
         battle.updateTimeScale();
@@ -49,7 +53,8 @@ function simulate(t1Idx, t2Idx, seed) {
             if (ball instanceof DuplicatorBall) {
                 const units = battle.teamCount?.[team] ?? 1;
                 const maxHp = Math.max(...battle.balls.filter(b => b.team === team).map(b => b.hp));
-                if (units <= 3 && maxHp <= 50) dupeNearDeath[team] = true;
+                if ((isDupeHammer && units <= 6 && dupeReachedMax) || (units <= 3 && maxHp <= 50)) dupeNearDeath[team] = true;
+                if (units >= 25) dupeReachedMax = true;
             }
         }
 
@@ -58,14 +63,16 @@ function simulate(t1Idx, t2Idx, seed) {
             if (p1 instanceof DuplicatorBall || ((p1 instanceof MirrorBall) && (p2 instanceof DuplicatorBall))) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b1.team).map(b => b.hp));
             }
-            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b1.team] };
+            const hammerDmg = b2 instanceof HammerBall ? b2.weapons[0].dmg : null;
+            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b1.team], hammerDmg };
         }
         if (p2 && !p1) {
             let hp = p2.hp;
             if (p2 instanceof DuplicatorBall || ((p2 instanceof MirrorBall) && (p1 instanceof DuplicatorBall))) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b2.team).map(b => b.hp));
             }
-            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b2.team] };
+            const hammerDmg = b1 instanceof HammerBall ? b1.weapons[0].dmg : null;
+            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b2.team], hammerDmg };
         }
     }
     return { winner: 'draw' };
@@ -78,7 +85,7 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i != 2 || j != 7) continue;
+            // if (i != 6 && j != 6) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -104,18 +111,30 @@ onmessage = (e) => {
             const seeds = results.filter(r => {
                 if (r.ticks > maxTicks) return false;
                 if (!hasDupe && r.hpSwing < 25) return false;
+
                 const winnerIdx = r.winner === 'p1' ? i : j;
                 const loserIdx = r.winner === 'p1' ? j : i;
+
                 const isDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
                 const winnerIsMirror = BALL_TYPES[winnerIdx].name === 'Mirror';
+                const winnerIsHammer = BALL_TYPES[winnerIdx].name === 'Hammer';
+                const loserIsHammer = BALL_TYPES[loserIdx].name === 'Hammer';
+
                 const isDupBeatsWrench = isDupe && BALL_TYPES[loserIdx].name === 'Wrench';
                 const isDupBeatsSword = isDupe && BALL_TYPES[loserIdx].name === 'Sword';
                 const isDupBeatsMG = isDupe && BALL_TYPES[loserIdx].name === 'Machine Gun';
-                const effectiveThreshold = isDupBeatsWrench ? 65 :
-                    (isDupBeatsSword || isDupBeatsMG) ? 3 :
-                        (loserIsDupe || (isDupe && winnerIsMirror)) ? 5 :
-                            threshold;
+                const isHammerBeatsDupe = winnerIsHammer && loserIsDupe;
+                const isHammerBeatsMirror = BALL_TYPES[winnerIdx].name === 'Hammer' && BALL_TYPES[loserIdx].name === 'Mirror';
+
+                const hammerBeaters = ['Sword', 'Dagger', 'Machine Gun', 'Wrench', 'Lance', 'Mirror', 'Grimoire'];
+                const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror;
+
+                const effectiveThreshold = useHammerDmg ? r.hammerDmg :
+                    isDupBeatsWrench ? 65 :
+                        (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe) ? 3 :
+                            (loserIsDupe || (isDupe && winnerIsMirror)) ? 5 :
+                                threshold;
                 return (r.hp <= effectiveThreshold || (isDupe && r.dupeNearDeath))
                     && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 20);
             }).map(r => r.seed);
