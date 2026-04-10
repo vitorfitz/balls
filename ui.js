@@ -1,7 +1,7 @@
 "use strict"
 
-// const seedOverride = null;
-const seedOverride = 324;
+const seedOverride = null;
+// const seedOverride = 324;
 // const seedOverride = 369;
 
 const dramaticCheck = document.getElementById("dramatic-check");
@@ -372,10 +372,15 @@ document.getElementById("back").addEventListener("click", () => {
     battle = null;
     displayedHP = {};
     deathOrder = [];
+
     battleDiv.classList.add("hidden");
     battleDiv.classList.remove("ffa-mode");
     menuDiv.classList.remove("hidden");
+
     document.getElementById("leaderboard").innerHTML = "";
+    ball1Info.innerHTML = "";
+    ball2Info.innerHTML = "";
+
     document.getElementById("canvas").style.transform = "";
     document.getElementById("canvas").style.width = "";
     document.getElementById("canvas").style.height = "";
