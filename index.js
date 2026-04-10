@@ -52,9 +52,17 @@ class Weapon {
 
     draw() {
         const alpha = this.ball.battle.renderAlpha || 0;
-        const theta = (this.angVel && this._prevTheta !== undefined)
-            ? this._prevTheta + (this.theta - this._prevTheta) * alpha
-            : this.theta;
+        let theta;
+        if (this._thetaSegments?.length) {
+            const segs = this._thetaSegments;
+            let i = segs.length - 1;
+            while (i > 0 && segs[i].f > alpha) i--;
+            const s0 = segs[i], s1 = segs[i + 1] ?? { theta: this.theta, f: 1 };
+            const t = s1.f > s0.f ? (alpha - s0.f) / (s1.f - s0.f) : 0;
+            theta = s0.theta + (s1.theta - s0.theta) * t;
+        } else {
+            theta = this.theta;
+        }
         Weapon.drawWeapon(
             this.ball.battle.ctx,
             this.ball._renderX ?? this.ball.x,
@@ -86,6 +94,7 @@ class Weapon {
             const approaching = Math.sin(toOther - this.theta) * this.angVel > 0;
             if (approaching) {
                 this.angVel = -this.angVel;
+                this._thetaSegments?.push({ theta: this.theta, f: this.ball.battle._weaponSubF ?? 1 });
                 // this.ball.slowTime = other.ball.slowTime = 15;
             }
             this.flipped = this.angVel < 0;
@@ -107,7 +116,10 @@ class Weapon {
     }
 
     addDirChange() {
-        this.ballColFns.push(() => this.angVel *= -1);
+        this.ballColFns.push(() => {
+            this.angVel *= -1;
+            this._thetaSegments?.push({ theta: this.theta, f: this.ball.battle._weaponSubF ?? 1 });
+        });
     }
 
     getIFrames(target) {
@@ -1187,9 +1199,12 @@ class BallBattle {
 
             this.advanceAll(tNext);
             dt -= tNext;
+            const f = 1 - dt;
 
             // Ball-ball
             if (tBall <= tNext + EPS) {
+                pair[0]._segments?.push({ x: pair[0].x, y: pair[0].y, f });
+                pair[1]._segments?.push({ x: pair[1].x, y: pair[1].y, f });
                 resolveCollision(pair[0], pair[1], pair[2], pair[3]);
             }
 
@@ -1197,6 +1212,7 @@ class BallBattle {
             if (tWall <= tNext + EPS) {
                 for (const ev of wallEvents) {
                     ev.wall.resolve(ev.ball);
+                    ev.ball._segments?.push({ x: ev.ball.x, y: ev.ball.y, f });
                 }
             }
         }
@@ -1248,6 +1264,7 @@ class BallBattle {
                         (w) => w.updateFns.forEach((f) =>
                             f(scaledDt)));
                 });
+            this._weaponSubF = (step + 1) / substeps;
             this._checkWeaponCollisions(activeBalls);
         }
 
@@ -1366,9 +1383,15 @@ class BallBattle {
 
         // Interpolate positions for smooth rendering
         for (const b of this.bodies) {
-            if (b._prevX !== undefined) {
-                b._renderX = b._prevX + (b.x - b._prevX) * alpha;
-                b._renderY = b._prevY + (b.y - b._prevY) * alpha;
+            if (b._segments?.length) {
+                const segs = b._segments;
+                // Find the segment that contains alpha
+                let i = segs.length - 1;
+                while (i > 0 && segs[i].f > alpha) i--;
+                const s0 = segs[i], s1 = segs[i + 1] ?? { x: b.x, y: b.y, f: 1 };
+                const t = s1.f > s0.f ? (alpha - s0.f) / (s1.f - s0.f) : 0;
+                b._renderX = s0.x + (s1.x - s0.x) * t;
+                b._renderY = s0.y + (s1.y - s0.y) * t;
             } else {
                 b._renderX = b.x;
                 b._renderY = b.y;
@@ -1621,11 +1644,11 @@ class BallBattle {
     }
 
     async run(dt) {
-        while (t < 6600) {
-            t++
-            this.updateTimeScale();
-            this.update();
-        }
+        // while (t < 6600) {
+        //     t++
+        //     this.updateTimeScale();
+        //     this.update();
+        // }
 
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
@@ -1635,12 +1658,14 @@ class BallBattle {
                     t++;
                     // Store previous positions before update
                     for (const b of this.bodies) {
-                        b._prevX = b.x;
-                        b._prevY = b.y;
+                        b._segments = [{ x: b.x, y: b.y, f: 0 }];
                         if (b.theta !== undefined) b._prevTheta = b.theta;
                     }
                     for (const b of this.balls) {
-                        for (const w of b.weapons) w._prevTheta = w.theta;
+                        for (const w of b.weapons) {
+                            w._prevTheta = w.theta;
+                            w._thetaSegments = [{ theta: w.theta, f: 0 }];
+                        }
                     }
 
                     if (!this.isDuel) this.updateTimeScale();
@@ -2587,7 +2612,7 @@ class GrimoireBall extends Ball {
 }
 
 const growCooldown = 8;
-const maxScale = 3.56;
+const maxScale = 6.56;
 const duelSlam = 11, FFASlam = 22;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
