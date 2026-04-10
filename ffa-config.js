@@ -8,7 +8,7 @@ const FFA_CONFIG = {
     speed: 4,
     positions: [[450, 1350], [1050, 1350], [150, 450], [150, 1050], [1350, 450], [1350, 1050], [450, 150], [1050, 150], [750, 450]],
     shrinkStages: [
-        { players: 4, size: 900, zoom: 1.45 },
+        { players: 5, size: 900, zoom: 1.45 },
         { players: 2, size: 600, holeSize: 200, zoom: 1.8 },
     ],
 };

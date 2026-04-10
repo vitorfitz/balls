@@ -1,7 +1,8 @@
 "use strict"
 
-const seedOverride = null;
-// const seedOverride = 999;
+// const seedOverride = null;
+const seedOverride = 324;
+// const seedOverride = 369;
 
 const dramaticCheck = document.getElementById("dramatic-check");
 
@@ -289,7 +290,7 @@ fightBtn.addEventListener("click", function () {
     }
 });
 
-function startFFA() {
+async function startFFA() {
     menuDiv.classList.add("hidden");
     battleDiv.classList.remove("hidden");
     battleDiv.classList.add("ffa-mode");

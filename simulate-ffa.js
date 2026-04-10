@@ -36,7 +36,7 @@ const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js'
 
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 20000;
-const MATCHES = 500;
+const MATCHES = 1000;
 
 function simulate() {
     const seed = Date.now() + Math.random();
