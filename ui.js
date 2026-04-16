@@ -1,9 +1,8 @@
 "use strict"
 
 const seedOverride = null;
-// const seedOverride = 324;
-// const seedOverride = 369;
-
+// const seedOverride=631; // slow overlap bug
+// const seedOverride = 65; // DUPE VS SWORD
 const dramaticCheck = document.getElementById("dramatic-check");
 
 const menuDiv = document.getElementById("menu");
@@ -305,7 +304,7 @@ async function startFFA() {
         console.log("used", battleSeed);
     }
 
-    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, createPlusArenaWalls);
+    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle);
     battle = result.battle;
     ffaCombatants = result.combatants;
     const { armStart, armEnd } = result;

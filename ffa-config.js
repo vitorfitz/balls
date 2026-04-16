@@ -13,7 +13,7 @@ const FFA_CONFIG = {
     ],
 };
 
-function createFFABattle(ballClasses, seed, createBallFn, BallBattle, createPlusArenaWalls) {
+function createFFABattle(ballClasses, seed, createBallFn, BallBattle) {
     const { size, armWidth, holeSize, gravity, speed, positions } = FFA_CONFIG;
     const rng = new Math.seedrandom(seed);
 
@@ -33,6 +33,7 @@ function createFFABattle(ballClasses, seed, createBallFn, BallBattle, createPlus
 
     const battle = new BallBattle(balls, seed, gravity);
     battle.walls = createPlusArenaWalls(size, armWidth, holeSize);
+    battle.corners = plusArenaCorners(size, armWidth, holeSize);
     battle.shrinkConfig = {
         baseSize: size,
         baseArmWidth: armWidth,
@@ -41,12 +42,7 @@ function createFFABattle(ballClasses, seed, createBallFn, BallBattle, createPlus
     };
 
     const armStart = (size - armWidth) / 2, armEnd = (size + armWidth) / 2;
-    battle.isInBounds = (x, y, r) => {
-        const hs = (size - holeSize) / 2, he = (size + holeSize) / 2;
-        if (x - r < 0 || x + r > size || y - r < 0 || y + r > size) return false;
-        if (x + r > hs && x - r < he && y + r > hs && y - r < he) return false;
-        return (x - r >= armStart && x + r <= armEnd) || (y - r >= armStart && y + r <= armEnd);
-    };
+    battle.isInBounds = (x, y, r) => plusArenaInBoundsFromWalls(x, y, r, battle.walls, battle.corners);
 
     return { battle, combatants, armStart, armEnd };
 }

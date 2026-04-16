@@ -28,6 +28,7 @@ global.HammerBall = HammerBall;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
 global.createPlusArenaWalls = createPlusArenaWalls;
+global.plusArenaCorners = plusArenaCorners;
 global.ballClasses = ballClasses;
 `;
 
@@ -42,7 +43,7 @@ function simulate() {
     const seed = Date.now() + Math.random();
     const { size } = FFA_CONFIG;
 
-    const result = createFFABattle(global.ballClasses, seed, createFFABall, global.BallBattle, global.createPlusArenaWalls);
+    const result = createFFABattle(global.ballClasses, seed, createFFABall, global.BallBattle);
     const battle = result.battle;
 
     battle.width = battle.height = size;
@@ -54,10 +55,22 @@ function simulate() {
     const allBalls = battle.balls.filter(b => !b.owner);
 
     let grimMirrorStalemate = false;
+    let consecutiveOOB = 0;
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
         global.t++;
         battle.updateTimeScale();
         battle.update();
+
+        let outOfBoundsCount = 0;
+        for (const b of battle.balls) {
+            if (!battle.isInBounds(b.x, b.y, b.radius)) outOfBoundsCount++;
+        }
+        if (outOfBoundsCount > 0) {
+            consecutiveOOB = (consecutiveOOB || 0) + 1;
+            if (consecutiveOOB >= 3) throw new Error(`Ball out of bounds for 3+ ticks at t=${global.t} seed=${seed}`);
+        } else {
+            consecutiveOOB = 0;
+        }
 
         const alive = battle.balls.filter(b => !b.owner);
         if (alive.length === 2 &&

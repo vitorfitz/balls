@@ -110,14 +110,13 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                // if (i != 9 && j != 9) continue;
+                // if (i != 5 && j != 5) continue;
                 if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;
-                if (i == 0 && j == 8 /* Dupe vs Mirror */) { w1 = MATCHES * 0.4; w2 = MATCHES * 0.6; draws = 0 }
-                else if (i == 0 && j == 6 /* Dupe vs Grim */) { w1 = MATCHES * 0.8; w2 = MATCHES * 0.2; draws = 0 }
-                else
-                    ({ w1, w2, draws } = await runMatchup(i, j));
+                if (i == 0 && j == 8 /* Dupe vs Mirror */) { w1 = MATCHES * 0.4; w2 = MATCHES * 0.6; draws = 0 } else
+                    if (i == 0 && j == 6 /* Dupe vs Grim */) { w1 = MATCHES * 0.8; w2 = MATCHES * 0.2; draws = 0 } else
+                        ({ w1, w2, draws } = await runMatchup(i, j));
                 const t1 = BALL_TYPES[i], t2 = BALL_TYPES[j];
 
                 results[t1.name].wins += w1; results[t1.name].losses += w2; results[t1.name].draws += draws;

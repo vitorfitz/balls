@@ -5,7 +5,7 @@ const MAX_TICKS = 20000;
 function simulate(seed) {
     const { size } = FFA_CONFIG;
 
-    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle, createPlusArenaWalls);
+    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle);
     const battle = result.battle;
 
     battle.width = battle.height = size;
@@ -35,7 +35,7 @@ function simulate(seed) {
         }
     }
 
-    const winner = battle.balls.find(b => !b.owner);
+    const winner = battle.balls.filter(b => !b.owner).length === 1 ? battle.balls.find(b => !b.owner) : null;
     if (!winner) return null;
 
     let hammerDmg = null;

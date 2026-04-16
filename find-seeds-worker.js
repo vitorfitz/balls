@@ -85,7 +85,7 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i != 6 && j != 6) continue;
+            // if (i != 1 || j != 6) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -115,15 +115,15 @@ onmessage = (e) => {
                 const winnerIdx = r.winner === 'p1' ? i : j;
                 const loserIdx = r.winner === 'p1' ? j : i;
 
-                const isDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
+                const winnerIsDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
                 const winnerIsMirror = BALL_TYPES[winnerIdx].name === 'Mirror';
                 const winnerIsHammer = BALL_TYPES[winnerIdx].name === 'Hammer';
                 const loserIsHammer = BALL_TYPES[loserIdx].name === 'Hammer';
 
-                const isDupBeatsWrench = isDupe && BALL_TYPES[loserIdx].name === 'Wrench';
-                const isDupBeatsSword = isDupe && BALL_TYPES[loserIdx].name === 'Sword';
-                const isDupBeatsMG = isDupe && BALL_TYPES[loserIdx].name === 'Machine Gun';
+                const isDupBeatsWrench = winnerIsDupe && BALL_TYPES[loserIdx].name === 'Wrench';
+                const isDupBeatsSword = winnerIsDupe && BALL_TYPES[loserIdx].name === 'Sword';
+                const isDupBeatsMG = winnerIsDupe && BALL_TYPES[loserIdx].name === 'Machine Gun';
                 const isHammerBeatsDupe = winnerIsHammer && loserIsDupe;
                 const isHammerBeatsMirror = BALL_TYPES[winnerIdx].name === 'Hammer' && BALL_TYPES[loserIdx].name === 'Mirror';
 
@@ -131,12 +131,12 @@ onmessage = (e) => {
                 const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror;
 
                 const effectiveThreshold = useHammerDmg ? r.hammerDmg :
-                    isDupBeatsWrench ? 65 :
+                    isDupBeatsWrench ? 50 :
                         (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe) ? 3 :
-                            (loserIsDupe || (isDupe && winnerIsMirror)) ? 5 :
+                            (loserIsDupe || (winnerIsDupe && winnerIsMirror)) ? 5 :
                                 threshold;
-                return (r.hp <= effectiveThreshold || (isDupe && r.dupeNearDeath))
-                    && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 20);
+                return (r.hp <= effectiveThreshold || (winnerIsDupe && r.dupeNearDeath))
+                    && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 100);
             }).map(r => r.seed);
 
             dramaticSeeds[key] = seeds;
