@@ -17,20 +17,21 @@
         </div>
         <div id="balls"></div>
         <button id="start" class="disabled">Fight!</button>
-        <!-- <button id="battle-royale">Battle Royale!</button> -->
         <label id="dramatic-toggle"><input type="checkbox" id="dramatic-check"> Dramatic Mode</label>
     </div>
     <div id="battle" class="hidden">
-        <div class="col">
+        <div class="col" style="position: relative;">
             <div id="battle-ui">
                 <div id="ball1-info" class="ball-info"></div>
                 <div id="ball2-info" class="ball-info"></div>
             </div>
             <canvas id="canvas" width="406" height="406"></canvas>
+            <button id="back">⏎ Back</button>
         </div>
         <div id="leaderboard"></div>
         <script src="seedrandom.js"></script>
         <script src="index.js"></script>
+        <script src="ffa-config.js"></script>
         <script src="dramatic.js"></script>
         <script src="ui.js"></script>
     </div>
