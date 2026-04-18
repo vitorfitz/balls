@@ -1,7 +1,7 @@
 "use strict"
 
 const EPS = 1e-9;
-const flashDur = 60;
+const flashDur = 500; // ms
 const hitHistorySize = 100;
 
 let t = 0;
@@ -279,7 +279,7 @@ class Ball extends CircleBody {
         const hpBefore = this.hp;
         // if (t >= 8700 && t <= 8710 && this instanceof MachineGunBall) console.log(`[t=${t}] MachineGunBall.damage: dmg=${dmg.toFixed(2)} src=${source?.constructor.name} hp=${hpBefore.toFixed(2)}->${Math.max(0, hpBefore - dmg).toFixed(2)} speed=${Math.hypot(this.vx, this.vy).toFixed(2)} pos=(${this.x.toFixed(1)},${this.y.toFixed(1)})`, new Error().stack.split('\n').slice(1, 4).join(' | '));
         super.damage(dmg);
-        this.flashTime = flashDur;
+        this.flashTime = performance.now() + flashDur;
         if (source && !this.owner) {
             source.getRootOwner().damageDealt += Math.min(dmg, hpBefore);
             if (this.hp <= 0) this.killer = source;
@@ -288,12 +288,11 @@ class Ball extends CircleBody {
 
     draw() {
         this.weapons.forEach(w => w.draw());
-        const flashPct = Math.max(0, this.flashTime / flashDur);
-        const color = this.flashTime > 0
-            ? `color-mix(in srgb, white ${Math.min(flashPct * 125, 90)}%, ${this.color})`
+        const flashPct = Math.max(0, this.flashTime - performance.now());
+        const color = flashPct > 0
+            ? `color-mix(in srgb, white ${Math.min(flashPct * 125 / flashDur, 84)}%, ${this.color})`
             : this.color;
         Ball.drawBall(this.battle.ctx, this._renderX, this._renderY, this.radius, color, Math.ceil(this.hp));
-        if (this.flashTime > 0) this.flashTime--;
     }
 
     shouldBounce(other) { return true; }
@@ -332,7 +331,7 @@ class Ball extends CircleBody {
     static drawBall(ctx, x, y, radius, color, text = null) {
         ctx.fillStyle = color;
         ctx.strokeStyle = "#333";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(x, y, radius - 1, 0, Math.PI * 2);
         ctx.stroke();
@@ -1791,6 +1790,7 @@ class BallBattle {
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
                 this.accumulator += (currentTime - this.lastTime) * this.timeScale;
+                this.accumulator = Math.min(this.accumulator, dt * 100);
 
                 while (this.accumulator >= dt) {
                     t++;
@@ -1916,7 +1916,7 @@ class DuplicatorBall extends Ball {
 
         child.dmgCooldown = dmgCooldown;
         child.dupeCooldown = dupeCooldown;
-        child.flashTime = flashDur;
+        child.flashTime = performance.now() + flashDur;
         child.inert = true;
         child.team = owner.team;
         child.color = owner.color;
@@ -2685,7 +2685,7 @@ class GrimoireBall extends Ball {
         minion.hp = this.nextMinionHP;
         minion.team = reflector?.team ?? this.team;
         minion.color = reflector?.color ?? this.color;
-        minion.flashTime = flashDur;
+        minion.flashTime = performance.now() + flashDur;
         minion.id = this.battle.nextID++;
         minion.owner = reflector ?? this;
         minion.slowTime = this.slowTime;
