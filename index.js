@@ -222,6 +222,7 @@ class Ball extends CircleBody {
         this.damageDealt = 0;
         this.slamTimer = 0;
         this.slamSource = null;
+        this.killCount = 0;
     }
 
     checkSlamDamage(other = null) {
@@ -408,7 +409,7 @@ class Wall {
     }
 
     resolve(b) {
-        if (b.id === 4630 && t >= 10469 && t <= 10470) console.log(`[t=${t}] wall.resolve: axis=${this.axis} pos=${this.pos.toFixed(3)} normal=${this.normal} min=${this.min.toFixed(1)} max=${this.max.toFixed(1)} b.x=${b.x.toFixed(3)} b.y=${b.y.toFixed(3)} b.vx=${b.vx.toFixed(4)} b.vy=${b.vy.toFixed(4)}`);
+        // if (b.id === 4630 && t >= 10469 && t <= 10470) console.log(`[t=${t}] wall.resolve: axis=${this.axis} pos=${this.pos.toFixed(3)} normal=${this.normal} min=${this.min.toFixed(1)} max=${this.max.toFixed(1)} b.x=${b.x.toFixed(3)} b.y=${b.y.toFixed(3)} b.vx=${b.vx.toFixed(4)} b.vy=${b.vy.toFixed(4)}`);
         b.onWallCollision();
         const ballVel = this.axis === VERTICAL ? b.vx * b.getTimeScale() : b.vy * b.getTimeScale();
         const wallVel = (this.velocity - ballVel) * this.normal > 0 ? this.velocity / b.getTimeScale() : 0;
@@ -860,41 +861,32 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
     applyElasticCollision(b1, b2, nx, ny);
 
     // Ensure separation after all velocity modifications (including knockEnergy)
-    const grower = (b1 instanceof GrowerBall && !(b2 instanceof GrowerBall)) ? b1 :
-        (b2 instanceof GrowerBall && !(b1 instanceof GrowerBall)) ? b2 : null;
-    if (grower && grower.boostEnergy > 0) {
-        const other = grower === b1 ? b2 : b1;
-        const sa = grower.getTimeScale();
-        const sb = other.getTimeScale();
-        const growerAlongN = grower.vx * sa * nx + grower.vy * sa * ny;
-        const otherAlongN = other.vx * sb * nx + other.vy * sb * ny;
-
-        const sign = grower === b1 ? 1 : -1;
-        const boostLeniency = 2;
-
-        if ((growerAlongN - otherAlongN) * sign > -boostLeniency) {
-            const gy = grower.battle.gravity;
-            const gx1 = grower.x + grower.vx * sa, gy1 = grower.y + grower.vy * sa + 0.5 * gy * sa * sa;
-            const ox1 = other.x + other.vx * sb, oy1 = other.y + other.vy * sb + 0.5 * gy * sb * sb;
-            const gr = (grower === b1 ? r1Override : r2Override) ?? grower.radius;
-            const or_ = (other === b1 ? r1Override : r2Override) ?? other.radius;
-            const overlap = (gr + or_) - Math.hypot(gx1 - ox1, gy1 - oy1);
-            if (overlap > -boostLeniency) {
-                const vDotN = other.vx * nx + other.vy * ny; // ensure addedKE always positive
-                const boost = Math.max((overlap + boostLeniency) / (sb || 1), -2 * sign * vDotN);
-                const speedBefore = Math.hypot(other.vx, other.vy);
-                // const eBefore = grower.battle.totalEnergy();
-                other.vx += boost * sign * nx;
-                other.vy += boost * sign * ny;
-                const addedKE = 0.5 * (Math.hypot(other.vx, other.vy) ** 2 - speedBefore ** 2);
-
-                // const oldBoost = other.knockBoost;
-                other.knockBoost += addedKE;
-                // const eAfter = grower.battle.totalEnergy();
-                // console.log(t, "GOT HERE", "boost", boost, "oldBoost", oldBoost, "addedKE", addedKE, "other.knockBoost", other.knockBoost, "dE", eAfter - eBefore);
-            }
-            else {
-                // console.log(t, "GOT HERE no boost");
+    {
+        const gy = b1.battle.gravity;
+        for (const [a, b, sign, ra, rb] of [[b1, b2, 1, r1Override, r2Override], [b2, b1, -1, r2Override, r1Override]]) {
+            const boostLeniency = a instanceof GrowerBall && a.boostEnergy ? 1 : 0;
+            // const boostLeniency = 0;
+            const sa = a.getTimeScale();
+            const sb = b.getTimeScale();
+            const aAlongN = a.vx * sa * nx + a.vy * sa * ny;
+            const bAlongN = b.vx * sb * nx + b.vy * sb * ny;
+            if ((aAlongN - bAlongN) * sign > -boostLeniency) {
+                const ax1 = a.x + a.vx * sa, ay1 = a.y + a.vy * sa + 0.5 * gy * sa * sa;
+                const bx1 = b.x + b.vx * sb, by1 = b.y + b.vy * sb + 0.5 * gy * sb * sb;
+                const ar = ra ?? a.radius;
+                const br = rb ?? b.radius;
+                const overlap = (ar + br) - Math.hypot(ax1 - bx1, ay1 - by1);
+                if (overlap > -boostLeniency) {
+                    const vDotN = b.vx * nx + b.vy * ny;
+                    const boost = Math.max((overlap + boostLeniency) / sb, -2 * sign * vDotN);
+                    const speedBefore = Math.hypot(b.vx, b.vy);
+                    b.vx += boost * sign * nx;
+                    b.vy += boost * sign * ny;
+                    const addedKE = 0.5 * (Math.hypot(b.vx, b.vy) ** 2 - speedBefore ** 2);
+                    b.knockBoost += addedKE;
+                    if (t > 0) console.log(t, "GOT HERE", "boost", boost, "sa", sa, "sb", sb);
+                    break; // only push one ball per pair
+                }
             }
         }
     }
@@ -1060,7 +1052,7 @@ class BallBattle {
             this.targetTimeScale *= 1 / (1 + maxBoosts * (hasGrimoire ? 0.025 : 0.01));
         }
         else {
-            this.growerFFwd = !this.isDuel && this.balls.length == 2 && ((this.balls[0] instanceof GrowerBall) || (this.balls[1] instanceof GrowerBall));
+            this.growerFFwd = !this.isDuel && this.balls.length == 2 && this.balls.some((b) => b instanceof GrowerBall) && !this.balls.some((b) => b.hp <= 5);
             if (this.growerFFwd) {
                 this.targetTimeScale = 3;
             }
@@ -1181,7 +1173,8 @@ class BallBattle {
     updatePhysics() {
         // Decay knock boost once per tick
         for (const b of this.bodies) {
-            decayKnockBoost(b, b._pendingKnockDecay ? 0.5 : 1 - 0.97 ** b.getTimeScale(), b.knockBoostAtStart ?? b.knockBoost);
+            const decay = b._pendingKnockDecay ? Math.max(0.5, 1 - b.getTimeScale()) : /*1 - 0.97 ** b.getTimeScale()*/0.03;
+            decayKnockBoost(b, decay, b.knockBoostAtStart ?? b.knockBoost);
             b._pendingKnockDecay = false;
         }
 
@@ -1453,6 +1446,7 @@ class BallBattle {
             if (!this.isDuel && !b.owner) {
                 let killer = b.killer || null;
                 while (killer && killer.hp <= 0) killer = killer.owner || null;
+                if (killer != null) killer.getRootOwner().killCount++;
                 for (let i = 0; i < 10; i++) {
                     const angle = this.rng() * Math.PI * 2;
                     const speed = 1 + this.rng() * 1;
@@ -1598,7 +1592,7 @@ class BallBattle {
 
         let targetSize = baseSize, targetHoleSize = holeSize, targetZoom = 1;
         for (const s of stages) {
-            if (playerCount <= s.players && !(s.players <= 2 && this.balls.some(b => b.radius > 75))) {
+            if (playerCount <= s.players && !(s.players <= 3 && this.balls.some(b => b.radius > 75))) {
                 targetSize = s.size;
                 if (s.holeSize !== undefined) targetHoleSize = s.holeSize;
                 if (s.zoom !== undefined) targetZoom = s.zoom;
@@ -1788,7 +1782,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 13000) {
+        // while (t < 8200) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -1960,10 +1954,8 @@ class DaggerBall extends Ball {
         this.scalingCooldown = 0;
         dagger.ballColFns.push((b) => {
             if (this.scalingCooldown <= EPS) {
-                // dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * (this.battle.isDuel ? 3 / 20 : 1 / 5)) * Math.sign(dagger.angVel);
-                // this.scalingCooldown = (this.battle.isDuel ? 6 : 10);
                 dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 0.15) * Math.sign(dagger.angVel);
-                this.scalingCooldown = this.battle.isDuel ? 6 : 8;
+                this.scalingCooldown = this.battle.isDuel ? 6 : 12;
             }
         });
 
@@ -2494,16 +2486,20 @@ class WrenchBall extends Ball {
     }
 }
 
-const fireDelay = 31, knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
+const knockForceThreshold = 0, knockResistance = 5000, knockDecel = 0.1;
 class Turret extends CircleBody {
     constructor(x, y, owner, theta, angVel) {
         super(x, y, 0, 0, 1, turretRadius, 1, false);
         this.owner = owner;
         this.theta = theta;
         this.angVel = angVel;
-        this.fireDelay = fireDelay;
+        this.fireDelay = this.getFireDelay();
         this.zIndex = 0;
         this.overlapBoost = 0;
+    }
+
+    getFireDelay() {
+        return this.owner.battle.isDuel ? 31 : 33;
     }
 
     draw() {
@@ -2610,7 +2606,7 @@ class Turret extends CircleBody {
         this.theta += this.angVel * (9 + power) / 10 * dt;
         this.fireDelay -= dt * power;
         if (this.fireDelay <= 0) {
-            this.fireDelay = fireDelay;
+            this.fireDelay = this.getFireDelay();
             const spawnDist = this.radius + 6, speed = 5 * (24 + power) / 25;
             const bullet = new Bullet(
                 this.x + Math.cos(this.theta) * spawnDist,
@@ -2961,7 +2957,7 @@ class GrowerBall extends Ball {
 }
 
 // Mirror: Reflects damage back to attackers
-const mirrorCooldown = 8;
+const mirrorCooldown = 6;
 class MirrorBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c0e8ff", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2973,7 +2969,7 @@ class MirrorBall extends Ball {
 
         const cfg = getWeaponConfig(MirrorBall);
         const mirror = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
-        mirror.addCollider(13, 30, 2);
+        mirror.addCollider(13, 31, 2);
         mirror.addSpin(Math.PI * 0.020 * dir);
         mirror.addParry();
 
@@ -3101,11 +3097,11 @@ class MirrorBall extends Ball {
 }
 
 // Hammer: Builds up power for next attack
-const hammerAccel = 0.00074, baseSpinRate = 5;
+const hammerAccel = 0.000252;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
-        this.spinRate = baseSpinRate;
+        this.spinRate = 1;
         this.power = 0;
         this.antiSwarmBoost = 0;
         this.pendingBoost = 0;
@@ -3120,7 +3116,7 @@ class HammerBall extends Ball {
 
         hammer.ballColFns.push((b) => {
             this.power = 0;
-            this.spinRate += 1;
+            this.spinRate += 0.5;
 
             let addedAntiSwarm = 1 / Math.exp(this.antiSwarmBoost * 0.2);
             this.pendingBoost += this.antiSwarmBoost;
@@ -3131,8 +3127,8 @@ class HammerBall extends Ball {
     }
 
     handleUpdate(dt) {
-        const ceiling = 5 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 1.3);
-        const m = (ceiling - this.power) * (this.battle.isDuel ? 1 : 0.65);
+        const ceiling = 20 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 0.93);
+        const m = (ceiling - this.power);
         if (m < 0) console.warn(t, "asdasdas");
 
         this.power += hammerAccel * m * dt;
@@ -3144,7 +3140,7 @@ class HammerBall extends Ball {
         const oldAntiSwarm = this.pendingBoost;
         this.pendingBoost = Math.max(0, this.pendingBoost - 0.001 * dt);
         this.pendingBoost *= Math.exp(-dt / 1000);
-        const a = (oldAntiSwarm - this.pendingBoost) * m * 0.156;
+        const a = (oldAntiSwarm - this.pendingBoost) * m * 0.052;
         this.power += a;
         // if (t % 50 == 1) console.log(t, "1 added", a);
 
@@ -3158,7 +3154,7 @@ class HammerBall extends Ball {
 
     getInfoEl() {
         return propsToList({
-            "Acceleration": { text: Math.round(this.spinRate / baseSpinRate * 100) / 100 + "x", grad: { from: 1, to: 4 } },
+            "Acceleration": { text: this.spinRate.toFixed(1) + "x", grad: { from: 1, to: 10 } },
         });
     }
 }

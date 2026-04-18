@@ -85,7 +85,7 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i != 1 || j != 6) continue;
+            // if (i != 9 && j != 9) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -127,7 +127,7 @@ onmessage = (e) => {
                 const isHammerBeatsDupe = winnerIsHammer && loserIsDupe;
                 const isHammerBeatsMirror = BALL_TYPES[winnerIdx].name === 'Hammer' && BALL_TYPES[loserIdx].name === 'Mirror';
 
-                const hammerBeaters = ['Sword', 'Dagger', 'Machine Gun', 'Wrench', 'Lance', 'Mirror', 'Grimoire'];
+                const hammerBeaters = ['Sword', 'Machine Gun', 'Wrench', 'Lance', 'Mirror', 'Grimoire'];
                 const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror;
 
                 const effectiveThreshold = useHammerDmg ? r.hammerDmg :

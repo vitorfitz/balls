@@ -1,7 +1,6 @@
 "use strict"
 
 const seedOverride = null;
-// const seedOverride=631; // slow overlap bug
 // const seedOverride = 65; // DUPE VS SWORD
 const dramaticCheck = document.getElementById("dramatic-check");
 

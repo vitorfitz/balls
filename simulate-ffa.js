@@ -51,15 +51,22 @@ function simulate() {
     battle.canvas = { width: size, height: size, style: {} };
     global.t = 0;
 
-    // Track all balls before any die
     const allBalls = battle.balls.filter(b => !b.owner);
+    const deathLog = []; // teams in order of elimination (first dead = index 0)
 
     let grimMirrorStalemate = false;
     let consecutiveOOB = 0;
+    let prevAlive = new Set(allBalls.map(b => b.team));
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
         global.t++;
         battle.updateTimeScale();
         battle.update();
+
+        const nowAlive = new Set(battle.balls.filter(b => !b.owner).map(b => b.team));
+        for (const team of prevAlive) {
+            if (!nowAlive.has(team)) deathLog.push(team);
+        }
+        prevAlive = nowAlive;
 
         let outOfBoundsCount = 0;
         for (const b of battle.balls) {
@@ -90,8 +97,18 @@ function simulate() {
         const b = allBalls.find(ball => ball.team === t.color);
         return b ? b.damageDealt : 0;
     });
+    const kills = BALL_TYPES.map(t => {
+        const b = allBalls.find(ball => ball.team === t.color);
+        return b ? b.killCount : 0;
+    });
+    // placement: 1 = winner, allBalls.length = first to die
+    if (winner) deathLog.push(winner.team);
+    const placements = BALL_TYPES.map(t => {
+        const pos = deathLog.indexOf(t.color);
+        return pos === -1 ? allBalls.length : allBalls.length - pos;
+    });
 
-    return { winnerIdx, damages, grimMirrorStalemate };
+    return { winnerIdx, damages, kills, placements, grimMirrorStalemate };
 }
 
 if (!isMainThread) {
@@ -99,15 +116,19 @@ if (!isMainThread) {
     const wins = new Array(BALL_TYPES.length).fill(0);
     const totalDmg = new Array(BALL_TYPES.length).fill(0);
     const totalDmgSq = new Array(BALL_TYPES.length).fill(0);
+    const totalKills = new Array(BALL_TYPES.length).fill(0);
+    const totalPlacement = new Array(BALL_TYPES.length).fill(0);
     let stalemateCount = 0;
 
     for (let i = 0; i < count; i++) {
-        const { winnerIdx, damages, grimMirrorStalemate } = simulate();
+        const { winnerIdx, damages, kills, placements, grimMirrorStalemate } = simulate();
         if (winnerIdx >= 0) wins[winnerIdx]++;
         damages.forEach((d, j) => { totalDmg[j] += d; totalDmgSq[j] += d * d; });
+        kills.forEach((k, j) => totalKills[j] += k);
+        placements.forEach((p, j) => totalPlacement[j] += p);
         if (grimMirrorStalemate) stalemateCount++;
     }
-    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, count, stalemateCount });
+    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, count, stalemateCount });
 } else {
     const NUM_WORKERS = os.cpus().length;
     // const NUM_WORKERS = 3;
@@ -142,6 +163,8 @@ if (!isMainThread) {
         const wins = new Array(BALL_TYPES.length).fill(0);
         const totalDmg = new Array(BALL_TYPES.length).fill(0);
         const totalDmgSq = new Array(BALL_TYPES.length).fill(0);
+        const totalKills = new Array(BALL_TYPES.length).fill(0);
+        const totalPlacement = new Array(BALL_TYPES.length).fill(0);
         let totalMatches = 0;
         let totalStalemateCount = 0;
 
@@ -149,6 +172,8 @@ if (!isMainThread) {
             r.wins.forEach((w, i) => wins[i] += w);
             r.totalDmg.forEach((d, i) => totalDmg[i] += d);
             r.totalDmgSq.forEach((d, i) => totalDmgSq[i] += d);
+            r.totalKills.forEach((k, i) => totalKills[i] += k);
+            r.totalPlacement.forEach((p, i) => totalPlacement[i] += p);
             totalMatches += r.count;
             totalStalemateCount += r.stalemateCount;
         });
@@ -160,13 +185,15 @@ if (!isMainThread) {
             wins: wins[i],
             winrate: (wins[i] / totalMatches * 100).toFixed(1),
             avgDmg: Math.round(totalDmg[i] / totalMatches),
-            stdDmg: Math.round(Math.sqrt(totalDmgSq[i] / totalMatches - (totalDmg[i] / totalMatches) ** 2))
+            stdDmg: Math.round(Math.sqrt(totalDmgSq[i] / totalMatches - (totalDmg[i] / totalMatches) ** 2)),
+            avgKills: (totalKills[i] / totalMatches).toFixed(2),
+            avgPlacement: (totalPlacement[i] / totalMatches).toFixed(2),
         })).sort((a, b) => b.wins - a.wins);
 
-        console.log('Name'.padEnd(12) + 'Wins'.padStart(6) + 'Winrate'.padStart(10) + 'Avg Dmg'.padStart(10) + 'Std Dmg'.padStart(10));
-        console.log('-'.repeat(48));
+        console.log('Name'.padEnd(12) + 'Wins'.padStart(6) + 'Winrate'.padStart(10) + 'Avg Dmg'.padStart(10) + 'Std Dmg'.padStart(10) + 'Avg Kills'.padStart(11) + 'Avg Place'.padStart(11));
+        console.log('-'.repeat(70));
         stats.forEach(s => {
-            console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10) + String(s.stdDmg).padStart(10));
+            console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10) + String(s.stdDmg).padStart(10) + String(s.avgKills).padStart(11) + String(s.avgPlacement).padStart(11));
         });
     })();
 }
