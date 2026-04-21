@@ -231,8 +231,8 @@ class Ball extends CircleBody {
 
             let dmg;
             if (this.battle.isDuel) {
-                dmg = this.slamTimer > 8 ? 3 :
-                    this.slamTimer > 5 ? 2 :
+                dmg = this.slamTimer > 9 ? 3 :
+                    this.slamTimer > 6 ? 2 :
                         1;
             }
             else {
@@ -949,7 +949,8 @@ function weaponWeaponContact(w1, w2) {
     return hits;
 }
 
-function addMirrorIFrames(src, target) {
+function addMirrorIFrames(weapon, target) {
+    const src = weapon.ball;
     if (target instanceof MirrorBall && !(src.id in target._cantHitBall)) target._cantReflect[src.id] = mirrorCooldown;
 }
 
@@ -1383,7 +1384,7 @@ class BallBattle {
                         const dist = Math.hypot(target.x - b.x, target.y - b.y);
                         if (dist <= b.radius + Math.sqrt(w.range ** 2 + (w.thickness / 2) ** 2) + target.radius) {
                             w.iFrames[target.id] = w.getIFrames(target);
-                            addMirrorIFrames(b, target);
+                            addMirrorIFrames(w, target);
                             for (let i = 0; i < rotations; i++) {
                                 w.ballColFns.forEach(fn => fn(target));
                             }
@@ -1415,17 +1416,24 @@ class BallBattle {
 
         // Decrement iframes for pairs that didn't hit during any substep
         for (const b of this.balls) {
-            for (const w of b.dmgWeapons) {
+            for (let wi = 0; wi < b.dmgWeapons.length; wi++) {
+                const w = b.dmgWeapons[wi];
                 for (const id of Object.keys(w.iFrames)) {
-                    if (w.DoT || !this.hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
+                    if (w.angVel && w._iFrameHitTheta?.[id] !== undefined &&
+                        Math.abs(w.theta - w._iFrameHitTheta[id]) >= Math.PI) {
+                        delete w.iFrames[id];
+                        delete w._iFrameHitTheta[id];
+                        continue;
+                    }
+                    if (w.DoT || !this.hitThisFrame.has(w.ball.id + "-" + wi + "-" + id)) {
                         w.iFrames[id]--;
-                        if (w.iFrames[id] <= 0) delete w.iFrames[id];
+                        if (w.iFrames[id] <= -EPS) { delete w.iFrames[id]; delete w._iFrameHitTheta?.[id]; }
                     }
                 }
                 // Clear contact tracking for balls not hit this frame
                 if (w._inContact) {
                     for (const id of Object.keys(w._inContact)) {
-                        if (!this.hitThisFrame.has(w.ball.id + "-" + w.theta + "-" + id)) {
+                        if (!this.hitThisFrame.has(w.ball.id + "-" + wi + "-" + id)) {
                             delete w._inContact[id];
                         }
                     }
@@ -1466,24 +1474,32 @@ class BallBattle {
                 const B = balls[j];
 
                 // weapon - ball
-                for (const w of A.dmgWeapons) {
-                    if (A.team !== B.team && weaponHitsBall(w, B) && (w.DoT || !(B._cantHitBall?.[A.id] > 0))) {
-                        this.hitThisFrame.add(A.id + "-" + w.theta + "-" + B.id);
-                        addMirrorIFrames(A, B);
-                        if (!(B.id in w.iFrames)) {
-                            w.iFrames[B.id] = w.getIFrames(B);
-                            w.ballColFns.forEach(fn => fn(B));
+                for (let wi = 0; wi < A.dmgWeapons.length; wi++) {
+                    const w = A.dmgWeapons[wi];
+                    if (A.team !== B.team && weaponHitsBall(w, B)) {
+                        addMirrorIFrames(w, B);
+                        if (w.DoT || !(B._cantHitBall && A.id in B._cantHitBall)) {
+                            this.hitThisFrame.add(A.id + "-" + wi + "-" + B.id);
+                            if (!(B.id in w.iFrames)) {
+                                w.iFrames[B.id] = w.getIFrames(B);
+                                if (w.angVel) (w._iFrameHitTheta ??= {})[B.id] = w.theta;
+                                w.ballColFns.forEach(fn => fn(B));
+                            }
                         }
                     }
                 }
 
-                for (const w of B.dmgWeapons) {
-                    if (B.team !== A.team && weaponHitsBall(w, A) && (w.DoT || !(A._cantHitBall?.[B.id] > 0))) {
-                        this.hitThisFrame.add(B.id + "-" + w.theta + "-" + A.id);
-                        addMirrorIFrames(B, A);
-                        if (!(A.id in w.iFrames)) {
-                            w.iFrames[A.id] = w.getIFrames(A);
-                            w.ballColFns.forEach(fn => fn(A));
+                for (let wi = 0; wi < B.dmgWeapons.length; wi++) {
+                    const w = B.dmgWeapons[wi];
+                    if (B.team !== A.team && weaponHitsBall(w, A)) {
+                        addMirrorIFrames(w, A);
+                        if (w.DoT || !(A._cantHitBall && B.id in A._cantHitBall)) {
+                            this.hitThisFrame.add(B.id + "-" + wi + "-" + A.id);
+                            if (!(A.id in w.iFrames)) {
+                                w.iFrames[A.id] = w.getIFrames(A);
+                                if (w.angVel) (w._iFrameHitTheta ??= {})[A.id] = w.theta;
+                                w.ballColFns.forEach(fn => fn(A));
+                            }
                         }
                     }
                 }
@@ -1781,7 +1797,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 8200) {
+        // while (t < 1150) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -1939,7 +1955,7 @@ class DuplicatorBall extends Ball {
     }
 }
 
-const baseSpin = Math.PI * 0.0702;
+const baseSpin = Math.PI * 0.09;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -1948,14 +1964,14 @@ class DaggerBall extends Ball {
         dagger.addCollider(28, 6);
         dagger.addSpin(baseSpin * dir);
         // dagger.addParry();
-        dagger.addDamage(1, 1, false, 1.5);
+        dagger.addDamage(1, 0, false, 1.5);
         // dagger.addDirChange();
 
         this.scalingCooldown = 0;
         dagger.ballColFns.push((b) => {
             if (this.scalingCooldown <= EPS) {
-                dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 0.15) * Math.sign(dagger.angVel);
-                this.scalingCooldown = this.battle.isDuel ? 6 : 12;
+                dagger.angVel = (Math.abs(dagger.angVel) + baseSpin * 0.1) * Math.sign(dagger.angVel);
+                this.scalingCooldown = this.battle.isDuel ? 5 : 10;
             }
         });
 
@@ -1968,7 +1984,7 @@ class DaggerBall extends Ball {
 
     getInfoEl() {
         return propsToList({
-            "Spin Boost": { text: Math.round((Math.abs(this.weapons[0].angVel) - baseSpin) * 100 / baseSpin) + "%", grad: { from: 0, to: 1000 } },
+            "Spin Boost": { text: Math.round((Math.abs(this.weapons[0].angVel) - baseSpin) * 100 / baseSpin) + "%", grad: { from: 0, to: 750 } },
         });
     }
 }
@@ -2042,7 +2058,7 @@ class LanceBall extends Ball {
                 if (this.combo == 0 || oldHit < comboLeniency - 1) this.dist = 0;
 
                 this.comboHits.add(target.id);
-                const distToHit = 76 * this.startSpeed;
+                const distToHit = 74.5 * this.startSpeed;
                 const procs = Math.floor(-this.dist / distToHit) + 1;
                 this.dist += procs * distToHit;
 
@@ -2499,7 +2515,7 @@ class Turret extends CircleBody {
     }
 
     getFireDelay() {
-        return this.owner.battle.isDuel ? 31 : 33;
+        return this.owner.battle.isDuel ? 30 : 33;
     }
 
     draw() {
@@ -2750,6 +2766,7 @@ class GrimoireBall extends Ball {
         }
         else if (target instanceof HammerBall) {
             minion.spinRate = target.spinRate;
+            minion.antiSwarmBoost = target.antiSwarmBoost;
         }
     }
 
@@ -2795,7 +2812,7 @@ class GrimoireBall extends Ball {
 
 const growCooldown = 7;
 const maxScaleDuel = 6.56, maxScaleFFA = 4.9;
-const duelSlam = 9, FFASlam = 22;
+const duelSlam = 10, FFASlam = 22;
 class GrowerBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 30, color = "#008a12", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2957,7 +2974,7 @@ class GrowerBall extends Ball {
 }
 
 // Mirror: Reflects damage back to attackers
-const mirrorCooldown = 6;
+const mirrorCooldown = 7;
 class MirrorBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c0e8ff", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2969,7 +2986,7 @@ class MirrorBall extends Ball {
 
         const cfg = getWeaponConfig(MirrorBall);
         const mirror = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
-        mirror.addCollider(13, 31, 2);
+        mirror.addCollider(13.5, 31, 0.5);
         mirror.addSpin(Math.PI * 0.020 * dir);
         mirror.addParry();
 
@@ -2998,7 +3015,7 @@ class MirrorBall extends Ball {
             if (attacker.id in this._cantReflect) return;
 
             // Block this weapon from hitting the ball
-            this._cantHitBall[attacker.id] = mirrorCooldown;
+            this._cantHitBall[attacker.id] = otherWeapon.iframes == 0 ? mirrorCooldown : 0;
 
             // Mark as hit so iframes don't decrement while in contact
             this.battle.hitThisFrame.add(attacker.id + "-" + otherWeapon.theta + "-" + attacker.id);
@@ -3008,6 +3025,8 @@ class MirrorBall extends Ball {
                 otherWeapon.iFrames[attacker.id] = otherWeapon.getIFrames(attacker);
                 otherWeapon.ballColFns.forEach(fn => fn(attacker, this));
             }
+            const wi = attacker.dmgWeapons.indexOf(otherWeapon);
+            if (wi !== -1) this.battle.hitThisFrame.add(attacker.id + "-" + wi + "-" + attacker.id);
         });
 
         // Bounce balls that hit the front of the mirror
@@ -3064,11 +3083,11 @@ class MirrorBall extends Ball {
     handleUpdate(dt) {
         for (const k in this._cantHitBall) {
             this._cantHitBall[k] -= dt;
-            if (this._cantHitBall[k] <= 0) delete this._cantHitBall[k];
+            if (this._cantHitBall[k] <= EPS) delete this._cantHitBall[k];
         }
         for (const k in this._cantReflect) {
             this._cantReflect[k] -= dt;
-            if (this._cantReflect[k] <= 0) delete this._cantReflect[k];
+            if (this._cantReflect[k] <= EPS) delete this._cantReflect[k];
         }
 
         this.collsThisFrame = this.collsThisFrame2;
@@ -3097,7 +3116,7 @@ class MirrorBall extends Ball {
 }
 
 // Hammer: Builds up power for next attack
-const hammerAccel = 0.000252;
+const hammerAccel = 0.000255;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -3127,7 +3146,7 @@ class HammerBall extends Ball {
     }
 
     handleUpdate(dt) {
-        const ceiling = 20 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 0.93);
+        const ceiling = 20 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 0.92);
         const m = (ceiling - this.power);
         if (m < 0) console.warn(t, "asdasdas");
 
@@ -3140,7 +3159,7 @@ class HammerBall extends Ball {
         const oldAntiSwarm = this.pendingBoost;
         this.pendingBoost = Math.max(0, this.pendingBoost - 0.001 * dt);
         this.pendingBoost *= Math.exp(-dt / 1000);
-        const a = (oldAntiSwarm - this.pendingBoost) * m * 0.052;
+        const a = (oldAntiSwarm - this.pendingBoost) * m * 0.056;
         this.power += a;
         // if (t % 50 == 1) console.log(t, "1 added", a);
 
