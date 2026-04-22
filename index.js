@@ -3146,7 +3146,7 @@ class HammerBall extends Ball {
     }
 
     handleUpdate(dt) {
-        const ceiling = 20 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 0.92);
+        const ceiling = 20 * Math.sqrt(this.spinRate) * (this.battle.isDuel ? 1 : 0.88);
         const m = (ceiling - this.power);
         if (m < 0) console.warn(t, "asdasdas");
 
