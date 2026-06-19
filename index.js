@@ -194,7 +194,7 @@ class CircleBody {
     shouldBounce(other) { return false; }
 
     damage(dmg) {
-        this.hp = Math.max(0, this.hp - dmg);
+        this.hp = this.hp - dmg;
     }
 
     getRootOwner() {
@@ -280,6 +280,18 @@ class Ball extends CircleBody {
         // if (t >= 8700 && t <= 8710 && this instanceof MachineGunBall) console.log(`[t=${t}] MachineGunBall.damage: dmg=${dmg.toFixed(2)} src=${source?.constructor.name} hp=${hpBefore.toFixed(2)}->${Math.max(0, hpBefore - dmg).toFixed(2)} speed=${Math.hypot(this.vx, this.vy).toFixed(2)} pos=(${this.x.toFixed(1)},${this.y.toFixed(1)})`, new Error().stack.split('\n').slice(1, 4).join(' | '));
         super.damage(dmg);
         this.flashTime = performance.now() + flashDur;
+        const displayedDmg = Math.ceil(hpBefore) - Math.ceil(this.hp);
+        if (this.battle && displayedDmg >= 1) {
+            const existing = this.battle.dmgIndicators.find(d => d.owner === this && d.life > indicatorComboThresh);
+            if (existing) {
+                existing.setDmg(existing.dmg + displayedDmg);
+                existing.reset();
+            } else {
+                const ind = new DamageIndicator(this, displayedDmg, this.color);
+                ind.owner = this;
+                this.battle.dmgIndicators.push(ind);
+            }
+        }
         if (source && !this.owner) {
             source.getRootOwner().damageDealt += Math.min(dmg, hpBefore);
             if (this.hp <= 0) this.killer = source;
@@ -1003,6 +1015,7 @@ class BallBattle {
         this.bodies = [];
         this.dots = [];
         this.particles = [];
+        this.dmgIndicators = [];
         this.gravity = gravity;
 
         this.nextID = 0;
@@ -1598,6 +1611,13 @@ class BallBattle {
         [...this.bodies]
             .sort((a, b) => (a.getZIndex() - b.getZIndex()))
             .forEach(b => b.draw());
+
+        for (let i = this.dmgIndicators.length - 1; i >= 0; i--) {
+            const d = this.dmgIndicators[i];
+            d.update();
+            if (d.life <= 0) this.dmgIndicators.splice(i, 1);
+            else d.draw(this.ctx);
+        }
     }
 
     updateArenaShrink() {
@@ -3266,6 +3286,83 @@ class SoulDot extends CircleBody {
     }
 }
 
+function mixWithBlack(hex, percentBlack) {
+    // Clamp percent between 0 and 100
+    percentBlack = Math.max(0, Math.min(100, percentBlack));
+
+    // Remove "#" if present
+    hex = hex.replace(/^#/, "");
+
+    // Support shorthand (#abc → #aabbcc)
+    if (hex.length === 3) {
+        hex = hex.split("").map(c => c + c).join("");
+    }
+
+    // Parse RGB
+    let r = parseInt(hex.slice(0, 2), 16);
+    let g = parseInt(hex.slice(2, 4), 16);
+    let b = parseInt(hex.slice(4, 6), 16);
+
+    // Blend factor
+    const factor = 1 - (percentBlack / 100);
+
+    // Mix with black
+    r = Math.round(r * factor);
+    g = Math.round(g * factor);
+    b = Math.round(b * factor);
+
+    // Convert back to hex
+    return "#" + [r, g, b]
+        .map(v => v.toString(16).padStart(2, "0"))
+        .join("");
+}
+
+const indicatorComboThresh = 0.5;
+class DamageIndicator {
+    constructor(ball, dmg, color) {
+        this.ball = ball;
+        this.color = mixWithBlack(color, 50);
+        this.setDmg(dmg);
+        this.reset();
+    }
+
+    setDmg(dmg) {
+        this.dmg = Math.round(dmg);
+        this.fontSize = 20 + 2.5 * Math.log(this.dmg);
+    }
+
+    reset() {
+        this.yOffset = 5 + this.ball.radius + this.fontSize / 2;
+        this.life = 1;
+    }
+
+    update() {
+        const vy = Math.min(1, (1 - this.life) * 2);
+        // this.vy = 0.5 + (1 - this.life);
+        if (this.life > indicatorComboThresh) {
+            this.yOffset += vy;
+            this.x = this.ball._renderX ?? this.ball.x;
+            this.y = (this.ball._renderY ?? this.ball.y) - this.yOffset;
+        }
+        else {
+            this.y -= vy;
+        }
+        this.life -= 0.0166667;
+    }
+
+    draw(ctx) {
+        ctx.globalAlpha = this.life;
+        ctx.font = "bold " + this.fontSize + "px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        // ctx.strokeStyle = "#000";
+        ctx.lineWidth = 1;
+        // ctx.strokeText(this.dmg, this.x, this.y);
+        ctx.fillStyle = this.color;
+        ctx.fillText(this.dmg, this.x, this.y);
+        ctx.globalAlpha = 1;
+    }
+}
 
 class DeathParticle {
     constructor(battle, x, y, color) {
