@@ -68,9 +68,13 @@ function simulate() {
         }
         prevAlive = nowAlive;
 
+        for (const b of battle.bodies) {
+            if (isNaN(b.x) || isNaN(b.y)) throw new Error(`NaN position on ${b.constructor.name}#${b.id} at t=${global.t} seed=${seed}`);
+        }
+
         let outOfBoundsCount = 0;
         for (const b of battle.balls) {
-            if (!battle.isInBounds(b.x, b.y, b.radius)) outOfBoundsCount++;
+            if (!battle.isInBounds(b.x, b.y, b.radius - 1)) outOfBoundsCount++;
         }
         if (outOfBoundsCount > 0) {
             consecutiveOOB = (consecutiveOOB || 0) + 1;
@@ -131,7 +135,7 @@ if (!isMainThread) {
     parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, count, stalemateCount });
 } else {
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 3;
+    // const NUM_WORKERS = 5;
 
     (async () => {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);

@@ -32,13 +32,13 @@ body {
 }
 
 #menu h1 {
-    bottom: 320px;
+    bottom: 330px;
     color: #333;
     font-size: 40px;
 }
 
 #mode {
-    bottom: 280px;
+    bottom: 295px;
     display: flex;
     font-size: 26px;
     letter-spacing: 0.5px;
@@ -248,7 +248,7 @@ body {
     overflow-y: auto;
     position: relative;
     width: 175px;
-    height: 753px;
+    height: 838px;
 }
 
 .dmg {

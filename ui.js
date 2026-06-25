@@ -10,7 +10,7 @@ const ballPicker = document.getElementById("balls");
 const battleDiv = document.getElementById("battle");
 const modeBtns = document.querySelectorAll("#mode>span");
 
-const menuRadius = 210;
+const menuRadius = 230;
 const ballBtnDiameter = 120;
 const canvasPadding = 70;
 const wallThickness = 3;
@@ -21,8 +21,8 @@ let mode = 0;
 let battleSeed;
 
 {
-    const theta0 = 16 * Math.PI / 10;
-    // const theta0 = 3 * Math.PI / 2;
+    // const theta0 = 16 * Math.PI / 10;
+    const theta0 = 3 * Math.PI / 2;
     for (let i = 0; i < ballClasses.length; i++) {
         const btn = document.createElement("button");
         btn.style.width = btn.style.height = ballBtnDiameter + "px";
