@@ -11,6 +11,7 @@ Math.seedrandom = seedrandom;
 const fs = require('fs');
 
 let code = fs.readFileSync('./index.js', 'utf8');
+code = code.replace('let t = 0;', 'global.t = 0;');
 code = code.replace(/const d = new Date.*?Math\.seedrandom\(d\);/s, '');
 code = code.replace(/const balls = \[[\s\S]*$/s, '');
 
@@ -37,7 +38,7 @@ const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js'
 
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 20000;
-const MATCHES = 1000;
+const MATCHES = 10000;
 
 function simulate() {
     const seed = Date.now() + Math.random();
@@ -112,7 +113,7 @@ function simulate() {
         return pos === -1 ? allBalls.length : allBalls.length - pos;
     });
 
-    return { winnerIdx, damages, kills, placements, grimMirrorStalemate };
+    return { winnerIdx, damages, kills, placements, grimMirrorStalemate, seed };
 }
 
 if (!isMainThread) {
@@ -123,16 +124,21 @@ if (!isMainThread) {
     const totalKills = new Array(BALL_TYPES.length).fill(0);
     const totalPlacement = new Array(BALL_TYPES.length).fill(0);
     let stalemateCount = 0;
+    const outliers = [];
 
     for (let i = 0; i < count; i++) {
-        const { winnerIdx, damages, kills, placements, grimMirrorStalemate } = simulate();
+        const { winnerIdx, damages, kills, placements, grimMirrorStalemate, seed } = simulate();
         if (winnerIdx >= 0) wins[winnerIdx]++;
         damages.forEach((d, j) => { totalDmg[j] += d; totalDmgSq[j] += d * d; });
         kills.forEach((k, j) => totalKills[j] += k);
         placements.forEach((p, j) => totalPlacement[j] += p);
         if (grimMirrorStalemate) stalemateCount++;
+        const maxDmg = Math.max(...damages), minDmg = Math.min(...damages);
+        if (maxDmg > 500 || minDmg < -10) {
+            outliers.push({ seed, damages: [...damages] });
+        }
     }
-    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, count, stalemateCount });
+    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, count, stalemateCount, outliers });
 } else {
     const NUM_WORKERS = os.cpus().length;
     // const NUM_WORKERS = 5;
@@ -171,6 +177,7 @@ if (!isMainThread) {
         const totalPlacement = new Array(BALL_TYPES.length).fill(0);
         let totalMatches = 0;
         let totalStalemateCount = 0;
+        let allOutliers = [];
 
         results.forEach(r => {
             r.wins.forEach((w, i) => wins[i] += w);
@@ -180,6 +187,7 @@ if (!isMainThread) {
             r.totalPlacement.forEach((p, i) => totalPlacement[i] += p);
             totalMatches += r.count;
             totalStalemateCount += r.stalemateCount;
+            if (r.outliers) allOutliers.push(...r.outliers);
         });
 
         console.log('=== FFA RESULTS ===\n');
@@ -199,5 +207,13 @@ if (!isMainThread) {
         stats.forEach(s => {
             console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10) + String(s.stdDmg).padStart(10) + String(s.avgKills).padStart(11) + String(s.avgPlacement).padStart(11));
         });
+
+        if (allOutliers.length > 0) {
+            console.log(`\n=== OUTLIERS (${allOutliers.length}) ===`);
+            allOutliers.slice(0, 20).forEach(o => {
+                const dmgStr = BALL_TYPES.map((t, i) => `${t.name}:${Math.round(o.damages[i])}`).join(' ');
+                console.log(`  seed=${o.seed} ${dmgStr}`);
+            });
+        }
     })();
 }

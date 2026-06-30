@@ -306,7 +306,8 @@ class Ball extends CircleBody {
             }
         }
         if (source && !this.owner) {
-            source.getRootOwner().damageDealt += Math.min(dmg, hpBefore);
+            const credit = Math.max(0, Math.min(dmg, hpBefore));
+            source.getRootOwner().damageDealt += credit;
             if (this.hp <= 0) this.killer = source;
         }
     }
@@ -968,17 +969,7 @@ function resolveCollision(b1, b2, r1Override, r2Override) {
         }
     }
 
-    if (t >= 6578 && t <= 6585 && (b1 instanceof LanceBall || b2 instanceof LanceBall)) {
-        const lance = b1 instanceof LanceBall ? b1 : b2;
-        const other = lance === b1 ? b2 : b1;
-        console.log(`[t=${t}] PRE-shareKnockBoost: lance#${lance.id} kb=${lance.knockBoost.toFixed(1)} speed=${Math.hypot(lance.vx, lance.vy).toFixed(1)} | other#${other.id} kb=${other.knockBoost.toFixed(1)} speed=${Math.hypot(other.vx, other.vy).toFixed(1)} | prevBoost lance=${(lance === b1 ? prevBoost1 : prevBoost2).toFixed(1)} other=${(other === b1 ? prevBoost1 : prevBoost2).toFixed(1)}`);
-    }
     shareKnockBoost(b1, b2, prevBoost1, prevBoost2);
-    if (t >= 6578 && t <= 6585 && (b1 instanceof LanceBall || b2 instanceof LanceBall)) {
-        const lance = b1 instanceof LanceBall ? b1 : b2;
-        const other = lance === b1 ? b2 : b1;
-        console.log(`[t=${t}] POST-shareKnockBoost: lance#${lance.id} kb=${lance.knockBoost.toFixed(1)} speed=${Math.hypot(lance.vx, lance.vy).toFixed(1)} | other#${other.id} kb=${other.knockBoost.toFixed(1)} speed=${Math.hypot(other.vx, other.vy).toFixed(1)}`);
-    }
 
     // Turret wall-pinch: just prevent turret from going through the wall.
     for (const [turret, , wbx, wby] of [[b1, b2, wb1x, wb1y], [b2, b1, wb2x, wb2y]]) {
@@ -1298,12 +1289,13 @@ class BallBattle {
 
         let dt = 1;
         let iterations = 0;
+        let lastPair = null;
         while (dt > EPS) {
             if (++iterations == 1001) {
                 console.warn(`[t=${t}] Physics loop exceeded 1000 iterations, bodies=${this.bodies.length}, dt=${dt}, seed=${this.seed}`);
                 break;
             }
-            if (iterations > 990 && t >= 7810 && t <= 7820) {
+            if (iterations > 995 && t >= 1535 && t <= 1536) {
                 console.log(`[t=${t}] iter=${iterations} dt=${dt} bodies=${this.bodies.length}`);
                 for (let i = 0; i < this.bodies.length; i++) {
                     const b = this.bodies[i];
@@ -1328,6 +1320,7 @@ class BallBattle {
                             const tCol = timeToCollision(b1, b2, dt, r1, r2);
 
                             if (tCol < tBall) {
+                                if (tCol <= EPS * 2 && lastPair && lastPair[0] === b1 && lastPair[1] === b2 && lastPair[2] === r1 && lastPair[3] === r2) continue;
                                 tBall = tCol;
                                 pair = [b1, b2, r1, r2];
                                 break radiiLoop;
@@ -1408,7 +1401,7 @@ class BallBattle {
                 return;
             }
 
-            if (iterations > 990 && t >= 7810 && t <= 7820) {
+            if (iterations > 995 && t >= 1535 && t <= 1536) {
                 const eventType = tBall <= tWall ? 'ball-ball' : 'wall';
                 if (eventType === 'ball-ball') {
                     console.log(`  event: ${eventType} tNext=${tNext.toExponential(6)} dt=${dt.toExponential(6)} pair=${pair[0].constructor.name}#${pair[0].id} vs ${pair[1].constructor.name}#${pair[1].id} dist=${Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y).toFixed(4)} r1=${pair[2]} r2=${pair[3]}`);
@@ -1436,9 +1429,8 @@ class BallBattle {
             if (tBall <= tNext + EPS) {
                 pair[0]._segments?.push({ x: pair[0].x, y: pair[0].y, f });
                 pair[1]._segments?.push({ x: pair[1].x, y: pair[1].y, f });
-                // if (t >= 8861 && t <= 8900 && debugBodies.includes(pair[0]) && debugBodies.includes(pair[1]))
-                //     console.log(`[t=${t}] turret-turret resolveCollision: pos0=(${pair[0].x.toFixed(3)},${pair[0].y.toFixed(3)}) vel0=(${pair[0].vx.toFixed(6)},${pair[0].vy.toFixed(6)}) pos1=(${pair[1].x.toFixed(3)},${pair[1].y.toFixed(3)}) vel1=(${pair[1].vx.toFixed(6)},${pair[1].vy.toFixed(6)}) dist=${Math.hypot(pair[0].x - pair[1].x, pair[0].y - pair[1].y).toFixed(3)}`);
                 resolveCollision(pair[0], pair[1], pair[2], pair[3]);
+                lastPair = pair;
 
                 // if (t >= 8897 && t <= 8897 && debugBodies.length) {
                 //     const rightWall = this.walls.find(w => w.axis === 1 && w.normal === -1);
@@ -2206,7 +2198,7 @@ class LanceBall extends Ball {
         lance.addCollider(90, 15, 56);
         lance.iframes = 0;
         lance.DoT = true;
-        lance.ballColFns.push((target) => {
+        lance.ballColFns.push((target, reflector) => {
             if (this.isStunned()) {
                 return;
             }
@@ -2245,7 +2237,8 @@ class LanceBall extends Ball {
                 this.damageThisTick = (oldCombo + this.combo + 1) * procs / 2;
             }
 
-            target.damage(this.damageThisTick, this);
+            const source = reflector || this;
+            target.damage(this.damageThisTick, source);
 
             const speed2 = this.vx ** 2 + this.vy ** 2;
             let slowness = (10 / this.battle.baseTimeScale) * Math.sqrt(this.startSpeed) / speed2;
@@ -2693,7 +2686,7 @@ class Turret extends CircleBody {
     }
 
     getFireDelay() {
-        return this.owner.battle.isDuel ? 30 : 33;
+        return this.owner.battle.isDuel ? 30 : 35;
     }
 
     draw() {
@@ -3558,10 +3551,11 @@ class ClubBall extends Ball {
         // club.addDirChange();
         club.iframes = 40;
 
-        club.ballColFns.push((b) => {
-            b.damage(b.isStunned() ? 10 : 5, this);
+        club.ballColFns.push((b, reflector) => {
+            const source = reflector || this;
+            b.damage(b.isStunned() ? 10 : 5, source);
             if (!b.owner && !(b instanceof DuplicatorBall)) {
-                addToHitHistory([this, b]);
+                addToHitHistory([source, b]);
             }
 
             // Defer stun to end of weapon phase
