@@ -38,7 +38,7 @@ const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js'
 
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 20000;
-const MATCHES = 10000;
+const MATCHES = 1000;
 
 function simulate() {
     const seed = Date.now() + Math.random();
@@ -141,7 +141,7 @@ if (!isMainThread) {
     parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, count, stalemateCount, outliers });
 } else {
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 5;
+    // const NUM_WORKERS = 4;
 
     (async () => {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
