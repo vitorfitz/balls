@@ -1,8 +1,42 @@
-importScripts('seedrandom.js', 'index.js');
+importScripts('seedrandom.js', 'index.js', 'pathfinding.js');
 
 const MAX_TICKS = 10000;
 const BALL_TYPES = ballClasses.map(b => ({ name: b.name }));
 const threshold = 10;
+
+// How often (in ticks) to re-check whether the Wrench is boxed in by its own
+// turrets and unreachable by the Duplicator. Turret cages change slowly, so
+// sampling instead of checking every tick is a cheap, good-enough
+// approximation.
+const boxedInCheckInterval = 200;
+
+// Is the Wrench ball unreachable (via the visibility-graph pathfinder) from
+// the nearest surviving Duplicator-team ball, treating the Wrench's own
+// turrets as static obstacles?
+function isWrenchBoxedIn(battle, wrenchBall, dupeTeam) {
+    const turretObstacles = battle.bodies
+        .filter(b => b instanceof Turret && b.owner === wrenchBall)
+        .map(b => ({ x: b.x, y: b.y, radius: b.radius }));
+
+    if (turretObstacles.length === 0) return false;
+
+    let closest = null, closestDist = Infinity;
+    for (const b of battle.balls) {
+        if (b.team !== dupeTeam || b.owner) continue;
+        const d = Math.hypot(b.x - wrenchBall.x, b.y - wrenchBall.y);
+        if (d < closestDist) { closestDist = d; closest = b; }
+    }
+    if (!closest) return false;
+
+    const walls = { minX: 0, minY: 0, maxX: battle.width, maxY: battle.height };
+    return !isReachable(
+        { x: closest.x, y: closest.y },
+        { x: wrenchBall.x, y: wrenchBall.y },
+        turretObstacles,
+        walls,
+        closest.radius
+    );
+}
 
 function makeBall(i, pos, rng) {
     const data = ballClasses[i];
@@ -29,6 +63,10 @@ function simulate(t1Idx, t2Idx, seed) {
     const isSwordDagger = (b1 instanceof SwordBall && b2 instanceof DaggerBall) || (b1 instanceof DaggerBall && b2 instanceof SwordBall);
     const isDupeHammer = (b1 instanceof DuplicatorBall && b2 instanceof HammerBall) || (b1 instanceof HammerBall && b2 instanceof DuplicatorBall);
 
+    const isDupeWrench = (b1 instanceof DuplicatorBall && b2 instanceof WrenchBall) || (b1 instanceof WrenchBall && b2 instanceof DuplicatorBall);
+    const dupeTeam = isDupeWrench ? (b1 instanceof DuplicatorBall ? b1.team : b2.team) : null;
+    let boxedInSamples = 0, totalSamples = 0;
+
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
         t++;
         battle.updateTimeScale();
@@ -39,6 +77,14 @@ function simulate(t1Idx, t2Idx, seed) {
         const diff = (p1 ? p1.hp : 0) - (p2 ? p2.hp : 0);
         minHpDiff = Math.min(minHpDiff, diff);
         maxHpDiff = Math.max(maxHpDiff, diff);
+
+        if (isDupeWrench && t % boxedInCheckInterval === 0) {
+            const wrenchBall = p1 instanceof WrenchBall ? p1 : (p2 instanceof WrenchBall ? p2 : null);
+            if (wrenchBall) {
+                totalSamples++;
+                if (isWrenchBoxedIn(battle, wrenchBall, dupeTeam)) boxedInSamples++;
+            }
+        }
 
         if (isSwordDagger) {
             for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
@@ -64,7 +110,8 @@ function simulate(t1Idx, t2Idx, seed) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b1.team).map(b => b.hp));
             }
             const hammerDmg = b2 instanceof HammerBall ? b2.weapons[0].dmg : null;
-            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b1.team], hammerDmg };
+            const boxedInFraction = totalSamples > 0 ? boxedInSamples / totalSamples : 0;
+            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b1.team], hammerDmg, boxedInFraction };
         }
         if (p2 && !p1) {
             let hp = p2.hp;
@@ -72,7 +119,8 @@ function simulate(t1Idx, t2Idx, seed) {
                 hp = Math.max(...battle.balls.filter(b => b.team === b2.team).map(b => b.hp));
             }
             const hammerDmg = b1 instanceof HammerBall ? b1.weapons[0].dmg : null;
-            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b2.team], hammerDmg };
+            const boxedInFraction = totalSamples > 0 ? boxedInSamples / totalSamples : 0;
+            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b2.team], hammerDmg, boxedInFraction };
         }
     }
     return { winner: 'draw' };
@@ -85,7 +133,7 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i != 6 || j != 10) continue;
+            // if (i != 0 || j != 10) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -94,7 +142,8 @@ onmessage = (e) => {
 
             let m = key == "Duplicator_Mirror" ? 0.1 :
                 key == "Duplicator_Grimoire" ? 0.5 :
-                    1;
+                    i == 10 || j == 10 ? 4 :
+                        1;
 
             for (let seed = 0; seed < matches * m; seed++) {
                 const r = simulate(i, j, seed);
@@ -102,7 +151,7 @@ onmessage = (e) => {
             }
 
             const durations = results.map(r => r.ticks).sort((a, b) => a - b);
-            const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" ? 6000 : 4000;
+            const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" || key == "Duplicator_Club" ? 6000 : 4000;
             const median = durations[Math.floor(durations.length / 2)] || durLimit;
             const maxTicks = Math.max(durLimit, median);
 
@@ -118,7 +167,6 @@ onmessage = (e) => {
                 const winnerIsDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
                 const winnerIsMirror = BALL_TYPES[winnerIdx].name === 'Mirror';
-                const winnerIsHammer = BALL_TYPES[winnerIdx].name === 'Hammer';
                 const loserIsHammer = BALL_TYPES[loserIdx].name === 'Hammer';
 
                 const isDupBeatsWrench = winnerIsDupe && BALL_TYPES[loserIdx].name === 'Wrench';
@@ -126,7 +174,8 @@ onmessage = (e) => {
                 const isDupBeatsClub = winnerIsDupe && BALL_TYPES[loserIdx].name === 'Club';
                 const isDupBeatsMG = winnerIsDupe && BALL_TYPES[loserIdx].name === 'Machine Gun';
 
-                const isHammerBeatsDupe = winnerIsHammer && loserIsDupe;
+                const isWrenchBeatsDupe = BALL_TYPES[winnerIdx].name === 'Wrench' && loserIsDupe;
+                const isHammerBeatsDupe = BALL_TYPES[winnerIdx].name === 'Hammer' && loserIsDupe;
                 const isHammerBeatsMirror = BALL_TYPES[winnerIdx].name === 'Hammer' && BALL_TYPES[loserIdx].name === 'Mirror';
                 const hammerBeaters = ['Sword', 'Machine Gun', 'Wrench', 'Lance', 'Mirror', 'Grimoire', 'Club'];
                 const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror;
@@ -135,12 +184,15 @@ onmessage = (e) => {
 
                 const effectiveThreshold = useHammerDmg ? r.hammerDmg :
                     isDupBeatsWrench ? 50 :
-                        isGrimVsClub ? 25 :
-                            (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
-                                (loserIsDupe || (winnerIsDupe && winnerIsMirror)) ? 5 :
-                                    threshold;
+                        isWrenchBeatsDupe ? 10 :
+                            isGrimVsClub ? 25 :
+                                (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
+                                    (loserIsDupe || (winnerIsDupe && winnerIsMirror)) ? 5 :
+                                        threshold;
+                if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
                 return (r.hp <= effectiveThreshold || (winnerIsDupe && r.dupeNearDeath))
-                    && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 100);
+                    && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 100)
+                    && !(key === "Duplicator_Wrench" && r.boxedInFraction > 0.3);
             }).map(r => r.seed);
 
             dramaticSeeds[key] = seeds;
