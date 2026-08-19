@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Find Raid Dramatic Seeds</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+        }
+
+        #output {
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+
+<body>
+    <h3>Raid Dramatic Seed Finder</h3>
+    <div>
+        <label>Seeds per boss: <input type="number" id="matches" value="200"></label>
+        <label>Boss HP Threshold: <input type="number" id="bossHp" value="25" step="1"></label>
+        <label>Raider Winner HP % Threshold: <input type="number" id="hpPct" value="10" step="1"></label>
+        <button id="start">Start</button>
+        <br><br>
+        <label>Debug seed: <input type="number" id="debugSeed" value="0"></label>
+        <label>Debug boss:
+            <select id="debugBoss">
+                <option>Grower</option>
+                <option>Dagger</option>
+                <option>Lance</option>
+                <option>Machine Gun</option>
+                <option>Wrench</option>
+                <option>Grimoire</option>
+                <option>Sword</option>
+                <option>Mirror</option>
+                <option>Hammer</option>
+                <option>Club</option>
+            </select>
+        </label>
+        <button id="debug">Debug</button>
+    </div>
+    <div id="output"></div>
+
+    <script>
+        document.getElementById('start').onclick = () => {
+            const output = document.getElementById('output');
+            const matches = +document.getElementById('matches').value;
+            const bossHpThreshold = +document.getElementById('bossHp').value;
+            const hpPctThreshold = +document.getElementById('hpPct').value / 100;
+
+            output.textContent = 'Running in worker...\n';
+
+            const worker = new Worker('find-raid-seeds-worker.js');
+            worker.postMessage({ matches, bossHpThreshold, hpPctThreshold });
+            worker.onmessage = (e) => {
+                if (e.data.progress) {
+                    output.textContent = 'Running in worker...\n' + e.data.progress;
+                } else {
+                    output.textContent = e.data.result;
+                    worker.terminate();
+                }
+            };
+        };
+
+        document.getElementById('debug').onclick = () => {
+            const output = document.getElementById('output');
+            const debugSeed = +document.getElementById('debugSeed').value;
+            const debugBoss = document.getElementById('debugBoss').value;
+
+            output.textContent = 'Running...\n';
+
+            const worker = new Worker('find-raid-seeds-worker.js');
+            worker.postMessage({ debugSeed, debugBoss });
+            worker.onmessage = (e) => {
+                output.textContent = e.data.result;
+                worker.terminate();
+            };
+        };
+    </script>
+</body>
+
+</html>

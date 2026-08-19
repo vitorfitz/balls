@@ -133,7 +133,7 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i != 0 || j != 10) continue;
+            if (i != 3 || j != 6) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -142,8 +142,9 @@ onmessage = (e) => {
 
             let m = key == "Duplicator_Mirror" ? 0.1 :
                 key == "Duplicator_Grimoire" ? 0.5 :
-                    i == 10 || j == 10 ? 4 :
-                        1;
+                    key == "Mirror_Hammer" ? 4 :
+                        i == 10 || j == 10 ? 2 :
+                            1;
 
             for (let seed = 0; seed < matches * m; seed++) {
                 const r = simulate(i, j, seed);

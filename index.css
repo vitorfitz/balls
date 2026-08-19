@@ -111,7 +111,7 @@ body {
 }
 
 #balls>.selected,
-.ffa #balls>* {
+.ffa #balls>:not([data-disabled]) {
     background-color: #c9dcff;
 }
 
@@ -119,6 +119,13 @@ body {
     cursor: auto;
     pointer-events: none;
 }
+
+#balls>[data-disabled] {
+    cursor: auto;
+    pointer-events: none;
+    opacity: 0.5;
+}
+
 
 #dramatic-toggle {
     position: absolute;
@@ -242,22 +249,49 @@ body {
     display: none;
 }
 
+#battle.raid-mode #battle-ui {
+    display: none;
+}
+
+#raid-boss-info {
+    display: none;
+    text-align: center;
+    margin-bottom: 4px;
+    color: #333;
+}
+
+#battle.raid-mode #raid-boss-info {
+    display: block;
+}
+
 #leaderboard {
     display: none;
     margin-left: 60px;
     overflow-y: auto;
     position: relative;
     width: 175px;
-    height: 838px;
 }
 
 .dmg {
     left: 118px;
     color: #777;
     white-space: nowrap;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+.stat-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
 }
 
 #battle.ffa-mode #leaderboard {
+    display: flex;
+}
+
+#battle.raid-mode #leaderboard {
     display: flex;
 }
 
@@ -299,4 +333,11 @@ body {
     bottom: 15px;
     right: auto;
     left: -25px;
+}
+
+.raid-mode #back {
+    bottom: 15px;
+    right: auto;
+    left: -15px;
+    translate: -100% 0;
 }

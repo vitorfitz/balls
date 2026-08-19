@@ -4,8 +4,8 @@ const FFA_CONFIG = {
     size: 1500,
     armWidth: 900,
     holeSize: 300,
-    gravity: 0.015,
-    speed: 4,
+    gravity: 0.0,
+    speed: 5,
     positions: [[450, 1350], [1050, 1350], [150, 450], [150, 1050], [1350, 450], [1350, 1050], [450, 150], [1050, 150], [750, 450], [750, 1050]],
     shrinkStages: [
         { players: 6, size: 900, zoom: 1.45 },
@@ -18,10 +18,7 @@ function createFFABattle(ballClasses, seed, createBallFn, BallBattle) {
     const rng = new Math.seedrandom(seed);
 
     const pos = [...positions];
-    for (let i = pos.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [pos[i], pos[j]] = [pos[j], pos[i]];
-    }
+    shuffle(pos, rng);
 
     const combatants = ballClasses
         .map((b, i) => ({ b, i }))
@@ -31,7 +28,7 @@ function createFFABattle(ballClasses, seed, createBallFn, BallBattle) {
     let balls = combatants.map((i, j) => createBallFn(ballClasses, i, pos[j], rng, speed));
     // balls = balls.filter((b) => !(b instanceof GrimoireBall));
 
-    const battle = new BallBattle(balls, seed, gravity);
+    const battle = new BallBattle(balls, seed, gravity, FFA);
     battle.walls = createPlusArenaWalls(size, armWidth, holeSize);
     battle.corners = plusArenaCorners(size, armWidth, holeSize);
     battle.shrinkConfig = {

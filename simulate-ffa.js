@@ -31,6 +31,8 @@ global.randomVel = randomVel;
 global.createPlusArenaWalls = createPlusArenaWalls;
 global.plusArenaCorners = plusArenaCorners;
 global.ballClasses = ballClasses;
+global.shuffle = shuffle;
+global.FFA = FFA;
 `;
 
 eval(code);

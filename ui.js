@@ -52,6 +52,25 @@ let battleSeed;
         btn.addEventListener("click", () => {
             if (mode == 1) return;
 
+            if (mode == 2) {
+                const ind = combatants.indexOf(i);
+                if (ind != -1) {
+                    btn.classList.remove("selected");
+                    combatants.splice(ind, 1);
+                    fightBtn.classList.add("disabled");
+                }
+                else {
+                    if (combatants.length >= 1) {
+                        ballBtns[combatants[0]].classList.remove("selected");
+                        combatants.splice(0, 1);
+                    }
+                    btn.classList.add("selected");
+                    combatants.push(i);
+                    fightBtn.classList.remove("disabled");
+                }
+                return;
+            }
+
             const ind = combatants.indexOf(i);
             if (ind != -1) {
                 btn.classList.remove("selected");
@@ -85,7 +104,7 @@ let battleSeed;
     }
 }
 
-for (let i = 0; i < 2; i++) {
+for (let i = 0; i < modeBtns.length; i++) {
     modeBtns[i].addEventListener("click", function () {
         for (let j = 0; j < modeBtns.length; j++) {
             if (i == j) {
@@ -96,12 +115,26 @@ for (let i = 0; i < 2; i++) {
             }
         }
 
+        // Reset any ball selection when switching modes
+        for (const c of combatants) ballBtns[c].classList.remove("selected");
+        combatants = [];
+        fightBtn.classList.add("disabled");
+
         mode = i;
+        menuDiv.classList.remove("ffa", "raid");
         if (i == 1) {
             menuDiv.classList.add("ffa");
         }
+        else if (i == 2) {
+            menuDiv.classList.add("raid");
+        }
+
+        const duplicatorIdx = ballClasses.findIndex(b => b.name === "Duplicator");
+        if (i == 1 || i == 2) {
+            ballBtns[duplicatorIdx].dataset.disabled = "";
+        }
         else {
-            menuDiv.classList.remove("ffa");
+            delete ballBtns[duplicatorIdx].dataset.disabled;
         }
     });
 }
@@ -130,8 +163,11 @@ function makeBall(i, pos, rng, speed = 5, hpOverride = null) {
 let battle;
 let hp = {}, displayedHP = {};
 let deathOrder = [];
+let raidCombatants = [];
+let raidBoss = null;
 const ball1Info = document.getElementById("ball1-info");
 const ball2Info = document.getElementById("ball2-info");
+const raidBossInfo = document.getElementById("raid-boss-info");
 
 function drawHealthBar(canvas, hp, maxHp, color, alignRight) {
     const ctx = canvas.getContext("2d");
@@ -159,6 +195,12 @@ function updateBattleUI() {
 
     if (mode === 1) {
         updateFFALeaderboard();
+        requestAnimationFrame(updateBattleUI);
+        return;
+    }
+
+    if (mode === 2) {
+        updateRaidUI();
         requestAnimationFrame(updateBattleUI);
         return;
     }
@@ -261,8 +303,119 @@ function updateFFALeaderboard() {
     });
 
     // Reorder DOM elements
+    lb.style.height = (85 * entries.length - 15) + "px";
     entries.forEach(({ i }, idx) => {
         const el = lb.querySelector(`[data-idx="${i}"]`);
+        el.style.top = (idx * 85) + "px";
+        el.style.zIndex = 11 - idx;
+    });
+}
+
+function updateRaidUI() {
+    const lb = document.getElementById("leaderboard");
+
+    // Boss health bar (identified by fixed id, since raiders may share its color/team elsewhere)
+    const boss = battle.balls.find(ball => ball.id === raidBoss.id);
+    const bossData = ballClasses[combatants[0]];
+    let hpCanvas = raidBossInfo.querySelector(".hp-canvas"), hpText = raidBossInfo.querySelector(".hp-text");
+    if (!hpCanvas) {
+        hpCanvas = document.createElement("canvas");
+        hpCanvas.className = "hp-canvas";
+        hpCanvas.width = 210;
+        hpCanvas.height = 28;
+
+        hpText = document.createElement("span");
+        hpText.className = "hp-text";
+        hpText.style.left = "7px";
+
+        const hpBar = document.createElement("div");
+        hpBar.className = "hp-bar";
+        hpBar.appendChild(hpText);
+        hpBar.appendChild(hpCanvas);
+
+        raidBossInfo.innerHTML = `<div class="name">GIGA ${bossData.name.toUpperCase()}</div><div class="stat"></div>`;
+        raidBossInfo.querySelector(".stat").appendChild(hpBar);
+
+        const statLine = document.createElement("div");
+        statLine.className = "stat-line";
+        const dmgSpan = document.createElement("span");
+        dmgSpan.className = "dmg";
+        dmgSpan.innerHTML = `<span style="margin-right:4px">🗡️</span>${Math.round(boss?.damageDealt ?? 0)}`;
+        if (boss?.getInfoEl) statLine.appendChild(boss.getInfoEl());
+        statLine.appendChild(dmgSpan);
+        raidBossInfo.querySelector(".stat").appendChild(statLine);
+    }
+
+    const bossKey = "raid-boss";
+    const bossHp = boss ? Math.ceil(boss.hp) : 0;
+    if (!(bossKey in displayedHP)) displayedHP[bossKey] = bossHp;
+    displayedHP[bossKey] += (bossHp - displayedHP[bossKey]) * 0.05;
+    hpText.textContent = bossHp;
+    hpText.style.color = displayedHP[bossKey] / raidBoss.maxHp < 0.25 ? "#fff" : "#333";
+    drawHealthBar(hpCanvas, displayedHP[bossKey], raidBoss.maxHp, bossData.color, false);
+
+    // Update boss stat info + damage dealt, on the same line (frozen at last value once boss dies)
+    const statLine = raidBossInfo.querySelector(".stat-line");
+    if (statLine && boss) {
+        const oldInfo = statLine.querySelector(":not(.dmg)");
+        if (oldInfo) oldInfo.remove();
+        if (boss?.getInfoEl) statLine.insertBefore(boss.getInfoEl(), statLine.firstChild);
+        statLine.querySelector(".dmg").lastChild.textContent = Math.round(boss?.damageDealt ?? 0);
+    }
+
+    // Raider leaderboard, keyed by stable ball id (raiders share one team so they can't be told apart by team/color)
+    const entries = raidCombatants.map(({ id, i }) => {
+        const data = ballClasses[i];
+        const b = battle.balls.find(ball => ball.id === id);
+        if (!b && !deathOrder.includes(id)) deathOrder.push(id);
+        return { id, i, data, b, hpPct: b ? b.hp / b.maxHp : 0 };
+    });
+
+    entries.sort((a, b) => {
+        const aDead = deathOrder.includes(a.id);
+        const bDead = deathOrder.includes(b.id);
+        if (aDead && bDead) return deathOrder.indexOf(b.id) - deathOrder.indexOf(a.id);
+        if (aDead) return 1;
+        if (bDead) return -1;
+        return b.hpPct - a.hpPct;
+    });
+
+    entries.forEach(({ id, data, b }) => {
+        let el = lb.querySelector(`[data-idx="${id}"]`);
+        if (!el) {
+            el = document.createElement("div");
+            el.className = "lb-entry";
+            el.dataset.idx = id;
+            el.innerHTML = `<div class="name">${data.name}</div><div class="stat"><div class="hp-bar"><span class="hp-text"></span><canvas class="hp-canvas" width="110" height="24"></canvas><span class="dmg"><span style="margin-right:4px">🗡️</span>${Math.round(b.damageDealt)}</span></div></div>`;
+            lb.appendChild(el);
+        }
+
+        el.classList.toggle("dead", !b);
+        if (!b) {
+            el.querySelector(".hp-text").textContent = "0";
+            el.querySelector(".hp-text").style.color = "#fff";
+            drawHealthBar(el.querySelector(".hp-canvas"), 0, 1, "#333", false);
+            return;
+        }
+
+        const key = "raider-" + id;
+        const curHp = Math.ceil(b.hp);
+        if (!(key in displayedHP)) displayedHP[key] = curHp;
+        displayedHP[key] += (curHp - displayedHP[key]) * 0.05;
+
+        el.querySelector(".hp-text").textContent = curHp;
+        el.querySelector(".hp-text").style.color = displayedHP[key] / b.maxHp < 0.25 ? "#fff" : "#333";
+        drawHealthBar(el.querySelector(".hp-canvas"), displayedHP[key], b.maxHp, data.color, false);
+        el.querySelector(".dmg").lastChild.textContent = Math.round(b.damageDealt);
+
+        const oldInfo = el.children[1].children[1];
+        if (oldInfo) oldInfo.remove();
+        if (b.getInfoEl) el.querySelector(".stat").appendChild(b.getInfoEl());
+    });
+
+    lb.style.height = (85 * entries.length - 15) + "px";
+    entries.forEach(({ id }, idx) => {
+        const el = lb.querySelector(`[data-idx="${id}"]`);
         el.style.top = (idx * 85) + "px";
         el.style.zIndex = 11 - idx;
     });
@@ -280,6 +433,13 @@ fightBtn.addEventListener("click", function () {
 
     if (mode == 1) {
         startFFA();
+        return;
+    }
+
+    if (mode == 2) {
+        if (!fightBtn.classList.contains("disabled")) {
+            startRaid();
+        }
         return;
     }
 
@@ -330,6 +490,45 @@ async function startFFA() {
     updateBattleUI();
 }
 
+function startRaid() {
+    menuDiv.classList.add("hidden");
+    battleDiv.classList.remove("hidden");
+    battleDiv.classList.add("raid-mode");
+
+    if (dramaticCheck.checked) {
+        const seedPool = RAID_DRAMATIC_SEEDS[ballClasses[combatants[0]].name];
+        if (seedPool?.length) {
+            battleSeed = seedPool[Math.floor(Math.random() * seedPool.length)];
+            console.log("used", battleSeed);
+        }
+    }
+
+    const canvas = document.getElementById("canvas");
+    const { size } = RAID_CONFIG;
+    canvas.width = canvas.height = size + 2 * wallThickness;
+    canvas.style.width = canvas.style.height = "700px";
+
+    const bossIndex = combatants[0];
+    const result = createRaidBattle(ballClasses, battleSeed, bossIndex, createFFABall, BallBattle);
+    battle = result.battle;
+    raidBoss = result.boss;
+    raidCombatants = result.raiderIndices.map((i) => ({
+        id: battle.balls.find(b => b !== raidBoss && b.constructor === ballClasses[i].class)?.id,
+        i,
+    }));
+
+    battle.addCanvas(canvas, wallThickness);
+    battle.drawArena = (ctx) => {
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, battle.width, battle.height);
+        ctx.lineWidth = 2 * wallThickness;
+        ctx.strokeRect(0, 0, battle.width, battle.height);
+        ctx.fillRect(0, 0, battle.width, battle.height);
+    };
+    battle.run(10);
+    updateBattleUI();
+}
+
 function startDuel() {
     // Use dramatic seed if available and dramatic mode is on
     if (dramaticCheck.checked) {
@@ -351,7 +550,7 @@ function startDuel() {
     const positions = [[50, 200], [350, 200]];
     canvas.width = canvas.height = "406";
 
-    battle = new BallBattle(combatants.map((comb, i) => makeBall(comb, positions[i], rng)), battleSeed, 0.1);
+    battle = new BallBattle(combatants.map((comb, i) => makeBall(comb, positions[i], rng)), battleSeed, 0.1, DUEL);
     battle.addCanvas(document.getElementById("canvas"), wallThickness);
     const closureBattle = battle;
     battle.drawArena = (ctx) => {
@@ -370,16 +569,19 @@ document.getElementById("back").addEventListener("click", () => {
     battle = null;
     displayedHP = {};
     deathOrder = [];
+    raidCombatants = [];
+    raidBoss = null;
 
     battleDiv.classList.add("hidden");
-    battleDiv.classList.remove("ffa-mode");
+    battleDiv.classList.remove("ffa-mode", "raid-mode");
     menuDiv.classList.remove("hidden");
 
     document.getElementById("leaderboard").innerHTML = "";
     ball1Info.innerHTML = "";
     ball2Info.innerHTML = "";
+    raidBossInfo.innerHTML = "";
 
     document.getElementById("canvas").style.transform = "";
     document.getElementById("canvas").style.width = "";
     document.getElementById("canvas").style.height = "";
-}); 
+});
