@@ -47,13 +47,12 @@ function createFFABattle(ballClasses, seed, createBallFn, BallBattle) {
 function createFFABall(ballClasses, i, pos, rng, speed) {
     const data = ballClasses[i];
     const spinArgs = data.weapon?.spin ? [
-        pos[0] < 200 ? 0 : Math.PI,
-        pos[0] < 200 ? 1 : -1,
+        rng() * 2 * Math.PI,
+        rng() < 0.5 ? 1 : -1,
     ] : [];
     const theta = rng() * 2 * Math.PI;
-    const hp = data.name === "Mirror" ? 100 : data.hp;
-    const b = new data.class(pos[0], pos[1], Math.cos(theta) * speed, Math.sin(theta) * speed, ...spinArgs, hp, undefined, data.color);
-    b.maxHp = hp;
+    const b = new data.class(pos[0], pos[1], Math.cos(theta) * speed, Math.sin(theta) * speed, ...spinArgs, data.hp, undefined, data.color);
+    b.maxHp = data.hp;
     return b;
 }
 

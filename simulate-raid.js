@@ -43,7 +43,7 @@ const { createFFABall } = require('./ffa-config.js');
 
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 30000;
-const MATCHES = 500;
+const MATCHES = 1000;
 
 // Returns true if the boss won, false if raiders won (a raider survived), 'timeout' if neither died out.
 function simulate(bossIndex) {
@@ -99,7 +99,7 @@ if (!isMainThread) {
     const outliers = [];
 
     for (let i = 0; i < count; i++) {
-        if (bossIndex != 4) break;
+        if (bossIndex != 1) break;
 
         const { outcome, seed } = simulate(bossIndex);
         if (outcome === 'boss') bossWins++;
@@ -108,7 +108,8 @@ if (!isMainThread) {
     }
     parentPort.postMessage({ type: 'done', bossWins, raiderWins, timeouts, count, outliers });
 } else {
-    const NUM_WORKERS = os.cpus().length;
+    // const NUM_WORKERS = os.cpus().length;
+    const NUM_WORKERS = 3;
 
     async function runBossMatches(bossIndex) {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);

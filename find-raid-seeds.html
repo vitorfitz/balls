@@ -19,8 +19,7 @@
     <h3>Raid Dramatic Seed Finder</h3>
     <div>
         <label>Seeds per boss: <input type="number" id="matches" value="200"></label>
-        <label>Boss HP Threshold: <input type="number" id="bossHp" value="25" step="1"></label>
-        <label>Raider Winner HP % Threshold: <input type="number" id="hpPct" value="10" step="1"></label>
+        <label>Boss HP Threshold %: <input type="number" id="bossHp" value="4" step="1"></label>
         <button id="start">Start</button>
         <br><br>
         <label>Debug seed: <input type="number" id="debugSeed" value="0"></label>
@@ -47,12 +46,11 @@
             const output = document.getElementById('output');
             const matches = +document.getElementById('matches').value;
             const bossHpThreshold = +document.getElementById('bossHp').value;
-            const hpPctThreshold = +document.getElementById('hpPct').value / 100;
 
             output.textContent = 'Running in worker...\n';
 
             const worker = new Worker('find-raid-seeds-worker.js');
-            worker.postMessage({ matches, bossHpThreshold, hpPctThreshold });
+            worker.postMessage({ matches, bossHpThreshold });
             worker.onmessage = (e) => {
                 if (e.data.progress) {
                     output.textContent = 'Running in worker...\n' + e.data.progress;

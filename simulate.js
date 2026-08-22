@@ -84,7 +84,7 @@ if (!isMainThread) {
     parentPort.postMessage({ w1, w2, draws });
 } else {
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 5;
+    // const NUM_WORKERS = 3;
 
     async function runMatchup(t1Idx, t2Idx) {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
@@ -113,7 +113,7 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                // if (i != 8 && j != 8) continue;
+                // if (i != 1 && j != 1) continue;
                 if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;

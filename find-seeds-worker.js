@@ -133,14 +133,14 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            if (i != 3 || j != 6) continue;
+            if (i != 0 || (j != 8 && j != 6)) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             // if (!(key in DRAMATIC_SEEDS)) continue;
             const results = [];
 
-            let m = key == "Duplicator_Mirror" ? 0.1 :
+            let m = key == "Duplicator_Mirror" ? 0.25 :
                 key == "Duplicator_Grimoire" ? 0.5 :
                     key == "Mirror_Hammer" ? 4 :
                         i == 10 || j == 10 ? 2 :
@@ -167,7 +167,8 @@ onmessage = (e) => {
 
                 const winnerIsDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
-                const winnerIsMirror = BALL_TYPES[winnerIdx].name === 'Mirror';
+                const loserIsMirror = BALL_TYPES[loserIdx].name === 'Mirror';
+                const loserIsGrim = BALL_TYPES[loserIdx].name === 'Grimoire';
                 const loserIsHammer = BALL_TYPES[loserIdx].name === 'Hammer';
 
                 const isDupBeatsWrench = winnerIsDupe && BALL_TYPES[loserIdx].name === 'Wrench';
@@ -188,7 +189,7 @@ onmessage = (e) => {
                         isWrenchBeatsDupe ? 10 :
                             isGrimVsClub ? 25 :
                                 (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
-                                    (loserIsDupe || (winnerIsDupe && winnerIsMirror)) ? 5 :
+                                    (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
                                         threshold;
                 if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
                 return (r.hp <= effectiveThreshold || (winnerIsDupe && r.dupeNearDeath))

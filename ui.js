@@ -1,7 +1,7 @@
 "use strict"
 
 const seedOverride = null;
-// const seedOverride = 65; // DUPE VS SWORD
+// const seedOverride = 374; // DUPE VS GRIMOIRE
 const dramaticCheck = document.getElementById("dramatic-check");
 
 const menuDiv = document.getElementById("menu");
@@ -139,24 +139,23 @@ for (let i = 0; i < modeBtns.length; i++) {
     });
 }
 
-function makeBall(i, pos, rng, speed = 5, hpOverride = null) {
+function makeBall(i, pos, rng, speed = 5) {
     const data = ballClasses[i];
     const spinArgs = data.weapon?.spin ? [
         pos[0] < 200 ? 0 : Math.PI,
         pos[0] < 200 ? 1 : -1,
     ] : [];
     const theta = rng() * 2 * Math.PI;
-    const ballHp = hpOverride ?? data.hp;
     const b = new data.class(
         pos[0], pos[1],
         Math.cos(theta) * speed,
         Math.sin(theta) * speed,
         ...spinArgs,
-        ballHp,
+        data.hp,
         undefined,
         data.color
     );
-    b.maxHp = ballHp;
+    b.maxHp = data.hp;
     return b;
 }
 

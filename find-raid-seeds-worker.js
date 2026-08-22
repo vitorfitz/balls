@@ -17,35 +17,27 @@ function simulate(bossIndex, seed) {
     battle.canvas = { width: size, height: size, style: {} };
     t = 0;
 
-    const bossMaxHp = result.boss.maxHp;
-    const raiderMaxHpTotal = battle.balls
-        .filter(b => b.team === raidTeam && !b.owner)
-        .reduce((sum, b) => sum + b.maxHp, 0);
-
     for (let i = 0; i < MAX_TICKS; i++) {
         t++;
         battle.updateTimeScale();
         battle.update();
 
         const boss = battle.balls.find(b => b.id === bossId);
-        const raidersHp = battle.balls
-            .filter(b => b.team === raidTeam && !b.owner)
-            .reduce((sum, b) => sum + b.hp + (b instanceof MirrorBall ? 50 : 0), 0);
+        const raiders = battle.balls.filter(b => b.team === raidTeam && !b.owner);
+        let raidersHp = raiders.reduce((sum, b) => sum + b.hp, 0);
+        if (raiders.length == 1 && raiders[0] instanceof MirrorBall) raidersHp *= 5;
 
         const bossHp = boss ? boss.hp : 0;
-        const raidersPct = raidersHp / raiderMaxHpTotal;
 
         const bossAlive = !!boss;
         const raidersAlive = battle.balls.some(b => b.team === raidTeam && !b.owner);
 
         if (!bossAlive || !raidersAlive) {
             const winner = bossAlive ? 'boss' : 'raiders';
-            const winnerHp = bossAlive ? bossHp : raidersHp;
-            const winnerHpPct = bossAlive ? bossHp / bossMaxHp : raidersPct;
+            const winnerHp = bossAlive ? bossHp / boss.maxHp : raidersHp;
             return {
                 winner,
                 winnerHp,
-                winnerHpPct,
                 ticks: t,
             };
         }
@@ -54,7 +46,8 @@ function simulate(bossIndex, seed) {
 }
 
 onmessage = (e) => {
-    const { matches, bossHpThreshold, hpPctThreshold, debugSeed, debugBoss } = e.data;
+    const { matches, bossHpThreshold: bossHpThresholdPct, debugSeed, debugBoss } = e.data;
+    const bossHpThreshold = bossHpThresholdPct / 100;
 
     if (debugSeed !== undefined) {
         const bossIndex = ballClasses.findIndex(b => b.name === debugBoss);
@@ -76,12 +69,25 @@ onmessage = (e) => {
             if (r.winner !== 'draw') results.push({ seed, ...r });
         }
 
-        const seeds = results.filter(r =>
-            r.winner === 'boss' ? r.winnerHp <= bossHpThreshold : r.winnerHpPct <= hpPctThreshold
-        ).map(r => r.seed);
+        const bossWinSeeds = results
+            .filter(r => r.winner === 'boss' && r.winnerHp <= bossHpThreshold)
+            .map(r => r.seed);
+
+        // Raider HP threshold is dynamic: pick however many raider-win seeds
+        // (sorted most-dramatic-first, i.e. lowest surviving raider HP) are
+        // needed to roughly match the boss-win dramatic count, so overall
+        // the pool ends up ~50/50 boss vs raider wins regardless of how
+        // lopsided a given matchup naturally is.
+        const raiderWinSeeds = results
+            .filter(r => r.winner === 'raiders')
+            .sort((a, b) => a.winnerHp - b.winnerHp)
+            .slice(0, bossWinSeeds.length)
+            .map(r => r.seed);
+
+        const seeds = [...bossWinSeeds, ...raiderWinSeeds].sort((a, b) => a - b);
 
         raidDramaticSeeds[bossName] = seeds;
-        progress += `${bossName}: [${seeds.join(', ')}]\n`;
+        progress += `${bossName}: [${seeds.join(', ')}] (boss: ${bossWinSeeds.length}, raiders: ${raiderWinSeeds.length})\n`;
         postMessage({ progress });
     }
 
