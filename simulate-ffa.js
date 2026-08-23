@@ -77,7 +77,7 @@ function simulate() {
 
         let outOfBoundsCount = 0;
         for (const b of battle.balls) {
-            if (!battle.isInBounds(b.x, b.y, b.radius - 1)) outOfBoundsCount++;
+            if (!battle.inArenaBounds(b.x, b.y, b.radius - 1)) outOfBoundsCount++;
         }
         if (outOfBoundsCount > 0) {
             consecutiveOOB = (consecutiveOOB || 0) + 1;

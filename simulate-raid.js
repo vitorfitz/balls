@@ -77,7 +77,7 @@ function simulate(bossIndex) {
 
         let outOfBoundsCount = 0;
         for (const b of battle.balls) {
-            if (!battle.inBounds(b.x, b.y, b.radius - 1)) outOfBoundsCount++;
+            if (!battle.inRectBounds(b.x, b.y, b.radius - 1)) outOfBoundsCount++;
         }
         if (outOfBoundsCount > 0) {
             consecutiveOOB = (consecutiveOOB || 0) + 1;

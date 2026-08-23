@@ -39,7 +39,7 @@ function createFFABattle(ballClasses, seed, createBallFn, BallBattle) {
     };
 
     const armStart = (size - armWidth) / 2, armEnd = (size + armWidth) / 2;
-    battle.isInBounds = (x, y, r) => plusArenaInBoundsFromWalls(x, y, r, battle.walls, battle.corners);
+    battle.inArenaBounds = (x, y, r) => plusArenainRectBoundsFromWalls(x, y, r, battle.walls, battle.corners);
 
     return { battle, combatants, armStart, armEnd };
 }

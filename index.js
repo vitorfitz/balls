@@ -609,7 +609,7 @@ function createBorderWalls(width, height) {
     ];
 }
 
-function plusArenaInBoundsFromWalls(x, y, r, walls, corners) {
+function plusArenainRectBoundsFromWalls(x, y, r, walls, corners) {
     for (let i = 0; i < walls.length; i++) {
         const w = walls[i];
         const along = w.axis === VERTICAL ? y : x;
@@ -1230,7 +1230,7 @@ function rectHitsRect(ax1, ay1, ax2, ay2, aHalfWidth, bx1, by1, bx2, by2, bHalfW
 // null if none found. `avoidCircles` is an array of {x, y, radius}.
 function findLegalTurretSpawn(battle, x, y, radius, avoidCircles = [], ringStep = 1, maxRings = 33) {
     const isLegal = (px, py) => {
-        if (!battle.inBounds(px, py, radius)) return false;
+        if (battle.inArenaBounds ? !battle.inArenaBounds(px, py, radius) : !battle.inRectBounds(px, py, radius)) return false;
         for (const body of battle.bodies) {
             if (body instanceof Turret && Math.hypot(body.x - px, body.y - py) < radius * 2) return false;
         }
@@ -2110,7 +2110,7 @@ class BallBattle {
                 return w;
             });
             this.corners = [];
-            this.isInBounds = (x, y, r) => x >= offset + r && x <= offset + size - r
+            this.inArenaBounds = (x, y, r) => x >= offset + r && x <= offset + size - r
                 && y >= offset + r && y <= offset + size - r;
 
             if (atTarget) {
@@ -2148,7 +2148,7 @@ class BallBattle {
         });
         this.corners = plusArenaCorners(size, armWidth, curHoleSize, offset);
 
-        this.isInBounds = (x, y, r) => plusArenaInBoundsFromWalls(x, y, r, this.walls, this.corners);
+        this.inArenaBounds = (x, y, r) => plusArenainRectBoundsFromWalls(x, y, r, this.walls, this.corners);
 
         if (atTarget) {
             for (const b of this.bodies) {
@@ -2163,7 +2163,7 @@ class BallBattle {
         const as = offset + (size - armWidth) / 2, ae = offset + (size + armWidth) / 2;
         const hs = offset + (size - curHoleSize) / 2, he = offset + (size + curHoleSize) / 2;
 
-        this.isInBounds = (x, y, r) => plusArenaInBoundsFromWalls(x, y, r, this.walls, this.corners);
+        this.inArenaBounds = (x, y, r) => plusArenainRectBoundsFromWalls(x, y, r, this.walls, this.corners);
 
         this.drawArena = (ctx) => {
             ctx.fillStyle = "#fff";
@@ -2182,7 +2182,7 @@ class BallBattle {
         };
 
         // Remove turrets outside play area
-        // this.bodies = this.bodies.filter(b => !(b instanceof Turret) || this.isInBounds(b.x, b.y, -b.radius));
+        // this.bodies = this.bodies.filter(b => !(b instanceof Turret) || this.inArenaBounds(b.x, b.y, -b.radius));
 
     }
 
@@ -2313,13 +2313,13 @@ class BallBattle {
         });
     }
 
-    inBounds(x, y, radius) {
+    inRectBounds(x, y, radius) {
         return x >= radius && x <= this.width - radius
             && y >= radius && y <= this.height - radius;
     }
 
     isInsideWall(x, y, radius) {
-        if (this.isInBounds) return !this.isInBounds(x, y, radius);
+        if (this.inArenaBounds) return !this.inArenaBounds(x, y, radius);
         for (const wall of this.walls) {
             const along = wall.axis === VERTICAL ? y : x;
             if (along < wall.min || along > wall.max) continue;
@@ -2714,7 +2714,7 @@ class MachineGunBall extends Ball {
             const spawnY = ballY + sinTheta * (spawnRadius + speed * lateness);
 
             const scaledRadius = bulletRadius * scale;
-            if (this.battle.inBounds(spawnX, spawnY, scaledRadius) && !this.battle.isInsideWall(spawnX, spawnY, scaledRadius)) {
+            if (!this.battle.isInsideWall(spawnX, spawnY, scaledRadius)) {
                 const bullet = new MGBullet(
                     spawnX,
                     spawnY,
@@ -3267,7 +3267,7 @@ class GrimoireBall extends Ball {
             if (this.summonCooldown > EPS) return;
 
             const minion = this.createMinion(target, reflector);
-            if (minion && this.battle.inBounds(minion.x, minion.y, minion.radius)) {
+            if (minion && this.battle.inRectBounds(minion.x, minion.y, minion.radius)) {
                 minion.inert = true;
                 this.battle.addBall(minion);
                 this.summonCooldown = this.battle.mode == FFA && this.owner ? 50 : 0;
