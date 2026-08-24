@@ -108,8 +108,8 @@ if (!isMainThread) {
     }
     parentPort.postMessage({ type: 'done', bossWins, raiderWins, timeouts, count, outliers });
 } else {
-    // const NUM_WORKERS = os.cpus().length;
-    const NUM_WORKERS = 3;
+    const NUM_WORKERS = os.cpus().length;
+    // const NUM_WORKERS = 3;
 
     async function runBossMatches(bossIndex) {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
