@@ -25,7 +25,7 @@ function simulate(bossIndex, seed) {
         const boss = battle.balls.find(b => b.id === bossId);
         const raiders = battle.balls.filter(b => b.team === raidTeam && !b.owner);
         let raidersHp = raiders.reduce((sum, b) => sum + b.hp, 0);
-        if (raiders.length == 1 && raiders[0] instanceof MirrorBall) raidersHp *= 5;
+        if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
 
         const bossHp = boss ? boss.hp : 0;
 
@@ -60,6 +60,8 @@ onmessage = (e) => {
     let progress = '';
 
     for (let bi = 0; bi < BOSS_TYPES.length; bi++) {
+        // if (bi != 6 && bi != 9) continue;
+
         const bossName = BOSS_TYPES[bi].name;
         const bossIndex = ballClasses.indexOf(BOSS_TYPES[bi]);
         const results = [];
