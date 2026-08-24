@@ -1,6 +1,6 @@
 "use strict"
 
-const seedOverride = 43;
+const seedOverride = null;
 // const seedOverride = 374; // DUPE VS GRIMOIRE
 const dramaticCheck = document.getElementById("dramatic-check");
 
