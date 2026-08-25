@@ -729,6 +729,14 @@ function timeToCollision(b1, b2, dt, r1Override = null, r2Override = null) {
     if (b1 instanceof Bullet && b1.prevHitCredit == null && b2.team === b1.owner.team) return Infinity;
     if (b2 instanceof Bullet && b2.prevHitCredit == null && b1.team === b2.owner.team) return Infinity;
 
+    // Adjacent snake chain links (head<->first segment, segment<->next segment) are
+    // held at a fixed distance by the chain-link constraint in update(), not by
+    // physical collision. Letting the generic ball-ball collision response also
+    // fire between them would fight the constraint and inject extra energy every
+    // tick they're at/near restDist (which is ~always, by design).
+    if (b1 instanceof SnakeSegment && b1.leader === b2) return Infinity;
+    if (b2 instanceof SnakeSegment && b2.leader === b1) return Infinity;
+
     // const isDebug = t >= 5900 && t <= 5950 && ((b1 instanceof GrimoireBall && b2 instanceof GrowerBall) || (b1 instanceof GrowerBall && b2 instanceof GrimoireBall));
 
     const r1 = r1Override ?? b1.radius;
@@ -2212,209 +2220,235 @@ class BallBattle {
         for (const b of this.balls) {
             b.hitsThisFrame = 0;
         }
-        this.updatePhysics();
-
-        // Apply grows deferred from collision handling
-        for (const b of this.bodies) {
-            if (b._pendingGrow) {
-                b._pendingGrow.grower.applyGrow(b);
-            }
-        }
-
-        this.bodies.sort((a, b) => a.id - b.id);
-        this.bodies.forEach((b) => b.onUpdate(b.getTimeScale()));
-        this.updateWeapons();
-
-        // Apply deferred stuns from Club
-        for (const b of this.balls) {
-            if (b._pendingStun) {
-                const sd = b._pendingStun;
-                const stunBall = (b2) => {
-                    if (b2.isStunned()) return;
-                    b2._savedVx = b2.vx;
-                    b2._savedVy = b2.vy;
-                    b2._savedMass = b2.mass;
-                    b2._savedGravity = b2.gravity;
-                    b2.vx = 0;
-                    b2.vy = 0;
-                    b2.mass = Infinity;
-                    b2.gravity = false;
-                    if (b2 instanceof MirrorBall) {
-                        b2._cantHitBall = {};
-                        b2._cantReflect = {};
-                    }
-                    if (b2 instanceof LanceBall) {
-                        b2.combo = 0;
-                        b2.dist = 0;
-                        b2.hit = 0;
-                        b2.damageThisTick = -1;
-                        b2.comboHits = new Set();
-                    }
-                    for (const other of this.balls) {
-                        if (other.owner === b2) stunBall(other);
-                    }
-                };
-                stunBall(b);
-                b.stunTime = sd;
-                b._pendingStun = null;
-            }
-        }
-
-        // Repel overlapping stationary bodies (turrets and stunned balls)
-        for (const a of this.bodies) {
-            if (!(a instanceof Turret) && !(a.isStunned && a.isStunned())) continue;
-            for (const b of this.bodies) {
-                if (b === a || (!b.wallBoundX && !b.wallBoundY && !a.wallBoundX && !a.wallBoundY)) continue;
-                if (!(b instanceof Turret) && !(b.isStunned && b.isStunned())) continue;
-                const dx = a.x - b.x, dy = a.y - b.y;
-                const dist = Math.hypot(dx, dy);
-                const minDist = a.radius + b.radius;
-                if (dist < minDist && dist > EPS) {
-                    const overlap = minDist - dist;
-                    const nx = dx / dist, ny = dy / dist;
-                    const speedBefore = a.vx * a.vx + a.vy * a.vy;
-                    a.vx += nx * overlap / 2;
-                    a.vy += ny * overlap / 2;
-                    const speedAfter = a.vx * a.vx + a.vy * a.vy;
-                    if (a instanceof Turret) a.overlapBoost += Math.max(0, 0.5 * (speedAfter - speedBefore));
-                }
-            }
-        }
 
         for (const b of this.balls) {
             if (!(b instanceof SnakeBall) || b.segments.length === 0) continue;
             const chain = [b, ...b.segments];
 
-            for (let iter = 0; iter < 2; iter++) {
-                for (let i = 0; i < chain.length - 1; i++) {
-                    const a = chain[i], c = chain[i + 1];
-                    if (c.dormant) continue; // stays pinned exactly at spawn until activated
-                    const dx = c.x - a.x, dy = c.y - a.y;
-                    const dist = Math.hypot(dx, dy) || EPS;
-                    const restDist = (a.radius + c.radius) * snakeSegSpacing;
-                    const diff = (dist - restDist) / dist;
+            for (let i = 0; i < chain.length - 1; i++) {
+                const a = chain[i], c = chain[i + 1];
+                if (c.dormant) continue; // stays pinned exactly at spawn until activated
+                const dx = c.x - a.x, dy = c.y - a.y;
+                const dist = Math.hypot(dx, dy) || EPS;
+                const restDist = (a.radius + c.radius) * snakeSegSpacing;
+                const nx = dx / dist, ny = dy / dist;
+                const err = dist - restDist;
 
-                    const invA = 1 / a.mass, invC = 1 / c.mass;
-                    const wA = invA / (invA + invC), wC = invC / (invA + invC);
-                    a.x += dx * diff * wA; a.y += dy * diff * wA;
-                    c.x -= dx * diff * wC; c.y -= dy * diff * wC;
-                }
+                const invA = 1 / a.mass, invC = 1 / c.mass;
+                const wA = invA / (invA + invC), wC = invC / (invA + invC);
+
+                // Damped spring instead of a raw position-error-to-velocity conversion.
+                // A pure "impulse = k * error" term (what we had before) is an undamped
+                // spring: since it's applied every tick with no term opposing the
+                // resulting relative motion, tiny errors ring and the oscillation
+                // amplitude grows tick over tick instead of settling. Adding a damping
+                // term proportional to the closing/separating speed along the link
+                // (relVel) bleeds that energy off instead of letting it compound, the
+                // same way a real damped spring/rope constraint behaves.
+                const relVelAlongN = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
+                const stiffness = 0.15;
+                const damping = 0.5;
+                let impulse = stiffness * err + damping * relVelAlongN;
+
+                // Clamp so a badly displaced pair (e.g. right after activation) can't inject
+                // an extreme velocity in one tick; corrects gradually instead over a few ticks.
+                const maxImpulse = 0.25 * restDist;
+                impulse = Math.max(-maxImpulse, Math.min(maxImpulse, impulse));
+
+                const sA = a.getTimeScale(), sC = c.getTimeScale();
+                a.vx += (impulse * wA * nx) / sA; a.vy += (impulse * wA * ny) / sA;
+                c.vx -= (impulse * wC * nx) / sC; c.vy -= (impulse * wC * ny) / sC;
             }
         }
 
-        if (this.targetTimeScale > 1 && this.balls.some(b => b.hitsThisFrame > 0)) {
-            this.baseTimeScale = 1;
-        }
+        const sA = a.getTimeScale(), sC = c.getTimeScale();
+        a.vx += caX / sA; a.vy += caY / sA;
+        c.vx += ccX / sC; c.vy += ccY / sC;
+    }
+}
 
-        for (let i = this.dots.length - 1; i >= 0; i--) {
-            this.dots[i].onUpdate(this.dots[i].getTimeScale());
-        }
-        this.dots = this.dots.filter((d) => d.hp > 0);
+this.updatePhysics();
 
-        this.processDeaths();
+// Apply grows deferred from collision handling
+for (const b of this.bodies) {
+    if (b._pendingGrow) {
+        b._pendingGrow.grower.applyGrow(b);
+    }
+}
 
-        for (const b of this.balls) {
-            if (this.mode == DUEL) {
-                b._hitHistoryAccum = (b._hitHistoryAccum || 0) + 1 / this.timeScale;
-                while (b._hitHistoryAccum >= 1) {
-                    b._hitHistoryAccum -= 1;
-                    b.hitIndex = (b.hitIndex + 1) % hitHistorySize;
-                    b.hitHistory[b.hitIndex] = b.hitsThisFrame;
-                    b.hitsThisFrame = 0;
-                }
-            } else {
-                b.hitIndex = (b.hitIndex + 1) % hitHistorySize;
-                b.hitHistory[b.hitIndex] = b.hitsThisFrame;
+this.bodies.sort((a, b) => a.id - b.id);
+this.bodies.forEach((b) => b.onUpdate(b.getTimeScale()));
+this.updateWeapons();
+
+// Apply deferred stuns from Club
+for (const b of this.balls) {
+    if (b._pendingStun) {
+        const sd = b._pendingStun;
+        const stunBall = (b2) => {
+            if (b2.isStunned()) return;
+            b2._savedVx = b2.vx;
+            b2._savedVy = b2.vy;
+            b2._savedMass = b2.mass;
+            b2._savedGravity = b2.gravity;
+            b2.vx = 0;
+            b2.vy = 0;
+            b2.mass = Infinity;
+            b2.gravity = false;
+            if (b2 instanceof MirrorBall) {
+                b2._cantHitBall = {};
+                b2._cantReflect = {};
             }
+            if (b2 instanceof LanceBall) {
+                b2.combo = 0;
+                b2.dist = 0;
+                b2.hit = 0;
+                b2.damageThisTick = -1;
+                b2.comboHits = new Set();
+            }
+            for (const other of this.balls) {
+                if (other.owner === b2) stunBall(other);
+            }
+        };
+        stunBall(b);
+        b.stunTime = sd;
+        b._pendingStun = null;
+    }
+}
+
+// Repel overlapping stationary bodies (turrets and stunned balls)
+for (const a of this.bodies) {
+    if (!(a instanceof Turret) && !(a.isStunned && a.isStunned())) continue;
+    for (const b of this.bodies) {
+        if (b === a || (!b.wallBoundX && !b.wallBoundY && !a.wallBoundX && !a.wallBoundY)) continue;
+        if (!(b instanceof Turret) && !(b.isStunned && b.isStunned())) continue;
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const dist = Math.hypot(dx, dy);
+        const minDist = a.radius + b.radius;
+        if (dist < minDist && dist > EPS) {
+            const overlap = minDist - dist;
+            const nx = dx / dist, ny = dy / dist;
+            const speedBefore = a.vx * a.vx + a.vy * a.vy;
+            a.vx += nx * overlap / 2;
+            a.vy += ny * overlap / 2;
+            const speedAfter = a.vx * a.vx + a.vy * a.vy;
+            if (a instanceof Turret) a.overlapBoost += Math.max(0, 0.5 * (speedAfter - speedBefore));
         }
-
-        this.teamCount = {};
-        this.balls.forEach((b) => {
-            this.teamCount[b.team] = (this.teamCount[b.team] ?? 0) + 1
-        });
     }
+}
 
-    inRectBounds(x, y, radius) {
-        return x >= radius && x <= this.width - radius
-            && y >= radius && y <= this.height - radius;
-    }
+if (this.targetTimeScale > 1 && this.balls.some(b => b.hitsThisFrame > 0)) {
+    this.baseTimeScale = 1;
+}
 
-    isInsideWall(x, y, radius) {
-        if (this.inArenaBounds) return !this.inArenaBounds(x, y, radius);
-        for (const wall of this.walls) {
-            const along = wall.axis === VERTICAL ? y : x;
-            if (along < wall.min || along > wall.max) continue;
-            const perp = wall.axis === VERTICAL ? x : y;
-            const dist = (perp - wall.pos) * wall.normal;
-            if (dist < radius) return true;
+for (let i = this.dots.length - 1; i >= 0; i--) {
+    this.dots[i].onUpdate(this.dots[i].getTimeScale());
+}
+this.dots = this.dots.filter((d) => d.hp > 0);
+
+this.processDeaths();
+
+for (const b of this.balls) {
+    if (this.mode == DUEL) {
+        b._hitHistoryAccum = (b._hitHistoryAccum || 0) + 1 / this.timeScale;
+        while (b._hitHistoryAccum >= 1) {
+            b._hitHistoryAccum -= 1;
+            b.hitIndex = (b.hitIndex + 1) % hitHistorySize;
+            b.hitHistory[b.hitIndex] = b.hitsThisFrame;
+            b.hitsThisFrame = 0;
         }
-        return false;
+    } else {
+        b.hitIndex = (b.hitIndex + 1) % hitHistorySize;
+        b.hitHistory[b.hitIndex] = b.hitsThisFrame;
     }
+}
+
+this.teamCount = {};
+this.balls.forEach((b) => {
+    this.teamCount[b.team] = (this.teamCount[b.team] ?? 0) + 1
+});
+    }
+
+inRectBounds(x, y, radius) {
+    return x >= radius && x <= this.width - radius
+        && y >= radius && y <= this.height - radius;
+}
+
+isInsideWall(x, y, radius) {
+    if (this.inArenaBounds) return !this.inArenaBounds(x, y, radius);
+    for (const wall of this.walls) {
+        const along = wall.axis === VERTICAL ? y : x;
+        if (along < wall.min || along > wall.max) continue;
+        const perp = wall.axis === VERTICAL ? x : y;
+        const dist = (perp - wall.pos) * wall.normal;
+        if (dist < radius) return true;
+    }
+    return false;
+}
 
     async run(dt) {
-        // while (t < 700) {
-        //     t++
-        //     this.updateTimeScale();
-        //     this.update();
-        // }
+    // while (t < 700) {
+    //     t++
+    //     this.updateTimeScale();
+    //     this.update();
+    // }
 
-        const loop = async (currentTime) => {
-            if (this.lastTime !== null) {
-                this.accumulator += (currentTime - this.lastTime) * this.timeScale;
-                this.accumulator = Math.min(this.accumulator, dt * 100);
+    const loop = async (currentTime) => {
+        if (this.lastTime !== null) {
+            this.accumulator += (currentTime - this.lastTime) * this.timeScale;
+            this.accumulator = Math.min(this.accumulator, dt * 100);
 
-                while (this.accumulator >= dt) {
-                    t++;
-                    // Store previous positions before update
-                    for (const b of this.bodies) {
-                        b._segments = [{ x: b.x, y: b.y, f: 0 }];
-                        if (b.theta !== undefined) b._prevTheta = b.theta;
-                    }
-                    for (const b of this.balls) {
-                        for (const w of b.weapons) {
-                            w._prevTheta = w.theta;
-                            w._thetaSegments = w.angVel ? [{ theta: w.theta, f: 0 }] : undefined;
-                        }
-                    }
-
-                    if (this.mode != DUEL) this.updateTimeScale();
-                    this.update();
-                    this.accumulator -= dt;
+            while (this.accumulator >= dt) {
+                t++;
+                // Store previous positions before update
+                for (const b of this.bodies) {
+                    b._segments = [{ x: b.x, y: b.y, f: 0 }];
+                    if (b.theta !== undefined) b._prevTheta = b.theta;
                 }
-            }
-
-            await Promise.all(
-                Object.entries(spriteReqs).map(
-                    async ([spriteName, weapons]) => {
-                        const img = await loadImage(spriteName);
-                        for (const weapon of weapons) {
-                            if (!weapon.sprite) weapon.sprite = img;
-                        }
+                for (const b of this.balls) {
+                    for (const w of b.weapons) {
+                        w._prevTheta = w.theta;
+                        w._thetaSegments = w.angVel ? [{ theta: w.theta, f: 0 }] : undefined;
                     }
-                )
-            );
-            spriteReqs = {};
-
-            this.timeScaleAccum += currentTime - this.lastTime;
-            this.lastTime = currentTime;
-            if (this.mode == DUEL) {
-                while (this.timeScaleAccum >= dt) {
-                    this.updateTimeScale();
-                    this.timeScaleAccum -= dt;
                 }
+
+                if (this.mode != DUEL) this.updateTimeScale();
+                this.update();
+                this.accumulator -= dt;
             }
-            // Interpolate for smooth rendering
-            this.renderAlpha = this.accumulator / dt;
-            this.render();
-            if (!this.stopped) requestAnimationFrame(loop);
-        };
+        }
 
-        requestAnimationFrame(loop);
-    }
+        await Promise.all(
+            Object.entries(spriteReqs).map(
+                async ([spriteName, weapons]) => {
+                    const img = await loadImage(spriteName);
+                    for (const weapon of weapons) {
+                        if (!weapon.sprite) weapon.sprite = img;
+                    }
+                }
+            )
+        );
+        spriteReqs = {};
 
-    stop() {
-        this.stopped = true;
-    }
+        this.timeScaleAccum += currentTime - this.lastTime;
+        this.lastTime = currentTime;
+        if (this.mode == DUEL) {
+            while (this.timeScaleAccum >= dt) {
+                this.updateTimeScale();
+                this.timeScaleAccum -= dt;
+            }
+        }
+        // Interpolate for smooth rendering
+        this.renderAlpha = this.accumulator / dt;
+        this.render();
+        if (!this.stopped) requestAnimationFrame(loop);
+    };
+
+    requestAnimationFrame(loop);
+}
+
+stop() {
+    this.stopped = true;
+}
 }
 
 function propsToList(propsMap) {
