@@ -2225,6 +2225,11 @@ class BallBattle {
             if (!(b instanceof SnakeBall) || b.segments.length === 0) continue;
             const chain = [b, ...b.segments];
 
+            let keBefore = 0;
+            for (const body of chain) {
+                keBefore += 0.5 * body.mass * (body.vx * body.vx + body.vy * body.vy);
+            }
+
             for (let i = 0; i < chain.length - 1; i++) {
                 const a = chain[i], c = chain[i + 1];
                 if (c.dormant) continue; // stays pinned exactly at spawn until activated
@@ -2236,13 +2241,6 @@ class BallBattle {
                 const invA = 1 / a.mass, invC = 1 / c.mass;
                 const wA = invA / (invA + invC), wC = invC / (invA + invC);
 
-                // Mass-weighted position error, same split as before, but expressed as a
-                // velocity correction applied *before* updatePhysics() runs instead of a
-                // direct position edit applied after it. This lets the existing
-                // continuous-collision-detection loop in updatePhysics() see and resolve
-                // this motion like any other velocity-driven movement (walls, other balls,
-                // non-adjacent segments), instead of silently teleporting segments through
-                // whatever's in the way.
                 const errA_x = dx * diff * wA, errA_y = dy * diff * wA;
                 const errC_x = dx * diff * wC, errC_y = dy * diff * wC;
 
@@ -2261,6 +2259,18 @@ class BallBattle {
                 const sA = a.getTimeScale(), sC = c.getTimeScale();
                 a.vx += caX / sA; a.vy += caY / sA;
                 c.vx += ccX / sC; c.vy += ccY / sC;
+            }
+
+            let keAfter = 0;
+            for (const body of chain) {
+                keAfter += 0.5 * body.mass * (body.vx * body.vx + body.vy * body.vy);
+            }
+            if (keAfter > EPS) {
+                const scale = Math.sqrt(keBefore / keAfter);
+                for (const body of chain) {
+                    body.vx *= scale;
+                    body.vy *= scale;
+                }
             }
         }
 
