@@ -2281,6 +2281,27 @@ class BallBattle {
             }
         }
 
+        for (const b of this.balls) {
+            if (!(b instanceof SnakeBall) || b.segments.length === 0) continue;
+            const chain = [b, ...b.segments];
+
+            for (let iter = 0; iter < 2; iter++) {
+                for (let i = 0; i < chain.length - 1; i++) {
+                    const a = chain[i], c = chain[i + 1];
+                    if (c.dormant) continue; // stays pinned exactly at spawn until activated
+                    const dx = c.x - a.x, dy = c.y - a.y;
+                    const dist = Math.hypot(dx, dy) || EPS;
+                    const restDist = (a.radius + c.radius) * snakeSegSpacing;
+                    const diff = (dist - restDist) / dist;
+
+                    const invA = 1 / a.mass, invC = 1 / c.mass;
+                    const wA = invA / (invA + invC), wC = invC / (invA + invC);
+                    a.x += dx * diff * wA; a.y += dy * diff * wA;
+                    c.x -= dx * diff * wC; c.y -= dy * diff * wC;
+                }
+            }
+        }
+
         if (this.targetTimeScale > 1 && this.balls.some(b => b.hitsThisFrame > 0)) {
             this.baseTimeScale = 1;
         }
@@ -2331,7 +2352,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 1690) {
+        // while (t < 700) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -2796,13 +2817,7 @@ class Bullet extends CircleBody {
 
         if (b instanceof Ball /*&& this.lifetime >= 0.05 * this.maxLifetime*/) {
             // Credit goes to the last ball to fire/reflect this bullet that isn't
-            // on the victim's team. hitCredit is reassigned to any wielder whose
-            // parry weapon merely brushes the bullet (see reflect()), even when
-            // the bullet wasn't actually redirected at a new target, so it can
-            // end up same-team as the victim (e.g. two raiders sharing a team in
-            // raid mode). Fall back through prevHitCredit, then the original
-            // owner, which is always guaranteed off the victim's team by the
-            // spawn-time friendly-fire gate in timeToCollision().
+            // on the victim's team
             const hc = this.resolveHitCredit(b);
             // if (t >= 1290 && t <= 1300) {
             //     console.log(`[t=${t}] bullet handleCollision: hitting ${b.constructor.name}, hitCredit=${this.hitCredit.constructor.name}, prevHitCredit=${this.prevHitCredit?.constructor.name}, using hc=${hc.constructor.name}`);
@@ -3031,11 +3046,7 @@ class WrenchBall extends Ball {
             const owner = reflector || this;
             const refPos = reflector || this;
 
-            // Contact direction: use the wrench blade's actual point of contact
-            // (closest point on its collider segment to the target ball, or when
-            // reflected off a mirror, the point where the two weapons actually
-            // touched) rather than the ball-center-to-ball-center line, so the
-            // turret spawns near where the wrench tip actually touched.
+            // Contact direction: use the wrench blade's point of contact
             let nx, ny;
             if (!reflector) {
                 const seg = wrench.getHitSegment();
@@ -3057,9 +3068,7 @@ class WrenchBall extends Ball {
                 }
             }
 
-            // If reflected, spawn at the point of weapon contact (pushed outside
-            // the mirror's body along the mirror-to-contact direction); otherwise
-            // spawn on target
+            // If reflected, spawn at the point of weapon contact
             const tx = reflector
                 ? (contactPoint ? contactPoint.x - nx * turretRadius : refPos.x - nx * (refPos.radius + turretRadius))
                 : b.x + nx * (b.radius + turretRadius + 0.001);
@@ -3334,17 +3343,12 @@ class GrimoireBall extends Ball {
         for (let i = 0; i < target.weapons.length && i < minion.weapons.length; i++) {
             const tw = target.weapons[i], mw = minion.weapons[i];
             if (tw.dmg !== undefined) {
-                // Minions cloned from a raid boss (e.g. Sword) only inherit half
-                // of its damage boost above base (base dmg is 1).
                 mw.dmg = target.giga ? 1 + (tw.dmg - 1) / 2 : tw.dmg;
             }
             if (tw.angVel !== undefined) mw.angVel = Math.abs(tw.angVel) * Math.sign(mw.angVel || 1) * (target.angVelNerf ?? 1);
         }
         if (target instanceof MachineGunBall) {
             if (target.giga) {
-                // Minions cloned from a raid boss only inherit half of its boost
-                // above base damagePerRound (e.g. boss at 150 = 10 base + 140
-                // boost -> minion at 10 + 70 = 80).
                 const baseDamagePerRound = 10;
                 minion.damagePerRound = baseDamagePerRound + (target.damagePerRound - baseDamagePerRound) / 2;
                 minion.bulletsPerRound = Math.min(maxVolley, minion.damagePerRound);
@@ -3359,12 +3363,6 @@ class GrimoireBall extends Ball {
             const minionStartSpeed = target.giga ? this.startSpeed / speedDen : target.startSpeed / speedDen;
             minion.startSpeed = minionStartSpeed;
             if (target.giga) {
-                // Minions cloned from a raid boss only inherit half of its speed
-                // boosts. Recompute boostEnergy from scratch using the minion's
-                // own startSpeed and halved boosts count (rather than scaling the
-                // boss's boostEnergy directly), since boostEnergy is a function of
-                // both boosts and startSpeed, and the minion's startSpeed already
-                // differs from the boss's.
                 minion.boosts = target.boosts / 2;
                 const boostSpeed = boostPct * minionStartSpeed;
                 const boostedSpeed = minionStartSpeed + boostSpeed * minion.boosts;
@@ -3380,12 +3378,7 @@ class GrimoireBall extends Ball {
             minion.baseMass = (target.giga ? 900 : target.baseMass) * minionScale;
             minion.mass = minion.baseMass * minion.scale;
             minion.boostEnergy = target.boostEnergy == 0 || target.boostEnergy == null ? 0 : getTargetBoostEnergy(minion.scale);
-            // boostEnergy represents energy already embedded in the minion's current
-            // velocity (see applyElasticCollision's `unboosted()`), so assigning it here
-            // without adding the matching speed would make totalEnergy() double-subtract
-            // energy that was never added, understating the minion's real total as scale
-            // (and thus boostEnergy) grows. Add that speed now, mirroring how a live
-            // GrowerBall's own boostEnergy gain is folded into velocity in applyGrow().
+
             if (minion.boostEnergy > 0) {
                 const spd = Math.hypot(minion.vx, minion.vy);
                 const newSpd = Math.sqrt(spd * spd + 2 * minion.boostEnergy);
@@ -4133,6 +4126,100 @@ class DeathParticle {
     }
 }
 
+// Snake: gains a trailing segment (which also deals contact damage) each time
+// its head damages an enemy
+const snakeSegSpacing = 1; // rest distance between linked segments, as a fraction of their combined radii
+const snakeSegCooldown = 20;
+class SnakeSegment extends CircleBody {
+    constructor(x, y, owner, leader, radius) {
+        // Spawns coincident with its leader, stationary, and dormant (no gravity,
+        // no collision response) until the leader has pulled away far enough —
+        // see onUpdate(). This avoids ever needing to pick a spawn point, so it
+        // can never spawn out of bounds or overlapping something illegally.
+        super(x, y, 0, 0, 1, radius, radius * radius, false);
+        this.owner = owner;
+        this.leader = leader; // the body (head or previous segment) this one is linked to
+        this.dmgCooldown = {};
+        this.dormant = true;
+    }
+
+    onCollision(b) {
+        if (this.dormant) return;
+        if (!(b instanceof Ball) || b.team == this.owner.team) return;
+        if (this.dmgCooldown[b.id] > EPS) return;
+        this.dmgCooldown[b.id] = snakeSegCooldown;
+        b.damage(1, this.owner);
+        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this.owner, b], 1);
+    }
+
+    shouldBounce(other) { return !this.dormant && !(other instanceof Ball && other.isStunned()); }
+
+    getZIndex() {
+        return super.getZIndex() - (this.dormant ? 727 : 0);
+    }
+
+    draw() {
+        Ball.drawBall(this.battle.ctx, this._renderX ?? this.x, this._renderY ?? this.y, this.radius, this.owner.color);
+    }
+
+    onUpdate(dt) {
+        if (this.getRootOwner().hp <= 0) {
+            this.hp = 0;
+            return;
+        }
+
+        if (this.dormant) {
+            const dist = Math.hypot(this.leader.x - this.x, this.leader.y - this.y);
+            if (dist >= 2 * this.radius) {
+                this.dormant = false;
+                this.gravity = true;
+                this.vx = this.leader.vx;
+                this.vy = this.leader.vy;
+            }
+            return;
+        }
+
+        for (const id in this.dmgCooldown) {
+            this.dmgCooldown[id] -= dt;
+            if (this.dmgCooldown[id] <= EPS) delete this.dmgCooldown[id];
+        }
+    }
+}
+
+class SnakeBall extends Ball {
+    constructor(x, y, vx, vy, hp = 100, radius = 25, color = "#e0d030", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        this.segCooldown = 0;
+        this.segments = [];
+    }
+
+    handleCollision(b) {
+        if (b.team == this.team || !(b instanceof Ball)) return;
+        b.damage(1, this);
+        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this, b], 1);
+
+        if (this.segCooldown <= EPS) {
+            this.segCooldown = snakeSegCooldown;
+            const leader = this.segments.length ? this.segments[this.segments.length - 1] : this;
+            const segRadius = this.radius;
+            const seg = new SnakeSegment(leader.x, leader.y, this, leader, segRadius);
+            this.segments.push(seg);
+            this.battle.addBody(seg);
+        }
+    }
+
+    handleUpdate(dt) {
+        this.segCooldown -= dt;
+        this.segments = this.segments.filter(s => s.hp > 0);
+    }
+
+    getInfoEl() {
+        return this.propsToList({
+            "Segments": { text: this.segments.length, grad: { from: 0, to: 15 } },
+        });
+    }
+}
+
 const ballClasses = [
     { name: "Duplicator", class: DuplicatorBall, hp: 100, radius: 20, color: "#f86ffa" },
     { name: "Grower", class: GrowerBall, hp: 100, radius: 30, color: "#008a12" },
@@ -4145,6 +4232,7 @@ const ballClasses = [
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
     { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c88941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
     { name: "Club", class: ClubBall, hp: 100, radius: 25, color: "#b35237", weapon: { sprite: "sprites/club.webp", scale: 2, offset: -2, shift: -2, rotation: 3 * Math.PI / 4, spin: true } },
+    { name: "Snake", class: SnakeBall, hp: 100, radius: 22, color: "#e0d030" },
 ];
 
 function getWeaponConfig(BallClass) {
