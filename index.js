@@ -4054,7 +4054,7 @@ class SnakeSegment extends CircleBody {
                 this.vy = this.leader.vy;
 
                 const surplus = 0.5 * this.mass * (this.battle.gravity * (this.battle.height - this.radius - this.y) + this.vx ** 2 + this.vy ** 2 - this.owner.startSpeed ** 2);
-                this.owner.extraEnergy += surplus;
+                this.owner.extraEnergy += surplus * 0.66667;
             }
             return;
         }
@@ -4077,10 +4077,11 @@ class SnakeBall extends Ball {
 
     handleCollision(b) {
         if (b.team == this.team || !(b instanceof Ball)) return;
-        b.damage(1, this);
-        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this, b], 10);
 
         if (this.segCooldown <= EPS) {
+            b.damage(1, this);
+            if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this, b], 10);
+
             this.segCooldown = snakeSegCooldown;
             const leader = this.segments.length ? this.segments[this.segments.length - 1] : this;
             const seg = new SnakeSegment(leader.x, leader.y, this, leader, segRadius);
