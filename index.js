@@ -2230,15 +2230,6 @@ class BallBattle {
                 keBefore += 0.5 * body.mass * (body.vx * body.vx + body.vy * body.vy);
             }
 
-            // Soft distance constraint solved on velocities rather than positions, so
-            // that updatePhysics()' continuous collision detection stays authoritative
-            // (teleporting a segment could place it inside a wall or another body).
-            //
-            // Each pass applies an impulse along the link that both cancels the current
-            // relative velocity along it *and* removes a fraction of the remaining
-            // length error. The velocity term is what makes this stable: correcting only
-            // position error leaves behind exactly the velocity that produced the
-            // correction, so the link sails past rest length and rings forever.
             for (let pass = 0; pass < snakeLinkPasses; pass++) {
                 for (let i = 0; i < chain.length - 1; i++) {
                     const a = chain[i], c = chain[i + 1];
@@ -2267,6 +2258,15 @@ class BallBattle {
 
                     a.vx -= dv * wA * ux / sA; a.vy -= dv * wA * uy / sA;
                     c.vx += dv * wC * ux / sC; c.vy += dv * wC * uy / sC;
+
+                    // Swing damping
+                    if (snakeLinkFriction) {
+                        const tx = -uy, ty = ux;
+                        const swing = (c.vx * sC - a.vx * sA) * tx + (c.vy * sC - a.vy * sA) * ty;
+                        const dvT = -(1 - Math.exp(-Math.abs(swing) / 200)) * swing;
+                        a.vx -= dvT * wA * tx / sA; a.vy -= dvT * wA * ty / sA;
+                        c.vx += dvT * wC * tx / sC; c.vy += dvT * wC * ty / sC;
+                    }
                 }
             }
 
@@ -2299,13 +2299,11 @@ class BallBattle {
                     body.vy *= chainScale;
                 }
                 b.extraEnergy -= actualDecay;
-                if (t % 20 === 0) console.log(`[t=${t}] snake extraEnergy decay: extraEnergy=${b.extraEnergy.toFixed(4)} ke=${ke.toFixed(4)} mass=${mass.toFixed(1)} specificKE=${(ke / mass).toFixed(6)} decay(uncapped)=${decay.toFixed(6)} actualDecay=${actualDecay.toFixed(6)} chainScale=${chainScale.toFixed(6)} speed=${Math.hypot(b.vx, b.vy).toFixed(4)}`);
+                // if (t % 20 === 0) console.log(`[t=${t}] snake extraEnergy decay: extraEnergy=${b.extraEnergy.toFixed(4)} ke=${ke.toFixed(4)} mass=${mass.toFixed(1)} specificKE=${(ke / mass).toFixed(6)} decay(uncapped)=${decay.toFixed(6)} actualDecay=${actualDecay.toFixed(6)} chainScale=${chainScale.toFixed(6)} speed=${Math.hypot(b.vx, b.vy).toFixed(4)}`);
             }
         }
 
         this.updatePhysics();
-
-
 
         // Apply grows deferred from collision handling
         for (const b of this.bodies) {
@@ -4002,9 +4000,105 @@ class ClubBall extends Ball {
     }
 }
 
-function randomVel(abs, rng) {
-    const theta = rng() * 2 * Math.PI;
-    return [Math.cos(theta) * abs, Math.sin(theta) * abs];
+// Snake: gains a trailing segment (which also deals contact damage) each time
+// its head damages an enemy
+const snakeSegSpacing = 1; // rest distance between linked segments, as a fraction of their combined radii
+// Chain link solver (see the constraint pass in BallBattle.update()). The link is
+// solved on velocities, Gauss-Seidel, a few passes per tick.
+const snakeLinkPasses = 4;       // solver passes per tick over the chain
+const snakeLinkStiffness = 0.25; // fraction of the remaining length error corrected per pass
+const snakeLinkMaxCorrection = 0.25; // per-link velocity change cap, in restDist per tick
+const snakeLinkFriction = 0.01;
+const snakeExtraEnergyDecay = 0.01; // fraction of extraEnergy bled off per tick (scaled by timeScale)
+const snakeSegCooldown = 9;
+class SnakeSegment extends CircleBody {
+    constructor(x, y, owner, leader, radius) {
+        super(x, y, 0, 0, 1, radius, radius * radius, false);
+        this.owner = owner;
+        this.leader = leader; // the body (head or previous segment) this one is linked to
+        this.dmgCooldown = {};
+        this.dormant = true;
+    }
+
+    onCollision(b) {
+        if (this.dormant) return;
+        if (!(b instanceof Ball) || b.team == this.owner.team) return;
+        if (this.dmgCooldown[b.id] > EPS) return;
+        this.dmgCooldown[b.id] = snakeSegCooldown;
+        b.damage(1, this.owner);
+        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this.owner, b], 3);
+    }
+
+    shouldBounce(other) { return !this.dormant && !(other instanceof Ball && other.isStunned()); }
+
+    getZIndex() {
+        return super.getZIndex() - (this.dormant ? 727 : 0);
+    }
+
+    draw() {
+        Ball.drawBall(this.battle.ctx, this._renderX ?? this.x, this._renderY ?? this.y, this.radius, this.owner.color);
+    }
+
+    onUpdate(dt) {
+        if (this.getRootOwner().hp <= 0) {
+            this.hp = 0;
+            return;
+        }
+
+        if (this.dormant) {
+            const dist = Math.hypot(this.leader.x - this.x, this.leader.y - this.y);
+            if (dist >= 2 * this.radius) {
+                this.dormant = false;
+                this.gravity = true;
+                this.vx = this.leader.vx;
+                this.vy = this.leader.vy;
+
+                const surplus = 0.5 * this.mass * (this.battle.gravity * (this.battle.height - this.radius - this.y) + this.vx ** 2 + this.vy ** 2 - this.owner.startSpeed ** 2);
+                this.owner.extraEnergy += surplus;
+            }
+            return;
+        }
+
+        for (const id in this.dmgCooldown) {
+            this.dmgCooldown[id] -= dt;
+            if (this.dmgCooldown[id] <= EPS) delete this.dmgCooldown[id];
+        }
+    }
+}
+
+const segRadius = 18.75;
+class SnakeBall extends Ball {
+    constructor(x, y, vx, vy, hp = 100, radius = 25, color = "#e0d030", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        this.segCooldown = 0;
+        this.segments = [];
+        this.extraEnergy = 0;
+    }
+
+    handleCollision(b) {
+        if (b.team == this.team || !(b instanceof Ball)) return;
+        b.damage(1, this);
+        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this, b], 10);
+
+        if (this.segCooldown <= EPS) {
+            this.segCooldown = snakeSegCooldown;
+            const leader = this.segments.length ? this.segments[this.segments.length - 1] : this;
+            const seg = new SnakeSegment(leader.x, leader.y, this, leader, segRadius);
+            this.segments.push(seg);
+            this.battle.addBody(seg);
+        }
+    }
+
+    handleUpdate(dt) {
+        this.segCooldown -= dt;
+        this.segments = this.segments.filter(s => s.hp > 0);
+    }
+
+    getInfoEl() {
+        return this.propsToList({
+            "Segments": { text: this.segments.length, grad: { from: 0, to: 15 } },
+        });
+    }
 }
 
 class SoulDot extends CircleBody {
@@ -4198,111 +4292,6 @@ class DeathParticle {
     }
 }
 
-// Snake: gains a trailing segment (which also deals contact damage) each time
-// its head damages an enemy
-const snakeSegSpacing = 1; // rest distance between linked segments, as a fraction of their combined radii
-// Chain link solver (see the constraint pass in BallBattle.update()). The link is
-// solved on velocities, Gauss-Seidel, a few passes per tick.
-const snakeLinkPasses = 4;       // solver passes per tick over the chain
-const snakeLinkStiffness = 0.25; // fraction of the remaining length error corrected per pass
-const snakeLinkMaxCorrection = 0.25; // per-link velocity change cap, in restDist per tick
-const snakeExtraEnergyDecay = 0.01; // fraction of extraEnergy bled off per tick (scaled by timeScale)
-const snakeSegCooldown = 20;
-class SnakeSegment extends CircleBody {
-    constructor(x, y, owner, leader, radius) {
-        // Spawns coincident with its leader, stationary, and dormant (no gravity,
-        // no collision response) until the leader has pulled away far enough —
-        // see onUpdate(). This avoids ever needing to pick a spawn point, so it
-        // can never spawn out of bounds or overlapping something illegally.
-        super(x, y, 0, 0, 1, radius, radius * radius, false);
-        this.owner = owner;
-        this.leader = leader; // the body (head or previous segment) this one is linked to
-        this.dmgCooldown = {};
-        this.dormant = true;
-    }
-
-    onCollision(b) {
-        if (this.dormant) return;
-        if (!(b instanceof Ball) || b.team == this.owner.team) return;
-        if (this.dmgCooldown[b.id] > EPS) return;
-        this.dmgCooldown[b.id] = snakeSegCooldown;
-        b.damage(1, this.owner);
-        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this.owner, b], 1);
-    }
-
-    shouldBounce(other) { return !this.dormant && !(other instanceof Ball && other.isStunned()); }
-
-    getZIndex() {
-        return super.getZIndex() - (this.dormant ? 727 : 0);
-    }
-
-    draw() {
-        Ball.drawBall(this.battle.ctx, this._renderX ?? this.x, this._renderY ?? this.y, this.radius, this.owner.color);
-    }
-
-    onUpdate(dt) {
-        if (this.getRootOwner().hp <= 0) {
-            this.hp = 0;
-            return;
-        }
-
-        if (this.dormant) {
-            const dist = Math.hypot(this.leader.x - this.x, this.leader.y - this.y);
-            if (dist >= 2 * this.radius) {
-                this.dormant = false;
-                this.gravity = true;
-                this.vx = this.leader.vx;
-                this.vy = this.leader.vy;
-
-                const surplus = 0.5 * this.mass * (this.battle.gravity * (this.battle.height - this.radius - this.y) + this.vx ** 2 + this.vy ** 2 - this.owner.startSpeed ** 2);
-                console.log("segment surplus", surplus, "segment energy", 0.5 * this.mass * (this.vx ** 2 + this.vy ** 2), "target", 0.5 * this.mass * this.owner.startSpeed ** 2);
-                this.owner.extraEnergy += surplus;
-            }
-            return;
-        }
-
-        for (const id in this.dmgCooldown) {
-            this.dmgCooldown[id] -= dt;
-            if (this.dmgCooldown[id] <= EPS) delete this.dmgCooldown[id];
-        }
-    }
-}
-
-class SnakeBall extends Ball {
-    constructor(x, y, vx, vy, hp = 100, radius = 25, color = "#e0d030", mass = radius * radius) {
-        super(x, y, vx, vy, hp, radius, color, mass);
-        this.segCooldown = 0;
-        this.segments = [];
-        this.extraEnergy = 0;
-    }
-
-    handleCollision(b) {
-        if (b.team == this.team || !(b instanceof Ball)) return;
-        b.damage(1, this);
-        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this, b], 1);
-
-        if (this.segCooldown <= EPS) {
-            this.segCooldown = snakeSegCooldown;
-            const leader = this.segments.length ? this.segments[this.segments.length - 1] : this;
-            const segRadius = this.radius;
-            const seg = new SnakeSegment(leader.x, leader.y, this, leader, segRadius);
-            this.segments.push(seg);
-            this.battle.addBody(seg);
-        }
-    }
-
-    handleUpdate(dt) {
-        this.segCooldown -= dt;
-        this.segments = this.segments.filter(s => s.hp > 0);
-    }
-
-    getInfoEl() {
-        return this.propsToList({
-            "Segments": { text: this.segments.length, grad: { from: 0, to: 15 } },
-        });
-    }
-}
-
 const ballClasses = [
     { name: "Duplicator", class: DuplicatorBall, hp: 100, radius: 20, color: "#f86ffa" },
     { name: "Grower", class: GrowerBall, hp: 100, radius: 30, color: "#008a12" },
@@ -4315,11 +4304,16 @@ const ballClasses = [
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
     { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c88941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
     { name: "Club", class: ClubBall, hp: 100, radius: 25, color: "#b35237", weapon: { sprite: "sprites/club.webp", scale: 2, offset: -2, shift: -2, rotation: 3 * Math.PI / 4, spin: true } },
-    { name: "Snake", class: SnakeBall, hp: 100, radius: 22, color: "#e0d030" },
+    { name: "Snake", class: SnakeBall, hp: 100, radius: 25, color: "#e0d030" },
 ];
 
 function getWeaponConfig(BallClass) {
     return ballClasses.find(b => b.class === BallClass)?.weapon;
+}
+
+function randomVel(abs, rng) {
+    const theta = rng() * 2 * Math.PI;
+    return [Math.cos(theta) * abs, Math.sin(theta) * abs];
 }
 
 function shuffle(arr, rng = Math.random) {
