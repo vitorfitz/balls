@@ -4026,7 +4026,7 @@ class SnakeSegment extends CircleBody {
         if (this.dmgCooldown[b.id] > EPS) return;
         this.dmgCooldown[b.id] = snakeSegCooldown;
         b.damage(1, this.owner);
-        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this.owner, b], 3);
+        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this.owner, b], 1);
     }
 
     shouldBounce(other) { return !this.dormant && !(other instanceof Ball && other.isStunned()); }
