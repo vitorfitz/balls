@@ -2230,35 +2230,44 @@ class BallBattle {
                 keBefore += 0.5 * body.mass * (body.vx * body.vx + body.vy * body.vy);
             }
 
-            for (let i = 0; i < chain.length - 1; i++) {
-                const a = chain[i], c = chain[i + 1];
-                if (c.dormant) continue; // stays pinned exactly at spawn until activated
-                const dx = c.x - a.x, dy = c.y - a.y;
-                const dist = Math.hypot(dx, dy) || EPS;
-                const restDist = (a.radius + c.radius) * snakeSegSpacing;
-                const diff = (dist - restDist) / dist;
+            // Soft distance constraint solved on velocities rather than positions, so
+            // that updatePhysics()' continuous collision detection stays authoritative
+            // (teleporting a segment could place it inside a wall or another body).
+            //
+            // Each pass applies an impulse along the link that both cancels the current
+            // relative velocity along it *and* removes a fraction of the remaining
+            // length error. The velocity term is what makes this stable: correcting only
+            // position error leaves behind exactly the velocity that produced the
+            // correction, so the link sails past rest length and rings forever.
+            for (let pass = 0; pass < snakeLinkPasses; pass++) {
+                for (let i = 0; i < chain.length - 1; i++) {
+                    const a = chain[i], c = chain[i + 1];
+                    if (c.dormant) continue; // stays pinned exactly at spawn until activated
+                    const dx = c.x - a.x, dy = c.y - a.y;
+                    const dist = Math.hypot(dx, dy) || EPS;
+                    const ux = dx / dist, uy = dy / dist;
+                    const restDist = (a.radius + c.radius) * snakeSegSpacing;
 
-                const invA = 1 / a.mass, invC = 1 / c.mass;
-                const wA = invA / (invA + invC), wC = invC / (invA + invC);
+                    const invA = 1 / a.mass, invC = 1 / c.mass;
+                    const wA = invA / (invA + invC), wC = invC / (invA + invC);
 
-                const errA_x = dx * diff * wA, errA_y = dy * diff * wA;
-                const errC_x = dx * diff * wC, errC_y = dy * diff * wC;
+                    // Solve in displacement-per-tick space, since that's what the link
+                    // length responds to (velocity is scaled by getTimeScale()).
+                    const sA = a.getTimeScale(), sC = c.getTimeScale();
+                    const closing = (c.vx * sC - a.vx * sA) * ux + (c.vy * sC - a.vy * sA) * uy;
 
-                // Clamp so a badly displaced pair (e.g. right after activation) can't inject
-                // an extreme velocity in one tick; corrects gradually instead over a few ticks.
-                const maxCorrection = 0.5 * restDist;
-                const clamp = (ex, ey) => {
-                    const mag = Math.hypot(ex, ey);
-                    if (mag <= maxCorrection || mag < EPS) return [ex, ey];
-                    const s = maxCorrection / mag;
-                    return [ex * s, ey * s];
-                };
-                const [caX, caY] = clamp(errA_x, errA_y);
-                const [ccX, ccY] = clamp(-errC_x, -errC_y);
+                    // Target rate of length change: shrink the error a fraction per pass.
+                    const target = -snakeLinkStiffness * (dist - restDist);
 
-                const sA = a.getTimeScale(), sC = c.getTimeScale();
-                a.vx += caX / sA; a.vy += caY / sA;
-                c.vx += ccX / sC; c.vy += ccY / sC;
+                    // Clamp so a badly displaced pair (e.g. right after activation) can't
+                    // inject an extreme velocity in one tick; corrects over a few ticks.
+                    const maxCorrection = snakeLinkMaxCorrection * restDist;
+                    const snakeLinkDamping = 1;
+                    const dv = Math.max(-maxCorrection, Math.min(maxCorrection, target - snakeLinkDamping * closing));
+
+                    a.vx -= dv * wA * ux / sA; a.vy -= dv * wA * uy / sA;
+                    c.vx += dv * wC * ux / sC; c.vy += dv * wC * uy / sC;
+                }
             }
 
             let keAfter = 0;
@@ -2272,9 +2281,31 @@ class BallBattle {
                     body.vy *= scale;
                 }
             }
+
+            let ke = 0, mass = 0, budget = 0;
+            for (const body of chain) {
+                ke += 0.5 * body.mass * (body.vx * body.vx + body.vy * body.vy);
+                mass += body.mass;
+                budget += 0.5 * body.mass * b.startSpeed * b.startSpeed;
+            }
+
+            if (ke > EPS && ke > budget) {
+                const maxFracPerTick = 0.05;
+                const decay = Math.min(b.extraEnergy, b.extraEnergy * snakeExtraEnergyDecay * b.getTimeScale());
+                const actualDecay = Math.min(decay, (ke - budget) * maxFracPerTick);
+                const chainScale = Math.sqrt(Math.max(0, (ke - actualDecay) / ke));
+                for (const body of chain) {
+                    body.vx *= chainScale;
+                    body.vy *= chainScale;
+                }
+                b.extraEnergy -= actualDecay;
+                if (t % 20 === 0) console.log(`[t=${t}] snake extraEnergy decay: extraEnergy=${b.extraEnergy.toFixed(4)} ke=${ke.toFixed(4)} mass=${mass.toFixed(1)} specificKE=${(ke / mass).toFixed(6)} decay(uncapped)=${decay.toFixed(6)} actualDecay=${actualDecay.toFixed(6)} chainScale=${chainScale.toFixed(6)} speed=${Math.hypot(b.vx, b.vy).toFixed(4)}`);
+            }
         }
 
         this.updatePhysics();
+
+
 
         // Apply grows deferred from collision handling
         for (const b of this.bodies) {
@@ -4170,6 +4201,12 @@ class DeathParticle {
 // Snake: gains a trailing segment (which also deals contact damage) each time
 // its head damages an enemy
 const snakeSegSpacing = 1; // rest distance between linked segments, as a fraction of their combined radii
+// Chain link solver (see the constraint pass in BallBattle.update()). The link is
+// solved on velocities, Gauss-Seidel, a few passes per tick.
+const snakeLinkPasses = 4;       // solver passes per tick over the chain
+const snakeLinkStiffness = 0.25; // fraction of the remaining length error corrected per pass
+const snakeLinkMaxCorrection = 0.25; // per-link velocity change cap, in restDist per tick
+const snakeExtraEnergyDecay = 0.01; // fraction of extraEnergy bled off per tick (scaled by timeScale)
 const snakeSegCooldown = 20;
 class SnakeSegment extends CircleBody {
     constructor(x, y, owner, leader, radius) {
@@ -4216,6 +4253,10 @@ class SnakeSegment extends CircleBody {
                 this.gravity = true;
                 this.vx = this.leader.vx;
                 this.vy = this.leader.vy;
+
+                const surplus = 0.5 * this.mass * (this.battle.gravity * (this.battle.height - this.radius - this.y) + this.vx ** 2 + this.vy ** 2 - this.owner.startSpeed ** 2);
+                console.log("segment surplus", surplus, "segment energy", 0.5 * this.mass * (this.vx ** 2 + this.vy ** 2), "target", 0.5 * this.mass * this.owner.startSpeed ** 2);
+                this.owner.extraEnergy += surplus;
             }
             return;
         }
@@ -4232,6 +4273,7 @@ class SnakeBall extends Ball {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.segCooldown = 0;
         this.segments = [];
+        this.extraEnergy = 0;
     }
 
     handleCollision(b) {
