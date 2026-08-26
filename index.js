@@ -146,7 +146,7 @@ class Weapon {
         this.DoT = DoT;
         this.ballColFns.push((b, reflector) => {
             const source = reflector || this.ball;
-            b.damage(this.dmg, source);
+            b.damage(this.dmg, source, true);
             if (!b.owner && !(b instanceof DuplicatorBall)) {
                 const amt = (this.ball instanceof DaggerBall && (this.ball.owner || b instanceof GrimoireBall)) ? 0.5 : hitSlow;
                 addToHitHistory([source, b], amt);
@@ -161,12 +161,15 @@ class Weapon {
         });
     }
 
-    getIFrames(target) {
+    setIFrames(target, key = iframeKeyFor(target)) {
         let iframes = this.iframes;
         if (target instanceof GrowerBall) {
             iframes = Math.min(target.battle.mode == FFA ? 20 : 7, iframes);
         }
-        return iframes;
+        else if (target instanceof SnakeSegment) {
+            iframes = Math.min(7, iframes);
+        }
+        this.iFrames[key] = Math.max(iframes, this.iFrames[key] ?? 0);
     }
 
     scaleBy(s) {
@@ -291,7 +294,7 @@ class Ball extends CircleBody {
             }
             if (damaged) damaged.damage(dmg, this.slamSource);
 
-            if (damaged && !(damaged instanceof GrowerBall || damaged instanceof DuplicatorBall)) {
+            if (damaged && !(damaged instanceof GrowerBall || damaged instanceof DuplicatorBall || damaged instanceof SnakeSegment)) {
                 damaged.hitsThisFrame += 3 * dmg;
             }
 
@@ -349,18 +352,7 @@ class Ball extends CircleBody {
             if (this.hp <= 0) this.killer = source;
         }
 
-        const displayedDmg = Math.ceil(hpBefore) - Math.ceil(this.hp);
-        if (this.battle && displayedDmg >= 1) {
-            const existing = this.battle.dmgIndicators.find(d => d.owner === this && d.life > indicatorComboThresh);
-            if (existing) {
-                existing.setDmg(existing.dmg + displayedDmg);
-                existing.reset();
-            } else {
-                const ind = new DamageIndicator(this, displayedDmg, this.color);
-                ind.owner = this;
-                this.battle.dmgIndicators.push(ind);
-            }
-        }
+        this.showDmg(dmg);
     }
 
     draw() {
@@ -376,6 +368,20 @@ class Ball extends CircleBody {
             y += (Math.random() - 0.5) * shake;
         }
         Ball.drawBall(this.battle.ctx, x, y, this.radius, color, Math.ceil(this.hp), this._renderX, this._renderY);
+    }
+
+    showDmg(dmg) {
+        const existing = this.battle.dmgIndicators.find(d => d.owner == this && d.life > indicatorComboThresh);
+        if (existing) {
+            existing.setDmg(existing.dmg + dmg);
+            existing.reset();
+        } else {
+            const ind = new DamageIndicator(this, dmg, this.color);
+            if (this instanceof SnakeSegment || ind.displayedDmg > 0) {
+                ind.owner = this;
+                this.battle.dmgIndicators.push(ind);
+            }
+        }
     }
 
     shouldBounce(other) { return !(other instanceof Ball && other.isStunned()); }
@@ -1270,6 +1276,10 @@ function weaponHitsBall(w, b) {
     return false;
 }
 
+function iframeKeyFor(target) {
+    return target instanceof SnakeSegment ? "snake" + target.owner.id : target.id;
+}
+
 // Midpoint between the two closest points across a pair of segments (one point
 // per segment, picked from whichever endpoint/projection pairing is nearest).
 // Used to find where two weapons actually made contact, e.g. for effects that
@@ -1310,6 +1320,15 @@ function weaponWeaponContact(w1, w2) {
 function addMirrorIFrames(weapon, target) {
     const src = weapon.ball;
     if (target instanceof MirrorBall && !(src.id in target._cantHitBall)) target._cantReflect[src.id] = target.giga ? 0 : mirrorCooldown;
+}
+
+function applySnakeIFrames(weapon, target, key = iframeKeyFor(target)) {
+    if (target instanceof SnakeBall) {
+        weapon.setIFrames(target, "snake" + target.id);
+    }
+    else if (target instanceof SnakeSegment && !weapon.iFrames[key]) {
+        weapon.setIFrames(target, target.owner.id);
+    }
 }
 
 // Profiling
@@ -1399,10 +1418,11 @@ class BallBattle {
                     if (b.owner instanceof GrimoireBall) {
                         if (b instanceof DuplicatorBall) count += 0.1;
                         else if (b instanceof DaggerBall) count += 0.5;
+                        else if (b instanceof SnakeSegment) count += 0.01;
                         else count++;
                     }
                     else {
-                        count += 0.2;
+                        if (!(b instanceof SnakeSegment)) count += 0.2;
                     }
                 }
             }
@@ -1809,7 +1829,9 @@ class BallBattle {
                         if (target.team === b.team) continue;
                         const dist = Math.hypot(target.x - b.x, target.y - b.y);
                         if (dist <= b.radius + Math.sqrt(w.range ** 2 + (w.thickness / 2) ** 2) + target.radius) {
-                            w.iFrames[target.id] = w.getIFrames(target);
+                            const key = iframeKeyFor(target);
+                            applySnakeIFrames(w, target, key);
+                            w.setIFrames(target, key);
                             addMirrorIFrames(w, target);
                             for (let i = 0; i < rotations; i++) {
                                 w.ballColFns.forEach(fn => fn(target));
@@ -1852,7 +1874,7 @@ class BallBattle {
                         delete w._iFrameHitTheta[id];
                         continue;
                     }
-                    if (w.DoT || !this.hitThisFrame.has(w.ball.id + "-" + wi + "-" + id)) {
+                    if ((w.DoT && !id.startsWith("snake")) || !this.hitThisFrame.has(w.ball.id + "-" + wi + "-" + id)) {
                         w.iFrames[id]--;
                         if (w.iFrames[id] <= -EPS) { delete w.iFrames[id]; delete w._iFrameHitTheta?.[id]; }
                     }
@@ -1909,10 +1931,12 @@ class BallBattle {
                         if (A.team !== B.team && weaponHitsBall(w, B)) {
                             addMirrorIFrames(w, B);
                             if (w.DoT || !(B._cantHitBall && A.id in B._cantHitBall)) {
-                                this.hitThisFrame.add(A.id + "-" + wi + "-" + B.id);
-                                if (!(B.id in w.iFrames)) {
-                                    w.iFrames[B.id] = w.getIFrames(B);
-                                    if (w.angVel) (w._iFrameHitTheta ??= {})[B.id] = w.theta;
+                                const key = iframeKeyFor(B);
+                                this.hitThisFrame.add(A.id + "-" + wi + "-" + key);
+                                if (!(key in w.iFrames)) {
+                                    applySnakeIFrames(w, B, key);
+                                    w.setIFrames(B, key);
+                                    if (w.angVel) (w._iFrameHitTheta ??= {})[key] = w.theta;
                                     w.ballColFns.forEach(fn => fn(B));
                                 }
                             }
@@ -1926,10 +1950,12 @@ class BallBattle {
                         if (B.team !== A.team && weaponHitsBall(w, A)) {
                             addMirrorIFrames(w, A);
                             if (w.DoT || !(A._cantHitBall && B.id in A._cantHitBall)) {
-                                this.hitThisFrame.add(B.id + "-" + wi + "-" + A.id);
-                                if (!(A.id in w.iFrames)) {
-                                    w.iFrames[A.id] = w.getIFrames(A);
-                                    if (w.angVel) (w._iFrameHitTheta ??= {})[A.id] = w.theta;
+                                const key = iframeKeyFor(A);
+                                this.hitThisFrame.add(B.id + "-" + wi + "-" + key);
+                                if (!(key in w.iFrames)) {
+                                    applySnakeIFrames(w, A, key);
+                                    w.setIFrames(A, key);
+                                    if (w.angVel) (w._iFrameHitTheta ??= {})[key] = w.theta;
                                     w.ballColFns.forEach(fn => fn(A));
                                 }
                             }
@@ -2064,11 +2090,6 @@ class BallBattle {
 
         let targetSize = baseSize, targetHoleSize = holeSize, targetZoom = 1;
         for (const s of stages) {
-            // Grower-radius guard only applies to the plus arena, where a giant grower
-            // may not fit through the shrunken hole/arms; raid's boss is always > 75
-            // radius by design, so it must not block raid's shrink stages. Raid instead
-            // uses a much higher threshold so it still stops shrinking if a Giga Grower
-            // boss has grown to take over most of the screen.
             const blockedByGrower = square
                 ? this.balls.some(b => b.radius >= 250)
                 : s.players <= 3 && this.balls.some(b => b.radius > 75);
@@ -2234,6 +2255,7 @@ class BallBattle {
                 for (let i = 0; i < chain.length - 1; i++) {
                     const a = chain[i], c = chain[i + 1];
                     if (c.dormant) continue; // stays pinned exactly at spawn until activated
+                    if (a.isStunned() && c.isStunned()) continue; // both ends infinite-mass (0/0 weights -> NaN); neither can move anyway
                     const dx = c.x - a.x, dy = c.y - a.y;
                     const dist = Math.hypot(dx, dy) || EPS;
                     const ux = dx / dist, uy = dy / dist;
@@ -2400,6 +2422,7 @@ class BallBattle {
 
         this.teamCount = {};
         this.balls.forEach((b) => {
+            if (b instanceof SnakeSegment) return; // don't count toward population caps (dupeLimit, Grimoire's 40-cap)
             this.teamCount[b.team] = (this.teamCount[b.team] ?? 0) + 1
         });
     }
@@ -2422,7 +2445,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 700) {
+        // while (t < 1730) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -2677,33 +2700,23 @@ class LanceBall extends Ball {
                 return;
             }
 
+            const source = reflector || this;
+            if (target instanceof SnakeSegment) {
+                lance.iFrames["snake" + target.owner.id] = 3;
+                target.damage(727, source, true);
+                this.applyBoost();
+                return;
+            }
+
             const oldHit = this.hit;
             this.hit = this.comboLeniency;
             if (this.dist > 0 && this.damageThisTick == -1) {
-                return -1;
+                return;
             }
 
             if (this.damageThisTick == -1) {
-                const isNewTarget = !this.comboHits.has(target.id);
-                if (isNewTarget) {
-                    const boostGain = this.giga ? 0.6 : 1;
-                    const boostSpeed = boostPct * boostGain * this.startSpeed;
-                    const baseSpeed = this.startSpeed + boostSpeed * this.boosts;
-                    const newBaseSpeed = baseSpeed + boostSpeed;
-                    const energyGain = 0.5 * (newBaseSpeed * newBaseSpeed - baseSpeed * baseSpeed);
-                    this.boostEnergy += energyGain;
-                    this.boosts += boostGain;
-
-                    const speed = Math.hypot(this.vx, this.vy);
-                    const newSpeed = Math.sqrt(speed * speed + 2 * energyGain);
-                    if (speed > EPS) {
-                        this.vx *= newSpeed / speed;
-                        this.vy *= newSpeed / speed;
-                    } else {
-                        const theta = this.weapons[0].theta;
-                        this.vx = Math.cos(theta) * newSpeed;
-                        this.vy = Math.sin(theta) * newSpeed;
-                    }
+                if (!this.comboHits.has(target.id) && !lance.iFrames["snake" + target.id]) {
+                    this.applyBoost();
                 }
 
                 if (this.combo == 0 || oldHit < this.comboLeniency - 1) this.dist = 0;
@@ -2718,7 +2731,9 @@ class LanceBall extends Ball {
                 this.damageThisTick = (oldCombo + this.combo + 1) * procs / 2;
             }
 
-            const source = reflector || this;
+            if (target instanceof SnakeBall) {
+                lance.iFrames["snake" + target.id] = 3;
+            }
             target.damage(this.damageThisTick, source);
 
             const speed2 = this.vx ** 2 + this.vy ** 2;
@@ -2732,9 +2747,28 @@ class LanceBall extends Ball {
         this.addWeapon(lance);
     }
 
-    handleUpdate(dt) {
-        // if (t >= 8900) this.boostEnergy = 0;
+    applyBoost() {
+        const boostGain = this.giga ? 0.6 : 1;
+        const boostSpeed = boostPct * boostGain * this.startSpeed;
+        const baseSpeed = this.startSpeed + boostSpeed * this.boosts;
+        const newBaseSpeed = baseSpeed + boostSpeed;
+        const energyGain = 0.5 * (newBaseSpeed * newBaseSpeed - baseSpeed * baseSpeed);
+        this.boostEnergy += energyGain;
+        this.boosts += boostGain;
 
+        const speed = Math.hypot(this.vx, this.vy);
+        const newSpeed = Math.sqrt(speed * speed + 2 * energyGain);
+        if (speed > EPS) {
+            this.vx *= newSpeed / speed;
+            this.vy *= newSpeed / speed;
+        } else {
+            const theta = this.weapons[0].theta;
+            this.vx = Math.cos(theta) * newSpeed;
+            this.vy = Math.sin(theta) * newSpeed;
+        }
+    }
+
+    handleUpdate(dt) {
         this.damageThisTick = -1;
         if (this.vx != 0 && this.vy != 0) this.weapons[0].theta = Math.atan2(this.vy, this.vx);
         this.dist -= Math.min((3 * this.startSpeed + this.startSpeed * (this.boosts * boostPct)) ** 2, (this.vx ** 2 + this.vy ** 2)) * dt;
@@ -2892,8 +2926,10 @@ class Bullet extends CircleBody {
             // if (t >= 1290 && t <= 1300) {
             //     console.log(`[t=${t}] bullet handleCollision: hitting ${b.constructor.name}, hitCredit=${this.hitCredit.constructor.name}, prevHitCredit=${this.prevHitCredit?.constructor.name}, using hc=${hc.constructor.name}`);
             // }
-            b.damage(this.dmg, hc, true);
+            b.damage(this.dmg, hc);
+            if (this.owner instanceof WrenchBall && b instanceof SnakeSegment) this.dmg = 0;
         }
+
         if (b instanceof Turret) this.hp = 0;
     }
 
@@ -3073,13 +3109,14 @@ class Bullet extends CircleBody {
 class MGBullet extends Bullet {
     constructor(x, y, vx, vy, owner, dmg, radius = bulletRadius) {
         super(x, y, vx, vy, owner, dmg, 31, radius);
+        this.scalingDedupe = [];
     }
 
     handleCollision(b) {
         if (b.hp <= 0) return;
         super.handleCollision(b);
 
-        if (b instanceof Ball) {
+        if (b instanceof Ball /*&& !(b instanceof SnakeSegment)*/) {
             const hc = this.resolveHitCredit(b);
             if (!b.owner && !(b instanceof DuplicatorBall)) {
                 let h = [b];
@@ -3088,7 +3125,11 @@ class MGBullet extends Bullet {
             }
 
             if (hc instanceof MirrorBall || hc.team == this.owner.team) {
-                this.owner.pendingDamage += 1;
+                const targetId = b instanceof SnakeSegment ? b.owner.id : b.id;
+                if (this.scalingDedupe.indexOf(targetId) == -1) {
+                    this.owner.pendingDamage += 1;
+                    this.scalingDedupe.push(targetId);
+                }
             }
         }
     }
@@ -3341,6 +3382,11 @@ class GrimoireBall extends Ball {
             if (target.depth > 1 && this.battle.rng() < 0.8) return;
             if ((this.battle.teamCount?.[this.team] ?? 0) >= 40) return;
 
+            // A SnakeSegment isn't an independent unit (no real constructor shape of
+            // its own, no meaningful HP/team apart from its head) — clone based on
+            // the snake head it belongs to instead.
+            if (target instanceof SnakeSegment) target = target.owner;
+
             this.nextMinionHP += this.minionHPGain;
             if (target instanceof DuplicatorBall && (this.battle.teamCount[this.team] ?? 0) >= dupeLimit) return;
             if (this.summonCooldown > EPS) return;
@@ -3349,7 +3395,7 @@ class GrimoireBall extends Ball {
             if (minion && this.battle.inRectBounds(minion.x, minion.y, minion.radius)) {
                 minion.inert = true;
                 this.battle.addBall(minion);
-                this.summonCooldown = this.battle.mode == FFA && this.owner ? 50 : 0;
+                this.summonCooldown = this.battle.mode == FFA && this.owner || minion instanceof SnakeBall ? 50 : 0;
                 // this.summonCooldown = 0;
                 // console.log(`[t=${t}] create ${minion.constructor.name} minion: energy=${minion.totalEnergy()} mass=${minion.mass} radius=${minion.radius} speed=${Math.hypot(minion.vx, minion.vy)}`);
             }
@@ -3383,14 +3429,22 @@ class GrimoireBall extends Ball {
         minion.slowFactor = this.slowFactor;
         minion.mass *= 1 / scale;
 
+        console.log(`[t=${t}] createMinion: ${Constructor.name} target#${target.id} targetDepth=${target.depth ?? 0} targetRadius=${target.radius.toFixed(2)} targetGiga=${!!target.giga} targetScale=${target.scale ?? 1} newRadius(preClamp)=${newRadius.toFixed(2)} -> minion#${minion.id} depth=${minion.depth} radius=${minion.radius.toFixed(2)} mass=${minion.mass.toFixed(4)} scale=${scale} pos=(${minion.x.toFixed(1)},${minion.y.toFixed(1)}) v=(${minion.vx.toFixed(3)},${minion.vy.toFixed(3)}) args=${JSON.stringify(args)}`);
+
+        if (target instanceof SnakeBall) console.log(`[t=${t}] createMinion SNAKE pre-copyBoosts: target#${target.id} depth=${target.depth} radius=${target.radius.toFixed(2)} segs=${target.segments.length} args=${JSON.stringify(args)} -> minion#${minion.id} depth=${minion.depth} radius=${minion.radius.toFixed(2)} mass=${minion.mass.toFixed(2)} scale=${scale} pos=(${minion.x.toFixed(1)},${minion.y.toFixed(1)}) v=(${minion.vx.toFixed(3)},${minion.vy.toFixed(3)})`);
+
         // Copy boost properties
         this.copyBoosts(target, minion);
+
+        if (target instanceof SnakeBall) console.log(`[t=${t}] createMinion SNAKE post-copyBoosts: minion#${minion.id} extraEnergy=${minion.extraEnergy} segs=${minion.segments.length} segDetails=${minion.segments.map(s => `#${s.id}(r=${s.radius.toFixed(2)},dormant=${s.dormant},pos=${s.x.toFixed(1)},${s.y.toFixed(1)})`).join(' ')}`);
 
         // Scale weapon properties
         for (const w of minion.weapons) {
             w.scaleBy(scale * (target.scale ?? 1));
             if (w.theta) w.theta = this.weapons[0].theta + Math.PI;
         }
+
+        console.log(`[t=${t}] createMinion post-weaponScale: minion#${minion.id} finalRadius=${minion.radius.toFixed(2)} finalMass=${minion.mass.toFixed(4)} weapons=${minion.weapons.map(w => `range=${w.range},thickness=${w.thickness}`).join(' ')}`);
 
         // Apply iframes
         for (const w of minion.weapons) {
@@ -3473,6 +3527,18 @@ class GrimoireBall extends Ball {
         }
         else if (target instanceof ClubBall) {
             minion.stunDur = target.stunDur;
+        }
+        else if (target instanceof SnakeBall) {
+            const segScale = minionScale ** minion.depth;
+            const minionSegRadius = segRadius * segScale;
+            let leader = minion;
+            for (const _ of target.segments) {
+                const seg = new SnakeSegment(minion.x, minion.y, minion, leader, minionSegRadius);
+                seg.team = minion.team;
+                minion.segments.push(seg);
+                target.battle.addBall(seg);
+                leader = seg;
+            }
         }
 
         minion.battle = target.battle;
@@ -3570,7 +3636,7 @@ class GrowerBall extends Ball {
         if (!reflector && (b.team == this.team)) return;
         b.damage(1, owner);
 
-        if (!(b instanceof GrowerBall || b instanceof DuplicatorBall)) {
+        if (!(b instanceof GrowerBall || b instanceof DuplicatorBall || b instanceof SnakeSegment)) {
             this.hitsThisFrame += 3;
             b.hitsThisFrame += 3;
         } else if (reflector) {
@@ -3786,7 +3852,7 @@ class MirrorBall extends Ball {
 
             // Use attacker's ballColFns against themselves
             if (!(attacker.id in otherWeapon.iFrames)) {
-                otherWeapon.iFrames[attacker.id] = otherWeapon.getIFrames(attacker);
+                otherWeapon.setIFrames(attacker);
                 const mySeg = mirror.getHitSegment();
                 const theirSeg = otherWeapon.getHitSegment();
                 const contactPoint = segmentToSegmentContactPoint(
@@ -3916,10 +3982,14 @@ class HammerBall extends Ball {
         hammer.addDamage(0, 1);
 
         hammer.ballColFns.push((b) => {
+            this.spinRate += 0.5;
+            if (b instanceof SnakeSegment) {
+                return;
+            }
+
             this.power = 0;
             hammer.dmg = 1;
             hammer.iframes = 40;
-            this.spinRate += 0.5;
 
             if (!this.isStunned()) {
                 this.antiSwarmBoost += (this.battle.mode == DUEL ? 1 : this.giga ? 0 : 0.5) + (this.antiSwarmBoost / (4 + 0.1 * this.antiSwarmBoost));
@@ -3971,9 +4041,13 @@ class ClubBall extends Ball {
 
         club.ballColFns.push((b, reflector) => {
             const source = reflector || this;
-            b.damage(b.isStunned() ? 10 : 5, source);
+            b.damage(b.isStunned() ? 10 : 5, source, true);
             if (!b.owner && !(b instanceof DuplicatorBall)) {
                 addToHitHistory([source, b]);
+            }
+
+            if (b instanceof SnakeSegment) {
+                return;
             }
 
             // Defer stun to end of weapon phase
@@ -4010,36 +4084,70 @@ const snakeLinkStiffness = 0.25; // fraction of the remaining length error corre
 const snakeLinkMaxCorrection = 0.25; // per-link velocity change cap, in restDist per tick
 const snakeLinkFriction = 0.01;
 const snakeExtraEnergyDecay = 0.01; // fraction of extraEnergy bled off per tick (scaled by timeScale)
-const snakeSegCooldown = 9;
-class SnakeSegment extends CircleBody {
+const snakeSegCooldown = 5;
+const headRadius = 25;
+const segRadius = 18.75;
+class SnakeSegment extends Ball {
     constructor(x, y, owner, leader, radius) {
-        super(x, y, 0, 0, 1, radius, radius * radius, false);
+        super(x, y, 0, 0, 1, radius, owner.color, radius * radius * headRadius / segRadius);
+        this.gravity = false;
         this.owner = owner;
+        this.team = owner.team;
         this.leader = leader; // the body (head or previous segment) this one is linked to
         this.dmgCooldown = {};
         this.dormant = true;
     }
 
+    // Infinite HP: register the hit (flash) but never actually lose HP.
+    damage(dmg, source, fromWeapon = false) {
+        if (fromWeapon) this.showDmg(0);
+        this.flashTime = performance.now() + flashDur;
+    }
+
+    // While dormant, behave like an infinite-mass pinned body (same as a stunned
+    // ball or turret): reflect whatever touches it, but never move itself. This
+    // keeps it from ever overlapping another ball unnoticed, which previously
+    // left it sitting inside a ball with no separation until it woke up and
+    // suddenly resolved that overlap with a real mass/velocity all at once.
     onCollision(b) {
-        if (this.dormant) return;
+        if (this.dormant) {
+            if (!(b instanceof Ball && b.isStunned())) {
+                const dx = b.x - this.x, dy = b.y - this.y;
+                const dist = Math.hypot(dx, dy) || 1;
+                const nx = dx / dist, ny = dy / dist;
+                reflectOffPinnedBody(b, nx, ny, 0, 0);
+            }
+            return;
+        }
+        super.onCollision(b);
+    }
+
+    // Contact damage against enemies, dispatched from Ball.onCollision (which also
+    // gives segments the standard stun-reflection/slam-damage behavior other Balls get,
+    // rather than segments needing their own copy of that logic).
+    handleCollision(b) {
         if (!(b instanceof Ball) || b.team == this.owner.team) return;
         if (this.dmgCooldown[b.id] > EPS) return;
         this.dmgCooldown[b.id] = snakeSegCooldown;
         b.damage(1, this.owner);
-        if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this.owner, b], 1);
+        if (!b.owner && !(b instanceof DuplicatorBall || b instanceof GrowerBall)) addToHitHistory([this.owner, b], 1);
     }
 
-    shouldBounce(other) { return !this.dormant && !(other instanceof Ball && other.isStunned()); }
+    shouldBounce(other) { return this.dormant ? false : !(other instanceof Ball && other.isStunned()); }
 
     getZIndex() {
         return super.getZIndex() - (this.dormant ? 727 : 0);
     }
 
     draw() {
-        Ball.drawBall(this.battle.ctx, this._renderX ?? this.x, this._renderY ?? this.y, this.radius, this.owner.color);
+        const flashPct = Math.max(0, this.flashTime - performance.now());
+        const color = flashPct > 0
+            ? `color-mix(in srgb, white ${Math.min(flashPct * 125 / flashDur, 84)}%, ${this.owner.color})`
+            : this.owner.color;
+        Ball.drawBall(this.battle.ctx, this._renderX ?? this.x, this._renderY ?? this.y, this.radius, color);
     }
 
-    onUpdate(dt) {
+    handleUpdate(dt) {
         if (this.getRootOwner().hp <= 0) {
             this.hp = 0;
             return;
@@ -4047,14 +4155,20 @@ class SnakeSegment extends CircleBody {
 
         if (this.dormant) {
             const dist = Math.hypot(this.leader.x - this.x, this.leader.y - this.y);
-            if (dist >= 2 * this.radius) {
+            if (dist >= this.leader.radius + this.radius) {
                 this.dormant = false;
                 this.gravity = true;
                 this.vx = this.leader.vx;
                 this.vy = this.leader.vy;
 
                 const surplus = 0.5 * this.mass * (this.battle.gravity * (this.battle.height - this.radius - this.y) + this.vx ** 2 + this.vy ** 2 - this.owner.startSpeed ** 2);
-                this.owner.extraEnergy += surplus * 0.66667;
+                this.owner.extraEnergy += surplus * 0.5;
+            }
+            else {
+                this._dormantTicks = (this._dormantTicks ?? 0) + 1;
+                if (this._dormantTicks === 600) {
+                    console.log(`[t=${t}] seg#${this.id} STUCK DORMANT 600+ ticks owner#${this.owner.id} leader=${this.leader.constructor.name}#${this.leader.id} leaderPos=(${this.leader.x.toFixed(1)},${this.leader.y.toFixed(1)}) leaderStunned=${this.leader.isStunned?.() ?? 'n/a'} leaderVel=(${this.leader.vx?.toFixed?.(3)},${this.leader.vy?.toFixed?.(3)}) myPos=(${this.x.toFixed(1)},${this.y.toFixed(1)}) dist=${dist.toFixed(2)} thresh=${(this.leader.radius + this.radius).toFixed(2)} myRadius=${this.radius.toFixed(2)} leaderRadius=${this.leader.radius.toFixed(2)}`);
+                }
             }
             return;
         }
@@ -4064,11 +4178,17 @@ class SnakeSegment extends CircleBody {
             if (this.dmgCooldown[id] <= EPS) delete this.dmgCooldown[id];
         }
     }
+
+    getInfoEl() {
+        const el = document.createElement("span");
+        el.className = "na";
+        el.textContent = "N/A";
+        return el;
+    }
 }
 
-const segRadius = 18.75;
 class SnakeBall extends Ball {
-    constructor(x, y, vx, vy, hp = 100, radius = 25, color = "#e0d030", mass = radius * radius) {
+    constructor(x, y, vx, vy, hp = 100, radius = headRadius, color = "#e0d030", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         this.segCooldown = 0;
         this.segments = [];
@@ -4076,7 +4196,7 @@ class SnakeBall extends Ball {
     }
 
     handleCollision(b) {
-        if (b.team == this.team || !(b instanceof Ball)) return;
+        if (b.team == this.team || !(b instanceof Ball) || b instanceof SnakeSegment) return;
 
         if (this.segCooldown <= EPS) {
             b.damage(1, this);
@@ -4084,9 +4204,14 @@ class SnakeBall extends Ball {
 
             this.segCooldown = snakeSegCooldown;
             const leader = this.segments.length ? this.segments[this.segments.length - 1] : this;
-            const seg = new SnakeSegment(leader.x, leader.y, this, leader, segRadius);
+            // Scale the new segment relative to this snake's own head size (segRadius
+            // is calibrated for a full-size, depth-0 head at headRadius) so minion
+            // snakes spawned by Grimoire keep consistently-sized segments as they grow
+            // through their own combat, rather than always growing full-size segments.
+            const newSegRadius = segRadius * (this.radius / headRadius);
+            const seg = new SnakeSegment(leader.x, leader.y, this, leader, newSegRadius);
             this.segments.push(seg);
-            this.battle.addBody(seg);
+            this.battle.addBall(seg);
         }
     }
 
@@ -4221,13 +4346,15 @@ class DamageIndicator {
     constructor(ball, dmg, color) {
         this.ball = ball;
         this.color = mixWithBlack(color, 50);
+        this.remainder = (this.ball.hp + dmg) % 1;
         this.setDmg(dmg);
         this.reset();
     }
 
     setDmg(dmg) {
-        this.dmg = Math.round(dmg);
-        this.fontSize = 20 + 2 * Math.log(this.dmg);
+        this.dmg = dmg;
+        this.displayedDmg = Math.ceil(dmg - this.remainder);
+        this.fontSize = 20 + 2 * (this.displayedDmg == 0 ? 0 : Math.log(this.displayedDmg));
     }
 
     reset() {
@@ -4237,7 +4364,6 @@ class DamageIndicator {
 
     update() {
         const vy = Math.min(1, (1 - this.life) * 2);
-        // this.vy = 0.5 + (1 - this.life);
         if (this.life > indicatorComboThresh) {
             this.yOffset += vy;
             this.x = this.ball._renderX ?? this.ball.x;
@@ -4258,7 +4384,7 @@ class DamageIndicator {
         ctx.lineWidth = 1;
         // ctx.strokeText(this.dmg, this.x, this.y);
         ctx.fillStyle = this.color;
-        ctx.fillText(this.dmg, this.x, this.y);
+        ctx.fillText(this.displayedDmg, this.x, this.y);
         ctx.globalAlpha = 1;
     }
 }
