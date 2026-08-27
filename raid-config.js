@@ -21,6 +21,7 @@ const RAID_CONFIG = {
         "Hammer": 500,
         "Mirror": 500,
         "Club": 500,
+        // "Snake": 999,
     }
 };
 
@@ -34,8 +35,10 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
     // Grimoire and Mirror are mutually banned as raiders against each other's boss,
     // to avoid infinite minion-summoning loops (Grimoire clones Mirror's reflect behavior).
     let bannedNames = bossName === "Grimoire" || bossName === "Mirror" || bossName === "Duplicator" ? ["Grimoire", "Mirror"]
+        // : bossName === "Snake" ? ["Grimoire", "Snake"]
         : [bossName];
     bannedNames.push("Duplicator");
+    bannedNames.push("Snake");
 
     const raiderIndices = ballClasses
         .map((b, i) => i)

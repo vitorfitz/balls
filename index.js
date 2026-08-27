@@ -275,8 +275,8 @@ class Ball extends CircleBody {
 
             let dmg;
             if (this.battle.mode == DUEL) {
-                dmg = this.slamTimer > 12 ? 3 :
-                    this.slamTimer > 8 ? 2 :
+                dmg = this.slamTimer > 8 ? 3 :
+                    this.slamTimer > 5 ? 2 :
                         1;
             }
             else {
@@ -1323,12 +1323,12 @@ function addMirrorIFrames(weapon, target) {
 }
 
 function applySnakeIFrames(weapon, target, key = iframeKeyFor(target)) {
-    if (target instanceof SnakeBall) {
+    if (target.segments) {
         weapon.setIFrames(target, "snake" + target.id);
     }
-    else if (target instanceof SnakeSegment && !weapon.iFrames[key]) {
-        weapon.setIFrames(target, target.owner.id);
-    }
+    // else if (target instanceof SnakeSegment && !weapon.iFrames[key]) {
+    //     weapon.setIFrames(target, target.owner.id);
+    // }
 }
 
 // Profiling
@@ -1371,6 +1371,176 @@ function addToHitHistory(balls, factor = 1) {
         a.hitsThisFrame += factor;
         a.hitsThisFrame += factor;
     }
+}
+
+// Uniform-grid broad phase, shared by the two quadratic collision loops
+// (ball-ball in updatePhysics() and ball-ball weapon checks in
+// _checkWeaponCollisions()).
+//
+// Each body is bucketed into every cell its query circle overlaps, so two bodies
+// whose query circles don't overlap never share a cell and can be skipped without
+// running the narrow-phase test. Callers pass a per-body query radius that already
+// bounds everything the narrow phase could reach (swept motion for physics, weapon
+// reach for weapons), which makes the culling conservative: only pairs that would
+// have tested negative anyway are dropped.
+//
+// Usage is deliberately flag-based rather than "give me a candidate list":
+//   grid.build(bodies, n, queryRadii);
+//   for (i...) { grid.mark(i); for (j = i+1...) { if (!grid.isCandidate(j)) continue; ...  } }
+// so the surviving pairs are still visited in exactly the same i<j order as the
+// original double loop. That matters because both loops are order-sensitive (the
+// physics loop breaks ties on scan order, weapon hits mutate state as they go), so
+// preserving order keeps results bit-identical to brute force.
+class SpatialGrid {
+    constructor() {
+        this.n = 0;
+        this.cellStart = new Int32Array(0); // prefix-summed cell offsets into items
+        this.items = new Int32Array(0);     // body indices, grouped by cell
+        this.cx0 = new Int32Array(0);       // per-body cell range
+        this.cy0 = new Int32Array(0);
+        this.cx1 = new Int32Array(0);
+        this.cy1 = new Int32Array(0);
+        this.stamp = new Int32Array(0);     // per-body marker for the current mark() query
+        this.gen = 0;
+        this.gridW = 1;
+        this.gridH = 1;
+        this.cell = 1;
+        this.minX = 0;
+        this.minY = 0;
+    }
+
+    // radii[i] must be >= anything the narrow phase can reach from body i.
+    build(bodies, n, radii) {
+        this.n = n;
+        if (this.cx0.length < n) {
+            this.cx0 = new Int32Array(n * 2);
+            this.cy0 = new Int32Array(n * 2);
+            this.cx1 = new Int32Array(n * 2);
+            this.cy1 = new Int32Array(n * 2);
+            this.stamp = new Int32Array(n * 2);
+            this.gen = 0;
+        }
+        if (n === 0) return;
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, rSum = 0;
+        for (let i = 0; i < n; i++) {
+            const b = bodies[i], r = radii[i];
+            if (b.x - r < minX) minX = b.x - r;
+            if (b.y - r < minY) minY = b.y - r;
+            if (b.x + r > maxX) maxX = b.x + r;
+            if (b.y + r > maxY) maxY = b.y + r;
+            rSum += r;
+        }
+
+        // Cell size from the average query radius: small bodies land in one or two
+        // cells, and an unusually large one (e.g. a fully grown Grower) just spans
+        // more cells instead of forcing the whole grid coarse.
+        let cell = 2 * (rSum / n);
+        if (!(cell > 0) || !isFinite(cell)) cell = 1;
+        const spanX = Math.max(0, maxX - minX), spanY = Math.max(0, maxY - minY);
+        let gridW = Math.floor(spanX / cell) + 1, gridH = Math.floor(spanY / cell) + 1;
+        // Keep the cell table bounded regardless of arena size / body spread.
+        const maxCells = 4096;
+        while (gridW * gridH > maxCells) {
+            cell *= 2;
+            gridW = Math.floor(spanX / cell) + 1;
+            gridH = Math.floor(spanY / cell) + 1;
+        }
+        this.cell = cell;
+        this.gridW = gridW;
+        this.gridH = gridH;
+        this.minX = minX;
+        this.minY = minY;
+
+        const cellCount = gridW * gridH;
+        if (this.cellStart.length < cellCount + 1) this.cellStart = new Int32Array((cellCount + 1) * 2);
+        const cellStart = this.cellStart;
+        cellStart.fill(0, 0, cellCount + 1);
+
+        // Counting sort: tally per-cell occupancy, prefix sum, then scatter.
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+            const b = bodies[i], r = radii[i];
+            let x0 = Math.floor((b.x - r - minX) / cell), x1 = Math.floor((b.x + r - minX) / cell);
+            let y0 = Math.floor((b.y - r - minY) / cell), y1 = Math.floor((b.y + r - minY) / cell);
+            if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+            if (x1 > gridW - 1) x1 = gridW - 1; if (y1 > gridH - 1) y1 = gridH - 1;
+            if (x1 < x0) x1 = x0; if (y1 < y0) y1 = y0;
+            this.cx0[i] = x0; this.cx1[i] = x1; this.cy0[i] = y0; this.cy1[i] = y1;
+            for (let cy = y0; cy <= y1; cy++) {
+                const row = cy * gridW;
+                for (let cx = x0; cx <= x1; cx++) cellStart[row + cx + 1]++;
+            }
+            total += (x1 - x0 + 1) * (y1 - y0 + 1);
+        }
+        for (let c = 0; c < cellCount; c++) cellStart[c + 1] += cellStart[c];
+        if (this.items.length < total) this.items = new Int32Array(total * 2);
+        const items = this.items;
+        const cursor = this._cursor && this._cursor.length >= cellCount ? this._cursor : (this._cursor = new Int32Array(cellCount * 2));
+        for (let c = 0; c < cellCount; c++) cursor[c] = cellStart[c];
+        for (let i = 0; i < n; i++) {
+            const x0 = this.cx0[i], x1 = this.cx1[i], y0 = this.cy0[i], y1 = this.cy1[i];
+            for (let cy = y0; cy <= y1; cy++) {
+                const row = cy * gridW;
+                for (let cx = x0; cx <= x1; cx++) items[cursor[row + cx]++] = i;
+            }
+        }
+    }
+
+    // Flag every body sharing a cell with body i. Returns the generation stamp, so
+    // hot callers can read stamp[] directly instead of going through isCandidate().
+    mark(i) {
+        const gen = ++this.gen;
+        const { items, cellStart, stamp, gridW } = this;
+        const x0 = this.cx0[i], x1 = this.cx1[i], y0 = this.cy0[i], y1 = this.cy1[i];
+        for (let cy = y0; cy <= y1; cy++) {
+            const row = cy * gridW;
+            for (let cx = x0; cx <= x1; cx++) {
+                const c = row + cx;
+                for (let k = cellStart[c], end = cellStart[c + 1]; k < end; k++) stamp[items[k]] = gen;
+            }
+        }
+        return gen;
+    }
+
+    isCandidate(j) {
+        return this.stamp[j] === this.gen;
+    }
+}
+
+// Upper bound on how far a body's surface can reach during `dt` ticks: its radius
+// (the largest it might be tested at, for growers with pastRadii) plus the distance
+// it can travel under its current velocity and gravity. Two bodies can only touch
+// within `dt` if their bounds overlap, which is what lets the grid cull pairs
+// without changing which collisions are found.
+function sweptQueryRadius(b, dt, gravity) {
+    let r = b.radius;
+    const past = b.pastRadii;
+    if (past) {
+        for (let i = 0; i < past.length; i++) if (past[i] > r) r = past[i];
+    }
+    const s = b.getTimeScale();
+    const g = b.gravity ? gravity : 0;
+    const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+    // Slack absorbs floating-point error in the bound itself, so culling stays
+    // strictly conservative.
+    return r + speed * s * dt + 0.5 * Math.abs(g) * s * s * dt * dt + 1e-6;
+}
+
+// Upper bound on how far any of a ball's weapon hitboxes can reach from its
+// center, used as the query radius for the weapon broad phase. Each collider's
+// rectangle lies within max(range, colliderOffset) + thickness of the ball's
+// surface, including MirrorBall's perpendicular override of getHitSegment().
+function weaponQueryRadius(b) {
+    let reach = b.radius;
+    for (const w of b.weapons) {
+        for (const c of w.colliders) {
+            if (!c) continue;
+            const r = b.radius + Math.max(c.range || 0, c.colliderOffset || 0) + (c.thickness || 0);
+            if (r > reach) reach = r;
+        }
+    }
+    return reach + 1e-6;
 }
 
 // let debugBodies = [];
@@ -1418,11 +1588,11 @@ class BallBattle {
                     if (b.owner instanceof GrimoireBall) {
                         if (b instanceof DuplicatorBall) count += 0.1;
                         else if (b instanceof DaggerBall) count += 0.5;
-                        else if (b instanceof SnakeSegment) count += 0.01;
                         else count++;
                     }
                     else {
-                        if (!(b instanceof SnakeSegment)) count += 0.2;
+                        if (b instanceof SnakeSegment && b.owner.owner instanceof GrimoireBall) count += 0.05;
+                        else if (!(b instanceof SnakeSegment)) count += 0.2;
                     }
                 }
             }
@@ -1448,7 +1618,9 @@ class BallBattle {
             else {
                 let count = 0;
                 for (let i = 0; i < this.balls.length; i++) {
-                    count += this.balls[i].isStunned() ? 0 : (this.balls[i] instanceof DuplicatorBall ? 0.1 : 1) * (this.balls[i].owner && !this.balls[i].owner.giga ? 0.5 : 1);
+                    if (!this.balls[i].isStunned() && !(this.balls[i] instanceof SnakeSegment)) {
+                        count += (this.balls[i] instanceof DuplicatorBall ? 0.1 : 1) * (this.balls[i].owner && !this.balls[i].owner.giga ? 0.5 : 1);
+                    }
                 }
                 if (this.mode == FFA) this.targetTimeScale = 0.92 ** Math.max(0, count - 2);
                 else this.targetTimeScale = 0.92 ** Math.max(0, count - 2);
@@ -1470,6 +1642,7 @@ class BallBattle {
             }
             let intensity = weighted / totalWeight;
             if (this.lol) intensity /= (this.balls.length / 2);
+            else if (this.mode == DUEL && (this.balls[0] instanceof GrimoireBall && this.balls[1] instanceof SnakeBall || this.balls[1] instanceof GrimoireBall && this.balls[0] instanceof SnakeBall)) intensity /= 2;
             return Math.max(0.2, 1 / (1 + 2 * intensity));
         };
 
@@ -1623,18 +1796,40 @@ class BallBattle {
         let samePairStreak = 0;
         while (dt > EPS) {
             if (++iterations == 1001) {
-                console.warn(`[t=${t}] Physics loop exceeded 1000 iterations, bodies=${this.bodies.length}, dt=${dt}, seed=${this.seed}`);
+                // console.warn(`[t=${t}] Physics loop exceeded 1000 iterations, bodies=${this.bodies.length}, dt=${dt}, seed=${this.seed}`);
                 break;
             }
             // --- Find earliest ball-ball collision ---
             let tBall = Infinity;
             let pair = null;
 
-            for (let i = 0; i < this.bodies.length; i++) {
-                for (let j = i + 1; j < this.bodies.length; j++) {
+            // Broad phase: bucket bodies by their swept bounds for this remaining
+            // dt, so the loop below only runs timeToCollision() on pairs that could
+            // actually reach each other. Pairs it skips would have returned
+            // Infinity, so the event picked here is the same one brute force picks.
+            const nBodies = this.bodies.length;
+            const grid = this._grid ??= new SpatialGrid();
+            let queryRadii = this._queryRadii;
+            if (!queryRadii || queryRadii.length < nBodies) queryRadii = this._queryRadii = new Float64Array(nBodies * 2);
+            for (let i = 0; i < nBodies; i++) queryRadii[i] = sweptQueryRadius(this.bodies[i], dt, this.gravity);
+            grid.build(this.bodies, nBodies, queryRadii);
+
+            const stamp = grid.stamp;
+            // Reused single-element radius lists, so the common (non-Grower) case
+            // doesn't allocate a throwaway array per pair per pass.
+            const scratchR1 = this._scratchR1 ??= [0];
+            const scratchR2 = this._scratchR2 ??= [0];
+
+            for (let i = 0; i < nBodies; i++) {
+                const gen = grid.mark(i);
+                for (let j = i + 1; j < nBodies; j++) {
+                    if (stamp[j] !== gen) continue;
                     const b1 = this.bodies[i], b2 = this.bodies[j];
-                    const radii1 = b1.pastRadii && !(b2 instanceof Bullet) ? b1.pastRadii : [b1.radius];
-                    const radii2 = b2.pastRadii && !(b1 instanceof Bullet) ? b2.pastRadii : [b2.radius];
+                    let radii1, radii2;
+                    if (b1.pastRadii && !(b2 instanceof Bullet)) radii1 = b1.pastRadii;
+                    else { scratchR1[0] = b1.radius; radii1 = scratchR1; }
+                    if (b2.pastRadii && !(b1 instanceof Bullet)) radii2 = b2.pastRadii;
+                    else { scratchR2[0] = b2.radius; radii2 = scratchR2; }
 
                     radiiLoop:
                     for (let i = radii1.length - 1; i >= 0; i--) {
@@ -1658,8 +1853,14 @@ class BallBattle {
             let tWall = Infinity;
             let wallEvents = [];
 
-            for (const b of this.bodies) {
+            for (let bi = 0; bi < nBodies; bi++) {
+                const b = this.bodies[bi];
+                // Same swept bound as the ball-ball broad phase: if the body can't
+                // cover the gap to the wall's plane (or to the corner point) within
+                // dt, its timeToCollision() would return Infinity anyway.
+                const reach = queryRadii[bi];
                 for (const wall of this.walls) {
+                    if (Math.abs((wall.axis === VERTICAL ? b.x : b.y) - wall.pos) > reach + Math.abs(wall.velocity) * dt) continue;
                     const tCol = wall.timeToCollision(b, dt);
                     if (tCol < tWall - EPS) {
                         tWall = tCol;
@@ -1758,14 +1959,26 @@ class BallBattle {
                     samePairStreak = 1;
                 }
                 if (samePairStreak >= samePairStunBreakLimit) {
+                    // Clear stun on the whole owner tree the stuck body belongs to —
+                    // up to the root (e.g. a stuck segment's snake head) and back
+                    // down through every dependent (e.g. a stuck head's segments,
+                    // or a Grimoire minion's own sub-minions). stunBall() cascades
+                    // stun downward through the same owner links on application, so
+                    // release must mirror that or dependents can be left stunned
+                    // (mass=Infinity, frozen) with no owner whose expiring stunTime
+                    // would ever have cleared them.
+                    const clearStunTree = (root) => {
+                        root.stunTime = 0;
+                        root.clearStun();
+                        for (const other of this.balls) {
+                            if (other.owner === root) clearStunTree(other);
+                        }
+                    };
                     for (const b of [pair[0], pair[1]]) {
                         if (b.isStunned && b.isStunned()) {
                             let owner = b;
-                            while (owner) {
-                                owner.stunTime = 0;
-                                owner.clearStun();
-                                owner = owner.owner;
-                            }
+                            while (owner.owner) owner = owner.owner;
+                            clearStunTree(owner);
                         }
                     }
                     samePairStreak = 0;
@@ -1917,8 +2130,21 @@ class BallBattle {
     }
 
     _checkWeaponCollisions(balls) {
+        // Broad phase over the balls, keyed on each one's weapon reach (see
+        // weaponQueryRadius): every check in the pair loop below — weapon vs ball,
+        // weapon vs weapon, the Mirror special cases — needs the two balls' reach
+        // circles to overlap, so pairs the grid separates can't produce a hit.
+        const n = balls.length;
+        const grid = this._weaponGrid ??= new SpatialGrid();
+        let radii = this._weaponRadii;
+        if (!radii || radii.length < n) radii = this._weaponRadii = new Float64Array(n * 2);
+        for (let i = 0; i < n; i++) radii[i] = weaponQueryRadius(balls[i]);
+        grid.build(balls, n, radii);
+
         for (let i = 0; i < balls.length; i++) {
+            grid.mark(i);
             for (let j = i + 1; j < balls.length; j++) {
+                if (!grid.isCandidate(j)) continue;
                 const A = balls[i];
                 const B = balls[j];
                 const aStunned = A.isStunned();
@@ -2003,9 +2229,16 @@ class BallBattle {
 
         for (const ball of balls) {
             if (ball.isStunned()) continue;
+            // Same reach bound as the pair loop above, used here to reject bullets
+            // that are too far away to touch this ball's weapons before paying for
+            // the full segment test.
+            const reach = weaponQueryRadius(ball);
             for (const w of ball.parryWeapons) {
                 for (const body of this.bodies) {
                     if (body instanceof Bullet && body.owner !== ball) {
+                        const dx = body.x - ball.x, dy = body.y - ball.y;
+                        const lim = reach + body.radius;
+                        if (dx * dx + dy * dy > lim * lim) continue;
                         if (weaponHitsBall(w, body)) {
                             body.reflect(ball, w);
                         }
@@ -2243,7 +2476,7 @@ class BallBattle {
         }
 
         for (const b of this.balls) {
-            if (!(b instanceof SnakeBall) || b.segments.length === 0) continue;
+            if (!b.segments || b.segments.length === 0 || b.isStunned()) continue;
             const chain = [b, ...b.segments];
 
             let keBefore = 0;
@@ -2255,7 +2488,7 @@ class BallBattle {
                 for (let i = 0; i < chain.length - 1; i++) {
                     const a = chain[i], c = chain[i + 1];
                     if (c.dormant) continue; // stays pinned exactly at spawn until activated
-                    if (a.isStunned() && c.isStunned()) continue; // both ends infinite-mass (0/0 weights -> NaN); neither can move anyway
+
                     const dx = c.x - a.x, dy = c.y - a.y;
                     const dist = Math.hypot(dx, dy) || EPS;
                     const ux = dx / dist, uy = dy / dist;
@@ -2619,7 +2852,7 @@ class DaggerBall extends Ball {
         dagger.ballColFns.push((b) => {
             if (this.scalingCooldown <= EPS) {
                 dagger.angVel = (Math.abs(dagger.angVel) + this.baseSpin * 0.1) * Math.sign(dagger.angVel);
-                this.scalingCooldown = this.battle.mode == FFA ? 10 : this.giga ? 25 : 4;
+                this.scalingCooldown = this.battle.mode == FFA ? 8 : this.giga ? 25 : 4;
             }
         });
 
@@ -2715,14 +2948,14 @@ class LanceBall extends Ball {
             }
 
             if (this.damageThisTick == -1) {
-                if (!this.comboHits.has(target.id) && !lance.iFrames["snake" + target.id]) {
+                if (!this.comboHits.has(target.id) /*&& !lance.iFrames["snake" + target.id]*/) {
                     this.applyBoost();
                 }
 
                 if (this.combo == 0 || oldHit < this.comboLeniency - 1) this.dist = 0;
 
                 this.comboHits.add(target.id);
-                const distToHit = 64 * this.startSpeed;
+                const distToHit = 63 * this.startSpeed;
                 const procs = Math.floor(-this.dist / distToHit) + 1;
                 this.dist += procs * distToHit;
 
@@ -2731,7 +2964,7 @@ class LanceBall extends Ball {
                 this.damageThisTick = (oldCombo + this.combo + 1) * procs / 2;
             }
 
-            if (target instanceof SnakeBall) {
+            if (target.segments) {
                 lance.iFrames["snake" + target.id] = 3;
             }
             target.damage(this.damageThisTick, source);
@@ -2853,7 +3086,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = (this.giga ? 1.4 : this.battle.mode == DUEL ? 1 : 1.6) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (this.giga ? 1.4 : this.battle.mode == DUEL ? 1 : 1.65) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -2927,7 +3160,7 @@ class Bullet extends CircleBody {
             //     console.log(`[t=${t}] bullet handleCollision: hitting ${b.constructor.name}, hitCredit=${this.hitCredit.constructor.name}, prevHitCredit=${this.prevHitCredit?.constructor.name}, using hc=${hc.constructor.name}`);
             // }
             b.damage(this.dmg, hc);
-            if (this.owner instanceof WrenchBall && b instanceof SnakeSegment) this.dmg = 0;
+            if (this.owner instanceof WrenchBall && b instanceof SnakeSegment && this.battle.mode == DUEL) this.dmg = 0;
         }
 
         if (b instanceof Turret) this.hp = 0;
@@ -3382,12 +3615,10 @@ class GrimoireBall extends Ball {
             if (target.depth > 1 && this.battle.rng() < 0.8) return;
             if ((this.battle.teamCount?.[this.team] ?? 0) >= 40) return;
 
-            // A SnakeSegment isn't an independent unit (no real constructor shape of
-            // its own, no meaningful HP/team apart from its head) — clone based on
-            // the snake head it belongs to instead.
-            if (target instanceof SnakeSegment) target = target.owner;
-
+            if (this.battle.mode == DUEL && this.summonCooldown > EPS) return;
             this.nextMinionHP += this.minionHPGain;
+
+            if (target instanceof SnakeSegment && this.battle.mode == FFA) return;
             if (target instanceof DuplicatorBall && (this.battle.teamCount[this.team] ?? 0) >= dupeLimit) return;
             if (this.summonCooldown > EPS) return;
 
@@ -3395,7 +3626,7 @@ class GrimoireBall extends Ball {
             if (minion && this.battle.inRectBounds(minion.x, minion.y, minion.radius)) {
                 minion.inert = true;
                 this.battle.addBall(minion);
-                this.summonCooldown = this.battle.mode == FFA && this.owner || minion instanceof SnakeBall ? 50 : 0;
+                this.summonCooldown = this.battle.mode == FFA && this.owner ? 50 : minion.segments ? 25 : 0;
                 // this.summonCooldown = 0;
                 // console.log(`[t=${t}] create ${minion.constructor.name} minion: energy=${minion.totalEnergy()} mass=${minion.mass} radius=${minion.radius} speed=${Math.hypot(minion.vx, minion.vy)}`);
             }
@@ -3405,14 +3636,20 @@ class GrimoireBall extends Ball {
     }
 
     createMinion(target, reflector) {
-        // if (!(target instanceof GrowerBall)) return;
-        // if (t > 6000) return;
+        let segmentsNerf = 0, target0 = target;
+        if (target instanceof SnakeSegment) {
+            while (true) {
+                segmentsNerf++;
+                if (target.leader == null) break;
+                target = target.leader;
+            }
+        }
 
         const newRadius = target.radius * (target.giga ? 1 / 4 : 1) * minionScale;
         const Constructor = target.constructor;
 
         // Get constructor parameters based on ball type
-        const args = this.getMinionArgs(target, Constructor, newRadius);
+        const args = this.getMinionArgs(target0, Constructor, newRadius);
         if (!args) return null;
 
         const minion = new Constructor(...args);
@@ -3429,22 +3666,14 @@ class GrimoireBall extends Ball {
         minion.slowFactor = this.slowFactor;
         minion.mass *= 1 / scale;
 
-        console.log(`[t=${t}] createMinion: ${Constructor.name} target#${target.id} targetDepth=${target.depth ?? 0} targetRadius=${target.radius.toFixed(2)} targetGiga=${!!target.giga} targetScale=${target.scale ?? 1} newRadius(preClamp)=${newRadius.toFixed(2)} -> minion#${minion.id} depth=${minion.depth} radius=${minion.radius.toFixed(2)} mass=${minion.mass.toFixed(4)} scale=${scale} pos=(${minion.x.toFixed(1)},${minion.y.toFixed(1)}) v=(${minion.vx.toFixed(3)},${minion.vy.toFixed(3)}) args=${JSON.stringify(args)}`);
-
-        if (target instanceof SnakeBall) console.log(`[t=${t}] createMinion SNAKE pre-copyBoosts: target#${target.id} depth=${target.depth} radius=${target.radius.toFixed(2)} segs=${target.segments.length} args=${JSON.stringify(args)} -> minion#${minion.id} depth=${minion.depth} radius=${minion.radius.toFixed(2)} mass=${minion.mass.toFixed(2)} scale=${scale} pos=(${minion.x.toFixed(1)},${minion.y.toFixed(1)}) v=(${minion.vx.toFixed(3)},${minion.vy.toFixed(3)})`);
-
         // Copy boost properties
-        this.copyBoosts(target, minion);
-
-        if (target instanceof SnakeBall) console.log(`[t=${t}] createMinion SNAKE post-copyBoosts: minion#${minion.id} extraEnergy=${minion.extraEnergy} segs=${minion.segments.length} segDetails=${minion.segments.map(s => `#${s.id}(r=${s.radius.toFixed(2)},dormant=${s.dormant},pos=${s.x.toFixed(1)},${s.y.toFixed(1)})`).join(' ')}`);
+        this.copyBoosts(target, minion, segmentsNerf);
 
         // Scale weapon properties
         for (const w of minion.weapons) {
             w.scaleBy(scale * (target.scale ?? 1));
             if (w.theta) w.theta = this.weapons[0].theta + Math.PI;
         }
-
-        console.log(`[t=${t}] createMinion post-weaponScale: minion#${minion.id} finalRadius=${minion.radius.toFixed(2)} finalMass=${minion.mass.toFixed(4)} weapons=${minion.weapons.map(w => `range=${w.range},thickness=${w.thickness}`).join(' ')}`);
 
         // Apply iframes
         for (const w of minion.weapons) {
@@ -3461,7 +3690,7 @@ class GrimoireBall extends Ball {
         this.summonCooldown -= dt;
     }
 
-    copyBoosts(target, minion) {
+    copyBoosts(target, minion, segmentsNerf = 0) {
         const speedDen = this.battle.mode == DUEL ? minionScale : Math.sqrt(minionScale);
 
         for (let i = 0; i < target.weapons.length && i < minion.weapons.length; i++) {
@@ -3528,11 +3757,13 @@ class GrimoireBall extends Ball {
         else if (target instanceof ClubBall) {
             minion.stunDur = target.stunDur;
         }
-        else if (target instanceof SnakeBall) {
+        else if (target.segments) { // snake or mirror with segments
+            if (!minion.segments) minion.segments = []; // mirror clones don't init segments in their constructor
+            minion.extraEnergy = 0; // mirror clones don't init this in their constructor either; segments start dormant so no surplus has accrued yet
             const segScale = minionScale ** minion.depth;
             const minionSegRadius = segRadius * segScale;
             let leader = minion;
-            for (const _ of target.segments) {
+            for (let i = 0; i < target.segments.length - segmentsNerf; i++) {
                 const seg = new SnakeSegment(minion.x, minion.y, minion, leader, minionSegRadius);
                 seg.team = minion.team;
                 minion.segments.push(seg);
@@ -3549,8 +3780,8 @@ class GrimoireBall extends Ball {
         // if (Constructor === GrowerBall || Constructor === MirrorBall) return null;
 
         const theta = target.vy == 0 && target.vx == 0 ? this.battle.rng() * 2 * Math.PI : Math.atan2(target.vy, target.vx) + Math.PI;
-        const speedNum = target.giga ? this.startSpeed : target.startSpeed;
-        const speedDen = this.battle.mode == DUEL ? minionScale : Math.sqrt(minionScale);
+        const speedNum = target.giga ? this.startSpeed : (target.startSpeed || target.owner.startSpeed);
+        const speedDen = this.battle.mode == DUEL && !(target instanceof SnakeBall || target instanceof SnakeSegment) ? minionScale : Math.sqrt(minionScale);
         let speed = this.battle.lol ? this.startSpeed : speedNum / speedDen;
         const baseArgs = [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed];
 
@@ -3596,7 +3827,7 @@ class GrimoireBall extends Ball {
 
 const growCooldown = 9;
 const maxScaleByMode = [6.56, 4.9, 14.9];
-const duelSlam = 12, FFASlam = 18;
+const duelSlam = 9, FFASlam = 18;
 
 function getTargetBoostEnergy(scale) {
     return 10 * (1 - 2 ** (1 - scale));
@@ -3759,7 +3990,7 @@ class GrowerBall extends Ball {
     }
 
     getDmgResistance() {
-        return this.scale ** 2 * 0.25 + 0.75;
+        return this.battle.mode == FFA ? this.scale ** 2 * 0.2 + 0.8 : this.scale ** 2 * 0.25 + 0.75;
     }
 
     damage(dmg, source = null) {
@@ -3953,8 +4184,8 @@ class MirrorBall extends Ball {
     onLoad() {
         const w = this.weapons[0];
         if (this.battle.mode == FFA || this.battle.mode == RAID && !this.giga) {
-            w.range -= 1;
-            w.thickness -= 1;
+            w.range -= 2;
+            w.thickness -= 2;
         }
         else if (this.giga) {
             w.range += 4;
@@ -3964,7 +4195,7 @@ class MirrorBall extends Ball {
 }
 
 // Hammer: Builds up power for next attack
-const hammerAccel = 0.000294;
+const hammerAccel = 0.0003;
 class HammerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c87941", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -3992,7 +4223,7 @@ class HammerBall extends Ball {
             hammer.iframes = 40;
 
             if (!this.isStunned()) {
-                this.antiSwarmBoost += (this.battle.mode == DUEL ? 1 : this.giga ? 0 : 0.5) + (this.antiSwarmBoost / (4 + 0.1 * this.antiSwarmBoost));
+                this.antiSwarmBoost += (this.battle.mode == DUEL ? 1 : this.giga ? 0 : 0) + (this.antiSwarmBoost / (4 + 0.1 * this.antiSwarmBoost));
             }
         });
 
@@ -4004,7 +4235,7 @@ class HammerBall extends Ball {
         const m = (ceiling - this.power);
         if (m < 0) console.warn(t, "asdasdas");
 
-        this.power += hammerAccel * m * dt * (this.giga ? 3 : this.battle.mode == RAID ? 0.8 : 1);
+        this.power += hammerAccel * m * dt * (this.giga ? 3 : this.battle.mode == RAID ? 0.8 : this.battle.mode == FFA ? 0.95 : 1);
 
         this.antiSwarmBoost = Math.max(0, this.antiSwarmBoost - 0.0037 * dt);
         const oldAntiSwarm = this.antiSwarmBoost;
@@ -4084,7 +4315,6 @@ const snakeLinkStiffness = 0.25; // fraction of the remaining length error corre
 const snakeLinkMaxCorrection = 0.25; // per-link velocity change cap, in restDist per tick
 const snakeLinkFriction = 0.01;
 const snakeExtraEnergyDecay = 0.01; // fraction of extraEnergy bled off per tick (scaled by timeScale)
-const snakeSegCooldown = 5;
 const headRadius = 25;
 const segRadius = 18.75;
 class SnakeSegment extends Ball {
@@ -4104,14 +4334,10 @@ class SnakeSegment extends Ball {
         this.flashTime = performance.now() + flashDur;
     }
 
-    // While dormant, behave like an infinite-mass pinned body (same as a stunned
-    // ball or turret): reflect whatever touches it, but never move itself. This
-    // keeps it from ever overlapping another ball unnoticed, which previously
-    // left it sitting inside a ball with no separation until it woke up and
-    // suddenly resolved that overlap with a real mass/velocity all at once.
     onCollision(b) {
         if (this.dormant) {
             if (!(b instanceof Ball && b.isStunned())) {
+                this.handleCollision(b);
                 const dx = b.x - this.x, dy = b.y - this.y;
                 const dist = Math.hypot(dx, dy) || 1;
                 const nx = dx / dist, ny = dy / dist;
@@ -4122,13 +4348,10 @@ class SnakeSegment extends Ball {
         super.onCollision(b);
     }
 
-    // Contact damage against enemies, dispatched from Ball.onCollision (which also
-    // gives segments the standard stun-reflection/slam-damage behavior other Balls get,
-    // rather than segments needing their own copy of that logic).
-    handleCollision(b) {
+    handleCollision(b, reflector) {
         if (!(b instanceof Ball) || b.team == this.owner.team) return;
         if (this.dmgCooldown[b.id] > EPS) return;
-        this.dmgCooldown[b.id] = snakeSegCooldown;
+        this.dmgCooldown[b.id] = this.battle.mode == DUEL ? 6 : 15;
         b.damage(1, this.owner);
         if (!b.owner && !(b instanceof DuplicatorBall || b instanceof GrowerBall)) addToHitHistory([this.owner, b], 1);
     }
@@ -4164,12 +4387,6 @@ class SnakeSegment extends Ball {
                 const surplus = 0.5 * this.mass * (this.battle.gravity * (this.battle.height - this.radius - this.y) + this.vx ** 2 + this.vy ** 2 - this.owner.startSpeed ** 2);
                 this.owner.extraEnergy += surplus * 0.5;
             }
-            else {
-                this._dormantTicks = (this._dormantTicks ?? 0) + 1;
-                if (this._dormantTicks === 600) {
-                    console.log(`[t=${t}] seg#${this.id} STUCK DORMANT 600+ ticks owner#${this.owner.id} leader=${this.leader.constructor.name}#${this.leader.id} leaderPos=(${this.leader.x.toFixed(1)},${this.leader.y.toFixed(1)}) leaderStunned=${this.leader.isStunned?.() ?? 'n/a'} leaderVel=(${this.leader.vx?.toFixed?.(3)},${this.leader.vy?.toFixed?.(3)}) myPos=(${this.x.toFixed(1)},${this.y.toFixed(1)}) dist=${dist.toFixed(2)} thresh=${(this.leader.radius + this.radius).toFixed(2)} myRadius=${this.radius.toFixed(2)} leaderRadius=${this.leader.radius.toFixed(2)}`);
-                }
-            }
             return;
         }
 
@@ -4195,22 +4412,28 @@ class SnakeBall extends Ball {
         this.extraEnergy = 0;
     }
 
-    handleCollision(b) {
-        if (b.team == this.team || !(b instanceof Ball) || b instanceof SnakeSegment) return;
+    handleCollision(b, reflector) {
+        const owner = reflector || this;
+        if ((!reflector && b.team == this.team) || !(b instanceof Ball) || b instanceof SnakeSegment) return;
 
-        if (this.segCooldown <= EPS) {
-            b.damage(1, this);
-            if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([this, b], 10);
+        // Initialize snake state on reflector
+        if (reflector && reflector.segments == null) {
+            reflector.segments = [];
+            reflector.segCooldown = 0;
+            reflector.extraEnergy = 0;
+            reflector.extraUpdates.push(SnakeBall.prototype.handleUpdate.bind(reflector));
+        }
 
-            this.segCooldown = snakeSegCooldown;
-            const leader = this.segments.length ? this.segments[this.segments.length - 1] : this;
-            // Scale the new segment relative to this snake's own head size (segRadius
-            // is calibrated for a full-size, depth-0 head at headRadius) so minion
-            // snakes spawned by Grimoire keep consistently-sized segments as they grow
-            // through their own combat, rather than always growing full-size segments.
-            const newSegRadius = segRadius * (this.radius / headRadius);
-            const seg = new SnakeSegment(leader.x, leader.y, this, leader, newSegRadius);
-            this.segments.push(seg);
+        if (owner.segCooldown <= EPS) {
+            b.damage(1, owner);
+            if (!b.owner && !(b instanceof DuplicatorBall)) addToHitHistory([owner, b], 10);
+
+            owner.segCooldown = this.battle.mode == DUEL ? 6 : 15;
+            const leader = owner.segments.length ? owner.segments[owner.segments.length - 1] : owner;
+            const ownerScale = (owner.baseRadius ?? owner.radius) / headRadius;
+            const newSegRadius = (owner.giga ? 2 * segRadius : segRadius) * ownerScale;
+            const seg = new SnakeSegment(leader.x, leader.y, owner, leader, newSegRadius);
+            owner.segments.push(seg);
             this.battle.addBall(seg);
         }
     }
@@ -4222,7 +4445,7 @@ class SnakeBall extends Ball {
 
     getInfoEl() {
         return this.propsToList({
-            "Segments": { text: this.segments.length, grad: { from: 0, to: 15 } },
+            "Segments": { text: this.segments.length, grad: { from: 0, to: 20 } },
         });
     }
 }

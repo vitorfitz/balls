@@ -26,6 +26,7 @@ global.GrimoireBall = GrimoireBall;
 global.MirrorBall = MirrorBall;
 global.HammerBall = HammerBall;
 global.ClubBall = ClubBall;
+global.SnakeBall = SnakeBall;
 
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -46,7 +47,8 @@ const BALL_TYPES = [
     { name: 'Sword', create: (pos, rng) => new global.SwordBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Mirror', create: (pos, rng) => new global.MirrorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Hammer', create: (pos, rng) => new global.HammerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
-    { name: 'Club', create: (pos, rng) => new global.ClubBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) }
+    { name: 'Club', create: (pos, rng) => new global.ClubBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
+    { name: 'Snake', create: (pos, rng) => new global.SnakeBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) }
 ];
 
 const MAX_TICKS = 10000;
@@ -113,8 +115,8 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                // if (i != 1 && j != 1) continue;
-                if (i == 6 && j == 8) continue;
+                // if (i != 9 && j != 9) continue;
+                // if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;
                 if (i == 0 && j == 8 /* Dupe vs Mirror */) { w1 = MATCHES * 0.4; w2 = MATCHES * 0.6; draws = 0 } else

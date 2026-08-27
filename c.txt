@@ -1,0 +1,80 @@
+Duplicator vs Grower: 599-399-2
+Duplicator vs Dagger: 123-876-1
+Duplicator vs Lance: 622-378-0
+Duplicator vs Machine Gun: 409-591-0
+Duplicator vs Wrench: 312-678-10
+Duplicator vs Grimoire: 800-200-0
+Duplicator vs Sword: 418-581-1
+Duplicator vs Mirror: 400-600-0
+Duplicator vs Hammer: 650-350-0
+Duplicator vs Club: 782-217-1
+Duplicator vs Snake: 212-787-1
+Grower vs Dagger: 828-171-1
+Grower vs Lance: 244-754-2
+Grower vs Machine Gun: 261-738-1
+Grower vs Wrench: 438-559-3
+Grower vs Grimoire: 285-709-6
+Grower vs Sword: 442-558-0
+Grower vs Mirror: 506-480-14
+Grower vs Hammer: 777-223-0
+Grower vs Club: 161-836-3
+Grower vs Snake: 920-80-0
+Dagger vs Lance: 198-800-2
+Dagger vs Machine Gun: 497-503-0
+Dagger vs Wrench: 496-504-0
+Dagger vs Grimoire: 576-420-4
+Dagger vs Sword: 668-325-7
+Dagger vs Mirror: 696-284-20
+Dagger vs Hammer: 312-687-1
+Dagger vs Club: 478-498-24
+Dagger vs Snake: 501-497-2
+Lance vs Machine Gun: 536-464-0
+Lance vs Wrench: 614-385-1
+Lance vs Grimoire: 374-622-4
+Lance vs Sword: 554-445-1
+Lance vs Mirror: 416-584-0
+Lance vs Hammer: 443-555-2
+Lance vs Club: 485-511-4
+Lance vs Snake: 173-827-0
+Machine Gun vs Wrench: 406-594-0
+Machine Gun vs Grimoire: 351-649-0
+Machine Gun vs Sword: 399-600-1
+Machine Gun vs Mirror: 668-329-3
+Machine Gun vs Hammer: 361-638-1
+Machine Gun vs Club: 431-568-1
+Machine Gun vs Snake: 634-366-0
+Wrench vs Grimoire: 806-191-3
+Wrench vs Sword: 539-460-1
+Wrench vs Mirror: 212-752-36
+Wrench vs Hammer: 172-827-1
+Wrench vs Club: 462-523-15
+Wrench vs Snake: 613-278-109
+Grimoire vs Sword: 424-576-0
+Grimoire vs Mirror: 605-395-0
+Grimoire vs Hammer: 668-331-1
+Grimoire vs Club: 583-415-2
+Grimoire vs Snake: 852-148-0
+Sword vs Mirror: 477-523-0
+Sword vs Hammer: 440-559-1
+Sword vs Club: 478-519-3
+Sword vs Snake: 536-464-0
+Mirror vs Hammer: 471-528-1
+Mirror vs Club: 618-310-72
+Mirror vs Snake: 614-386-0
+Hammer vs Club: 513-487-0
+Hammer vs Snake: 246-754-0
+Club vs Snake: 553-446-1
+
+=== RANKINGS ===
+1. Grimoire: 5923W-5057L-20D (score: 866)
+2. Mirror: 5650W-5204L-146D (score: 446)
+3. Wrench: 5524W-5297L-179D (score: 227)
+4. Machine Gun: 5546W-5447L-7D (score: 99)
+5. Lance: 5527W-5457L-16D (score: 70)
+6. Dagger: 5469W-5469L-62D (score: 0)
+7. Club: 5437W-5437L-126D (score: 0)
+8. Sword: 5476W-5509L-15D (score: -33)
+9. Hammer: 5457W-5535L-8D (score: -78)
+10. Duplicator: 5327W-5657L-16D (score: -330)
+11. Grower: 5261W-5707L-32D (score: -446)
+12. Snake: 5033W-5854L-113D (score: -821)
