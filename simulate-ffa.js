@@ -11,6 +11,7 @@ Math.seedrandom = seedrandom;
 const fs = require('fs');
 
 let code = fs.readFileSync('./index.js', 'utf8');
+code = code.replace('let t = 0;', 'global.t = 0;');
 code = code.replace(/const d = new Date.*?Math\.seedrandom\(d\);/s, '');
 code = code.replace(/const balls = \[[\s\S]*$/s, '');
 
@@ -30,6 +31,8 @@ global.randomVel = randomVel;
 global.createPlusArenaWalls = createPlusArenaWalls;
 global.plusArenaCorners = plusArenaCorners;
 global.ballClasses = ballClasses;
+global.shuffle = shuffle;
+global.FFA = FFA;
 `;
 
 eval(code);
@@ -68,9 +71,13 @@ function simulate() {
         }
         prevAlive = nowAlive;
 
+        for (const b of battle.bodies) {
+            if (isNaN(b.x) || isNaN(b.y)) throw new Error(`NaN position on ${b.constructor.name}#${b.id} at t=${global.t} seed=${seed}`);
+        }
+
         let outOfBoundsCount = 0;
         for (const b of battle.balls) {
-            if (!battle.isInBounds(b.x, b.y, b.radius)) outOfBoundsCount++;
+            if (!battle.inArenaBounds(b.x, b.y, b.radius - 1)) outOfBoundsCount++;
         }
         if (outOfBoundsCount > 0) {
             consecutiveOOB = (consecutiveOOB || 0) + 1;
@@ -108,7 +115,7 @@ function simulate() {
         return pos === -1 ? allBalls.length : allBalls.length - pos;
     });
 
-    return { winnerIdx, damages, kills, placements, grimMirrorStalemate };
+    return { winnerIdx, damages, kills, placements, grimMirrorStalemate, seed };
 }
 
 if (!isMainThread) {
@@ -119,19 +126,24 @@ if (!isMainThread) {
     const totalKills = new Array(BALL_TYPES.length).fill(0);
     const totalPlacement = new Array(BALL_TYPES.length).fill(0);
     let stalemateCount = 0;
+    const outliers = [];
 
     for (let i = 0; i < count; i++) {
-        const { winnerIdx, damages, kills, placements, grimMirrorStalemate } = simulate();
+        const { winnerIdx, damages, kills, placements, grimMirrorStalemate, seed } = simulate();
         if (winnerIdx >= 0) wins[winnerIdx]++;
         damages.forEach((d, j) => { totalDmg[j] += d; totalDmgSq[j] += d * d; });
         kills.forEach((k, j) => totalKills[j] += k);
         placements.forEach((p, j) => totalPlacement[j] += p);
         if (grimMirrorStalemate) stalemateCount++;
+        const maxDmg = Math.max(...damages), minDmg = Math.min(...damages);
+        if (maxDmg > 500 || minDmg < -10) {
+            outliers.push({ seed, damages: [...damages] });
+        }
     }
-    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, count, stalemateCount });
+    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, count, stalemateCount, outliers });
 } else {
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 3;
+    // const NUM_WORKERS = 4;
 
     (async () => {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
@@ -167,6 +179,7 @@ if (!isMainThread) {
         const totalPlacement = new Array(BALL_TYPES.length).fill(0);
         let totalMatches = 0;
         let totalStalemateCount = 0;
+        let allOutliers = [];
 
         results.forEach(r => {
             r.wins.forEach((w, i) => wins[i] += w);
@@ -176,6 +189,7 @@ if (!isMainThread) {
             r.totalPlacement.forEach((p, i) => totalPlacement[i] += p);
             totalMatches += r.count;
             totalStalemateCount += r.stalemateCount;
+            if (r.outliers) allOutliers.push(...r.outliers);
         });
 
         console.log('=== FFA RESULTS ===\n');
@@ -195,5 +209,13 @@ if (!isMainThread) {
         stats.forEach(s => {
             console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10) + String(s.stdDmg).padStart(10) + String(s.avgKills).padStart(11) + String(s.avgPlacement).padStart(11));
         });
+
+        if (allOutliers.length > 0) {
+            console.log(`\n=== OUTLIERS (${allOutliers.length}) ===`);
+            allOutliers.slice(0, 20).forEach(o => {
+                const dmgStr = BALL_TYPES.map((t, i) => `${t.name}:${Math.round(o.damages[i])}`).join(' ');
+                console.log(`  seed=${o.seed} ${dmgStr}`);
+            });
+        }
     })();
 }

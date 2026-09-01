@@ -69,7 +69,8 @@ onmessage = (e) => {
 
         const result = simulate(seed);
         const effectiveThreshold = result?.hammerDmg ?? threshold;
-        if (result && result.hp <= effectiveThreshold) {
+        const tooLong = result && result.ticks > 15000 && result.winnerName !== "Club";
+        if (result && !tooLong && result.hp <= effectiveThreshold) {
             dramatic.push({ seed, ...result });
         }
     }
