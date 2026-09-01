@@ -268,8 +268,9 @@ body {
     display: none;
     margin-left: 60px;
     overflow-y: auto;
+        overflow-x: hidden;
     position: relative;
-    width: 175px;
+    width: 180px;
 }
 
 .dmg {

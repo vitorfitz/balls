@@ -52,7 +52,7 @@ const BALL_TYPES = [
 ];
 
 const MAX_TICKS = 10000;
-const MATCHES = 1000;
+const MATCHES = 500;
 
 function simulate(t1Idx, t2Idx) {
     const rng = new Math.seedrandom();

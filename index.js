@@ -275,8 +275,8 @@ class Ball extends CircleBody {
 
             let dmg;
             if (this.battle.mode == DUEL) {
-                dmg = this.slamTimer > 8 ? 3 :
-                    this.slamTimer > 5 ? 2 :
+                dmg = this.slamTimer > 9 ? 3 :
+                    this.slamTimer > 6 ? 2 :
                         1;
             }
             else {
@@ -350,6 +350,12 @@ class Ball extends CircleBody {
             const credit = Math.max(0, Math.min(dmg, hpBefore));
             source.getRootOwner().damageDealt += credit;
             if (this.hp <= 0) this.killer = source;
+        }
+
+        if(source && this.segments){
+            for(let s of this.segments){
+                s.deferredHits=s.deferredHits.filter((x) => source!=x.source);
+            }
         }
 
         this.showDmg(dmg);
@@ -1322,15 +1328,6 @@ function addMirrorIFrames(weapon, target) {
     if (target instanceof MirrorBall && !(src.id in target._cantHitBall)) target._cantReflect[src.id] = target.giga ? 0 : mirrorCooldown;
 }
 
-function applySnakeIFrames(weapon, target, key = iframeKeyFor(target)) {
-    if (target.segments) {
-        weapon.setIFrames(target, "snake" + target.id);
-    }
-    // else if (target instanceof SnakeSegment && !weapon.iFrames[key]) {
-    //     weapon.setIFrames(target, target.owner.id);
-    // }
-}
-
 // Profiling
 // const profiler = {
 //     physics: 0, weapons: 0, render: 0, frames: 0,
@@ -2043,12 +2040,8 @@ class BallBattle {
                         const dist = Math.hypot(target.x - b.x, target.y - b.y);
                         if (dist <= b.radius + Math.sqrt(w.range ** 2 + (w.thickness / 2) ** 2) + target.radius) {
                             const key = iframeKeyFor(target);
-                            applySnakeIFrames(w, target, key);
-                            w.setIFrames(target, key);
+                            this.weaponBallCol(w, target, key);
                             addMirrorIFrames(w, target);
-                            for (let i = 0; i < rotations; i++) {
-                                w.ballColFns.forEach(fn => fn(target));
-                            }
                         }
                     }
                 }
@@ -2129,6 +2122,19 @@ class BallBattle {
         this.bodies = this.bodies.filter((b) => b.hp > 0);
     }
 
+    weaponBallCol(weapon,target,key=iframeKeyFor(target)){
+        if (target.segments) {
+            weapon.setIFrames(target, "snake" + target.id);
+        }
+        weapon.setIFrames(target, key);
+        if(target instanceof SnakeSegment){
+            target.deferredHits.push({weapon, source:weapon.ball, t:0});
+        }
+        else{
+            weapon.ballColFns.forEach(fn => fn(target)); 
+        }
+    }
+
     _checkWeaponCollisions(balls) {
         // Broad phase over the balls, keyed on each one's weapon reach (see
         // weaponQueryRadius): every check in the pair loop below — weapon vs ball,
@@ -2160,10 +2166,8 @@ class BallBattle {
                                 const key = iframeKeyFor(B);
                                 this.hitThisFrame.add(A.id + "-" + wi + "-" + key);
                                 if (!(key in w.iFrames)) {
-                                    applySnakeIFrames(w, B, key);
-                                    w.setIFrames(B, key);
                                     if (w.angVel) (w._iFrameHitTheta ??= {})[key] = w.theta;
-                                    w.ballColFns.forEach(fn => fn(B));
+                                    this.weaponBallCol(w, B, key);
                                 }
                             }
                         }
@@ -2179,10 +2183,8 @@ class BallBattle {
                                 const key = iframeKeyFor(A);
                                 this.hitThisFrame.add(B.id + "-" + wi + "-" + key);
                                 if (!(key in w.iFrames)) {
-                                    applySnakeIFrames(w, A, key);
-                                    w.setIFrames(A, key);
                                     if (w.angVel) (w._iFrameHitTheta ??= {})[key] = w.theta;
-                                    w.ballColFns.forEach(fn => fn(A));
+                                    this.weaponBallCol(w, A, key);
                                 }
                             }
                         }
@@ -3603,7 +3605,7 @@ class GrimoireBall extends Ball {
         const cfg = getWeaponConfig(GrimoireBall);
         const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
-        grimoire.addCollider(31, 16);
+        grimoire.addCollider(30, 16);
         grimoire.addSpin(Math.PI * 0.021 * dir);
         // grimoire.addParry();
         grimoire.addDirChange();
@@ -3827,7 +3829,7 @@ class GrimoireBall extends Ball {
 
 const growCooldown = 9;
 const maxScaleByMode = [6.56, 4.9, 14.9];
-const duelSlam = 9, FFASlam = 18;
+const duelSlam = 10, FFASlam = 18;
 
 function getTargetBoostEnergy(scale) {
     return 10 * (1 - 2 ** (1 - scale));
@@ -4326,9 +4328,9 @@ class SnakeSegment extends Ball {
         this.leader = leader; // the body (head or previous segment) this one is linked to
         this.dmgCooldown = {};
         this.dormant = true;
+        this.deferredHits=[];
     }
 
-    // Infinite HP: register the hit (flash) but never actually lose HP.
     damage(dmg, source, fromWeapon = false) {
         if (fromWeapon) this.showDmg(0);
         this.flashTime = performance.now() + flashDur;
@@ -4394,6 +4396,18 @@ class SnakeSegment extends Ball {
             this.dmgCooldown[id] -= dt;
             if (this.dmgCooldown[id] <= EPS) delete this.dmgCooldown[id];
         }
+
+        let left=[];
+        for(let d of this.deferredHits){
+            d.t+=dt;
+            if(d.t>=5){
+                d.weapon.ballColFns.forEach(fn=>fn(this));
+            }
+            else{
+                left.push(d);
+            }
+        }
+        this.deferredHits=left;
     }
 
     getInfoEl() {
@@ -4595,7 +4609,7 @@ class DamageIndicator {
         else {
             this.y -= vy;
         }
-        this.life -= 0.0166667;
+        this.life -= 0.0166667; // TODO: base off time elapsed
     }
 
     draw(ctx) {
