@@ -330,7 +330,10 @@ class Ball extends CircleBody {
             reflectOffPinnedBody(b, nx, ny, wallVx, wallVy);
             return;
         }
-        else if (!this.isStunned()) this.handleCollision(b);
+        else if (!this.isStunned()) {
+            if (b instanceof VampireBall) b.deferredHits.push({ hitFn: () => this.handleCollision(b), source: this, t: 0 });
+            else this.handleCollision(b);
+        }
     }
 
     addWeapon(w, canParry = w.range && w.thickness) {
@@ -2154,8 +2157,8 @@ class BallBattle {
         }
         weapon.setIFrames(target, key);
         // if (target instanceof SnakeSegment) console.log(predictedWeaponDist(weapon, target.owner), predictedWeaponDist(weapon, target.owner, true));
-        if (target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
-            target.deferredHits.push({ weapon, source: weapon.ball, t: 0 });
+        if (target instanceof VampireBall || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+            target.deferredHits.push({ hitFn: () => weapon.ballColFns.forEach(fn => fn(target)), source: weapon.ball, t: 0 });
         }
         else {
             weapon.ballColFns.forEach(fn => fn(target));
@@ -4490,7 +4493,7 @@ class SnakeSegment extends Ball {
             d.t += dt;
             if (d.t >= 10) {
                 // console.log(t, "applied");
-                d.weapon.ballColFns.forEach(fn => fn(this));
+                d.hitFn();
             }
             else {
                 left.push(d);
@@ -4560,6 +4563,87 @@ class SnakeBall extends Ball {
     getInfoEl() {
         return this.propsToList({
             "Segments": { text: this.segments.length, grad: { from: 0, to: 20 } },
+        });
+    }
+}
+
+const freshDmgBlock = 12;
+class VampireBall extends Ball {
+    constructor(x, y, vx, vy, hp = 100, radius = headRadius, color = "#800000", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        // this.dmgCooldown = {};
+        this.healBlock = 0;
+        this.healCooldown = 0;
+        // this.scalingCooldown = 0;
+        this.dmgBlock = 0;
+        this.heal = 1;
+        this.wasHealBlocked = false;
+        this.deferredHits = [];
+    }
+
+    handleCollision(b, reflector) {
+        const owner = reflector || this;
+        if ((!reflector && b.team == this.team) || !(b instanceof Ball) || b instanceof SnakeSegment) return;
+
+        // if (this.dmgCooldown[b.id] > EPS) return;
+        // this.dmgCooldown[b.id] = 10;
+
+        console.log(this.healBlock, this.dmgBlock);
+        if (this.healCooldown <= EPS && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked))) {
+            // const prevHP = b.hp;
+            b.damage(this.heal, owner);
+            // this.hp += Math.min(prevHP, this.heal / (b.getDmgResistance?.() ?? 1));
+            this.hp += this.heal / (b.getDmgResistance?.() ?? 1);
+            this.dmgBlock = freshDmgBlock;
+            this.healCooldown = 9;
+            this.heal += 0.5;
+            this.deferredHits = [];
+        }
+
+        // if (this.scalingCooldown <= EPS) {
+        // this.heal += 0.5;
+        // this.scalingCooldown = 9;
+        // }
+    }
+
+    damage(dmg, source) {
+        super.damage(dmg, source);
+        this.healBlock = this.freshHealBlock;
+    }
+
+    handleUpdate(dt) {
+        // for (const id in this.dmgCooldown) {
+        //     this.dmgCooldown[id] -= dt;
+        //     if (this.dmgCooldown[id] <= EPS) delete this.dmgCooldown[id];
+        // }
+
+        let left = [];
+        for (let d of this.deferredHits) {
+            d.t += dt;
+            if (d.t >= 1.1) {
+                if (this.dmgBlock <= EPS) d.hitFn();
+            }
+            else {
+                console.log("aa,");
+                left.push(d);
+            }
+        }
+        this.deferredHits = left;
+
+        this.healBlock -= dt;
+        this.dmgBlock -= dt;
+        this.healCooldown -= dt;
+        // this.scalingCooldown -= dt;
+        this.wasHealBlocked = this.healBlock > EPS;
+        this.freshHealBlock = Math.min(20, 2000 / this.hp);
+
+        // this.hp *= Math.exp(-dt / 2000);
+        // this.hp -= dt / 100;
+    }
+
+    getInfoEl() {
+        return this.propsToList({
+            "Heal": { text: this.heal, grad: { from: 0, to: 20 } },
         });
     }
 }
@@ -4774,6 +4858,7 @@ const ballClasses = [
     { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c88941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
     { name: "Club", class: ClubBall, hp: 100, radius: 25, color: "#b35237", weapon: { sprite: "sprites/club.webp", scale: 2, offset: -2, shift: -2, rotation: 3 * Math.PI / 4, spin: true } },
     { name: "Snake", class: SnakeBall, hp: 100, radius: 25, color: "#e0d030" },
+    { name: "Vampire", class: VampireBall, hp: 50, radius: 25, color: "#eb2876" },
 ];
 
 function getWeaponConfig(BallClass) {
