@@ -146,7 +146,7 @@ class Weapon {
         this.DoT = DoT;
         this.ballColFns.push((b, reflector) => {
             const source = reflector || this.ball;
-            b.damage(this.dmg, source, true);
+            b.damage(this.dmg, source, "weapon");
             if (!b.owner && !(b instanceof DuplicatorBall)) {
                 const amt = (this.ball instanceof DaggerBall && (this.ball.owner || b instanceof GrimoireBall)) ? 0.5 : hitSlow;
                 addToHitHistory([source, b], amt);
@@ -278,8 +278,8 @@ class Ball extends CircleBody {
                 dmg = 1;
             }
             else if (this.battle.mode == DUEL) {
-                dmg = this.slamTimer > 9 ? 3 :
-                    this.slamTimer > 6 ? 2 :
+                dmg = this.slamTimer > 11 ? 3 :
+                    this.slamTimer > 8 ? 2 :
                         1;
             }
             else {
@@ -295,7 +295,13 @@ class Ball extends CircleBody {
             else {
                 damaged = this;
             }
-            if (damaged) damaged.damage(dmg, this.slamSource);
+            if (damaged) {
+                if (this instanceof VampireBall) {
+                    this.healBlock = this.freshHealBlock;
+                    this.dmgBlock = 0;
+                }
+                damaged.damage(dmg, this.slamSource);
+            }
 
             if (damaged && !(damaged instanceof GrowerBall || damaged instanceof DuplicatorBall || damaged instanceof SnakeSegment)) {
                 damaged.hitsThisFrame += 3 * dmg;
@@ -445,6 +451,17 @@ class Ball extends CircleBody {
         delete this._savedVy;
         delete this._savedMass;
         delete this._savedGravity;
+
+        // If the restored velocity points back into a wall this ball was pinned
+        // against while stunned, reflect that component instead of letting it walk
+        // through/into the wall. A stunned ball's resting position is only pinned
+        // against the wall(s) it's touching — nothing guarantees it's not also
+        // flush against a tighter constraint (e.g. squeezed into a narrow gap next
+        // to a hole cutout), so the pre-stun velocity, restored verbatim, can drive
+        // it straight into out-of-bounds territory on the very first tick awake.
+        if (this.wallBoundX && this.vx * this.wallBoundX.normal > 0) this.vx = -this.vx;
+        if (this.wallBoundY && this.vy * this.wallBoundY.normal > 0) this.vy = -this.vy;
+
         this.wallBoundX = null;
         this.wallBoundY = null;
     }
@@ -469,6 +486,7 @@ class Ball extends CircleBody {
             this.stunTime -= 1;
             this.vx = 0;
             this.vy = 0;
+            if (this instanceof VampireBall && this.battle.mode != FFA) this.bleed(dt);
         }
         else {
             if (this.isStunned()) {
@@ -598,7 +616,12 @@ class Wall {
         const ballVel = this.axis === VERTICAL ? b.vx * b.getTimeScale() : b.vy * b.getTimeScale();
         const wallVel = (this.velocity - ballVel) * this.normal > 0 ? this.velocity / b.getTimeScale() : 0;
         const speedBefore = Math.hypot(b.vx, b.vy);
-        const speedTaper = Math.max(0, 1 - speedBefore / 25);
+        // Taper on the velocity component along the wall's normal, not full ball
+        // speed — a ball moving mostly tangential to the wall (e.g. grazing along
+        // a shrinking border) shouldn't have its bounce-off-moving-wall boost
+        // suppressed just because its total speed happens to be high.
+        const normalSpeed = Math.abs(this.axis === VERTICAL ? b.vx : b.vy);
+        const speedTaper = Math.max(0, 1 - normalSpeed / 25);
         const boost = b instanceof Turret && Math.abs(wallVel) > EPS ? wallVel : 2 * wallVel * speedTaper;
         // if (debugBodies.indexOf(b) != -1 && t >= 9050 && t <= 9085) console.log(`[t=${t}] wall-turret resolve: wall.axis=${this.axis} wall.pos=${this.pos.toFixed(3)} wall.vel=${this.velocity} b.x=${b.x.toFixed(3)} b.y=${b.y.toFixed(3)} b.vx=${b.vx.toFixed(6)} -> wallVel=${wallVel} turretBuf=${turretBuf}`);
 
@@ -1641,9 +1664,20 @@ class BallBattle {
             this.targetTimeScale *= 1 / (1 + maxBoosts * (hasGrimoire ? 0.025 : 0.01));
         }
         else {
-            if (this.mode == FFA && this.balls.length == 2 && this.balls.some((b) => b instanceof GrowerBall)) this.targetTimeScale = 3;
-            else if ((this.balls.length > 1 && this.balls.filter(x => x.isStunned()).length >= this.balls.length - 1)) this.targetTimeScale = 3;
-            else {
+            (() => {
+                if (this.mode == FFA) {
+                    const noMirrorSegs = this.balls.filter((x) => !((x instanceof SnakeSegment) && (x.owner instanceof MirrorBall)));
+                    if (noMirrorSegs.length == 2 && noMirrorSegs.some((b) => b instanceof GrowerBall)) {
+                        this.targetTimeScale = 3;
+                        return;
+                    }
+                }
+
+                if ((this.balls.length > 1 && this.balls.filter(x => x.isStunned()).length >= this.balls.length - 1)) {
+                    this.targetTimeScale = 3;
+                    return;
+                }
+
                 let count = 0;
                 for (let i = 0; i < this.balls.length; i++) {
                     if (!this.balls[i].isStunned() && !(this.balls[i] instanceof SnakeSegment)) {
@@ -1652,7 +1686,7 @@ class BallBattle {
                 }
                 if (this.mode == FFA) this.targetTimeScale = 0.92 ** Math.max(0, count - 2);
                 else this.targetTimeScale = 0.92 ** Math.max(0, count - 2);
-            }
+            })();
         }
 
         // Gradual interpolation for smooth transitions
@@ -1832,8 +1866,8 @@ class BallBattle {
         let samePairStreak = 0;
         while (dt > EPS) {
             if (++iterations == 1001) {
-                console.warn(`[t=${t}] Physics loop exceeded 1000 iterations, bodies=${this.bodies.length}, dt=${dt}, seed=${this.seed}`);
-                if (lastPair) console.warn(`[t=${t}] lastPair: ${lastPair[0].constructor.name}#${lastPair[0].id} <-> ${lastPair[1].constructor.name}#${lastPair[1].id}, r1=${lastPair[2]}, r2=${lastPair[3]}, samePairStreak=${samePairStreak}`);
+                // console.warn(`[t=${t}] Physics loop exceeded 1000 iterations, bodies=${this.bodies.length}, dt=${dt}, seed=${this.seed}`);
+                // if (lastPair) console.warn(`[t=${t}] lastPair: ${lastPair[0].constructor.name}#${lastPair[0].id} <-> ${lastPair[1].constructor.name}#${lastPair[1].id}, r1=${lastPair[2]}, r2=${lastPair[3]}, samePairStreak=${samePairStreak}`);
                 // break;
             }
             // --- Find earliest ball-ball collision ---
@@ -2835,7 +2869,7 @@ function recordFeed(from, to) {
 }
 
 // Duplicator: Reproduces on hit
-const dmgCooldown = 9, dupeCooldown = 9, dupeLimit = 25;
+const dmgCooldown = 10, dupeCooldown = 10, dupeLimit = 25;
 class DuplicatorBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#f86ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -2900,7 +2934,7 @@ class DuplicatorBall extends Ball {
     }
 }
 
-const baseSpin = Math.PI * 0.099;
+const baseSpin = Math.PI * 0.097;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -3003,7 +3037,7 @@ class LanceBall extends Ball {
             const source = reflector || this;
             if (target instanceof SnakeSegment) {
                 lance.iFrames["snake" + target.owner.id] = snakeIFrames;
-                target.damage(727, source, true);
+                target.damage(727, source, "weapon");
                 this.applyBoost();
                 recordFeed(target, this);
                 return;
@@ -3024,7 +3058,7 @@ class LanceBall extends Ball {
                 if (this.combo == 0 || oldHit < this.comboLeniency - 1) this.dist = 0;
 
                 this.comboHits.add(target.id);
-                const distToHit = 64 * this.startSpeed;
+                const distToHit = 66 * this.startSpeed;
                 const procs = Math.floor(-this.dist / distToHit) + 1;
                 this.dist += procs * distToHit;
 
@@ -3155,7 +3189,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = (this.giga ? 1.4 : this.battle.mode == DUEL ? 1 : 1.66667) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (this.giga ? 1.4 : this.battle.mode == DUEL ? 1 : 1.7) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -3225,10 +3259,7 @@ class Bullet extends CircleBody {
             // Credit goes to the last ball to fire/reflect this bullet that isn't
             // on the victim's team
             const hc = this.resolveHitCredit(b);
-            // if (t >= 1290 && t <= 1300) {
-            //     console.log(`[t=${t}] bullet handleCollision: hitting ${b.constructor.name}, hitCredit=${this.hitCredit.constructor.name}, prevHitCredit=${this.prevHitCredit?.constructor.name}, using hc=${hc.constructor.name}`);
-            // }
-            b.damage(this.dmg, hc);
+            b.damage(this.dmg, hc, "bullet");
             if (this.owner instanceof WrenchBall && b instanceof SnakeSegment && (this.battle.mode == DUEL || b.owner.giga)) this.dmg = 0;
         }
 
@@ -3571,7 +3602,7 @@ class Turret extends CircleBody {
     }
 
     getFireDelay() {
-        return this.owner.battle.mode == FFA ? 37 : 29;
+        return this.owner.battle.mode == FFA ? 37 : 30;
     }
 
     draw() {
@@ -3691,7 +3722,7 @@ class GrimoireBall extends Ball {
         const cfg = getWeaponConfig(GrimoireBall);
         const grimoire = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         grimoire.iframes = 0;
-        grimoire.addCollider(30, 16);
+        grimoire.addCollider(31, 16);
         grimoire.addSpin(Math.PI * 0.021 * dir);
         // grimoire.addParry();
         grimoire.addDirChange();
@@ -3917,15 +3948,15 @@ class GrimoireBall extends Ball {
         this.minionHPGain = this.battle.mode == DUEL ? 3 : /*this.battle.mode == RAID && !this.giga ? 2 :*/ 1;
         this.summonCooldown = this.battle.mode == FFA ? 50 : 0;
         // this.summonCooldown = 0;
-        if (this.giga) {
-            this.weapons[0].range += 8;
-        }
+        // if (this.giga) {
+        //     this.weapons[0].range += 8;
+        // }
     }
 }
 
-const growCooldown = 9;
+const growCooldown = 10;
 const maxScaleByMode = [6.56, 4.9, 14.9];
-const duelSlam = 10, FFASlam = 18;
+const duelSlam = 12, FFASlam = 18;
 
 function getTargetBoostEnergy(scale) {
     return 10 * (1 - 2 ** (1 - scale));
@@ -4136,7 +4167,7 @@ class GrowerBall extends Ball {
 }
 
 // Mirror: Reflects damage back to attackers
-const mirrorCooldown = 9;
+const mirrorCooldown = 10;
 class MirrorBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c0e8ff", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -4337,7 +4368,7 @@ class HammerBall extends Ball {
         const m = (ceiling - this.power);
         if (m < 0) console.warn(t, "asdasdas");
 
-        this.power += hammerAccel * m * dt * (this.giga ? 3 : this.battle.mode == RAID ? 0.8 : this.battle.mode == FFA ? 0.9 : 1);
+        this.power += hammerAccel * m * dt * (this.giga ? 3 : this.battle.mode == RAID ? 0.8 : this.battle.mode == FFA ? 0.88 : 1);
 
         this.antiSwarmBoost = Math.max(0, this.antiSwarmBoost - 0.0037 * dt);
         const oldAntiSwarm = this.antiSwarmBoost;
@@ -4366,7 +4397,7 @@ class ClubBall extends Ball {
 
         const cfg = getWeaponConfig(ClubBall);
         const club = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
-        club.addCollider(52, 7, 0);
+        club.addCollider(51, 7, 0);
         club.addSpin(Math.PI * 0.017 * dir);
         club.addParry();
         // club.addDirChange();
@@ -4374,7 +4405,7 @@ class ClubBall extends Ball {
 
         club.ballColFns.push((b, reflector) => {
             const source = reflector || this;
-            b.damage(b.isStunned() ? 10 : 5, source, true);
+            b.damage(b.isStunned() ? 10 : 5, source, "weapon");
             if (!b.owner && !(b instanceof DuplicatorBall)) {
                 addToHitHistory([source, b]);
             }
@@ -4436,8 +4467,8 @@ class SnakeSegment extends Ball {
         this.hp = Infinity;
     }
 
-    damage(dmg, source, fromWeapon = false) {
-        if (fromWeapon) this.showDmg(0);
+    damage(dmg, source, srcType) {
+        if (srcType == "weapon") this.showDmg(0);
         this.flashTime = performance.now() + flashDur;
     }
 
@@ -4574,49 +4605,71 @@ class SnakeBall extends Ball {
 }
 
 // Vampire: Drains life
-const freshDmgBlock = 9, freshHealBlock = 18;
 class VampireBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = headRadius, color = "#800000", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
         // this.dmgCooldown = {};
         this.healBlock = 0;
-        this.dmgBlock = {};
+        this.dmgBlock = 0;
+        this.healCooldown = {};
         this.lifesteal = 1;
         this.wasHealBlocked = false;
         this.deferredHits = [];
         this.inDeferred = false;
     }
 
-    damage(dmg, source) {
-        if (!this.dmgBlock[source.id] && (this.healBlock > EPS || this.inDeferred)) {
+    bleed(dt) {
+        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5000 : this.giga ? 6500 : 8000);
+    }
+
+    damage(dmg, source, srcType) {
+        if (source instanceof GrowerBall) {
+            this.deferredHits = this.deferredHits.filter((x) => !(x.source === source && x.vsGrower && x.t > 0));
+        }
+
+        if (this.dmgBlock <= EPS && (this.healBlock > EPS || this.inDeferred || srcType == "bullet")) {
             super.damage(dmg, source);
         }
-        this.healBlock = freshHealBlock;
-        this.wasHealBlocked = true;
+        else {
+            this.dmgBlock = this.freshDmgBlock;
+        }
+        this.healBlock = this.freshHealBlock;
     }
 
     handleCollision(b, reflector) {
         const owner = reflector || this;
         if ((!reflector && b.team == this.team) || !(b instanceof Ball)) return;
 
-        // if (this.dmgCooldown[b.id] > EPS) return;
-        // this.dmgCooldown[b.id] = 10;
+        if (!this.healCooldown[b.id] && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked))) {
+            const doLifesteal = () => {
+                b.damage(this.lifesteal, owner, "weapon");
 
-        // console.log(this.healBlock, this.dmgBlock);
-        if (this.healBlock <= EPS || (this.healBlock == freshHealBlock && !this.wasHealBlocked)) {
-            b.damage(this.lifesteal, this, true);
+                if (!(b instanceof SnakeSegment) && !(this.battle.mode != DUEL && reflector)) {
+                    const healAmt = this.lifesteal / (b.getDmgResistance?.() ?? 1);
+                    owner.hp += healAmt;
+                    owner.showDmg(healAmt, 0, true);
 
-            if (!(b instanceof SnakeSegment)) {
-                const healAmt = this.lifesteal / (b.getDmgResistance?.() ?? 1);
-                owner.hp += healAmt;
-                owner.showDmg(healAmt, 0, true);
+                    this.dmgBlock = this.freshDmgBlock;
+                    this.deferredHits = this.deferredHits.filter((x) => b != x.source);
+                    if (!b.owner && !(b instanceof DuplicatorBall) && !(this.battle.mode == DUEL && this.owner)) addToHitHistory([owner, b], 10);
+                }
 
-                this.dmgBlock[b.id] = freshDmgBlock;
-                this.deferredHits = this.deferredHits.filter((x) => b != x.source);
-                if (!b.owner && !(b instanceof DuplicatorBall) && !(this.battle.mode == DUEL && this.owner)) addToHitHistory([owner, b], 10);
+                this.lifesteal += 0.5;
+                recordFeed(reflector ?? b, this);
+                this.wasHealBlocked = true;
+
+                if (this.battle.mode == FFA) this.healBlock = this.freshHealBlock;
+                else this.healCooldown[b.id] = 4;
+            };
+
+            // Against Growers, delay the lifesteal a few ticks and drop it entirely
+            // if the Grower damages this Vampire back in that window (see damage()
+            // above) instead of applying it immediately on contact.
+            if (b instanceof GrowerBall) {
+                this.deferredHits.push({ hitFn: doLifesteal, source: b, t: 0, threshold: 7, vsGrower: true });
+            } else {
+                doLifesteal();
             }
-
-            this.lifesteal += 0.5;
         }
 
         // if (this.scalingCooldown <= EPS) {
@@ -4630,8 +4683,9 @@ class VampireBall extends Ball {
         let left = [];
         for (let d of this.deferredHits) {
             d.t += dt;
-            if (d.t >= 1) {
-                if (!this.dmgBlock[d.source.id]) d.hitFn();
+            if (d.t >= (d.threshold ?? (this.battle.mode == FFA ? 2 : this.giga ? 3 : 1))) {
+                if (this.dmgBlock <= EPS) d.hitFn();
+                else if (!d.vsGrower) this.dmgBlock = this.freshDmgBlock;
             }
             else {
                 left.push(d);
@@ -4640,20 +4694,21 @@ class VampireBall extends Ball {
         this.deferredHits = left;
         this.inDeferred = false;
 
-        for (const id in this.dmgBlock) {
-            this.dmgBlock[id] -= dt;
-            if (this.dmgBlock[id] <= EPS) delete this.dmgBlock[id];
+        for (const id in this.healCooldown) {
+            this.healCooldown[id] -= dt;
+            if (this.healCooldown[id] <= EPS) delete this.healCooldown[id];
         }
 
         this.healBlock -= dt;
+        this.dmgBlock -= dt;
         this.wasHealBlocked = this.healBlock > EPS;
 
-        this.hp -= dt * this.baseHP / 5000;
+        this.bleed(dt);
 
         // Time-saver for simulations
-        if (typeof global != "undefined" && this.hp > this.baseHP * 2 && this.battle.balls.every((x) => x == this || x instanceof DuplicatorBall)) {
+        if ((typeof global != "undefined" || this.battle.vampDupeFFwd) && this.hp > this.baseHP * 2 && this.battle.balls.every((x) => (x == this) || (x instanceof DuplicatorBall))) {
             for (let b of this.battle.balls) {
-                if (b instanceof DuplicatorBall) b.damage(727);
+                if (b instanceof DuplicatorBall) b.damage(727, this);
             }
         }
     }
@@ -4665,7 +4720,9 @@ class VampireBall extends Ball {
     }
 
     onLoad() {
-        this.baseHP = this.hp;
+        this.baseHP = this.battle.mode == DUEL || !this.owner ? this.hp : 100;
+        this.freshDmgBlock = 5;
+        this.freshHealBlock = this.battle.mode == DUEL || this.giga ? 20 : 20;
     }
 }
 

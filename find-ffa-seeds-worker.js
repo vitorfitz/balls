@@ -5,7 +5,7 @@ const MAX_TICKS = 20000;
 function simulate(seed) {
     const { size } = FFA_CONFIG;
 
-    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle);
+    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle, null, 3);
     const battle = result.battle;
 
     battle.width = battle.height = size;
@@ -14,6 +14,13 @@ function simulate(seed) {
     t = 0;
     let runnerUp = null;
     let prevAlive = battle.balls.filter(b => !b.owner);
+    // Lowest HP seen for each team over the whole match (not just at the
+    // moment the match ends), so a ball that dropped low and then healed/regrew
+    // back up still counts as having been near death. A team's HP at a given
+    // tick is the max across its own (non-owned) balls, mirroring how a
+    // Duplicator/Grimoire swarm's "current HP" is judged elsewhere by its
+    // healthiest member.
+    const minHpSeen = {};
 
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
         t++;
@@ -24,6 +31,14 @@ function simulate(seed) {
         const eliminated = prevAlive.filter(b => !alive.includes(b));
         if (eliminated.length) runnerUp = eliminated[eliminated.length - 1];
         prevAlive = alive;
+
+        const teamMaxHpThisTick = {};
+        for (const b of alive) {
+            if (!(b.team in teamMaxHpThisTick) || b.hp > teamMaxHpThisTick[b.team]) teamMaxHpThisTick[b.team] = b.hp;
+        }
+        for (const team in teamMaxHpThisTick) {
+            minHpSeen[team] = Math.min(minHpSeen[team] ?? Infinity, teamMaxHpThisTick[team]);
+        }
 
         if (alive.length === 2 &&
             alive.every(b => (b instanceof GrimoireBall || b instanceof MirrorBall) && b.hp > 20)) {
@@ -48,7 +63,8 @@ function simulate(seed) {
     }
 
     const winnerData = ballClasses.find(b => b.color === winner.team);
-    return { winnerName: winnerData.name, hp: Math.ceil(winner.hp), ticks: t, hammerDmg };
+    const hp = Math.ceil(Math.min(winner.hp, minHpSeen[winner.team] ?? winner.hp));
+    return { winnerName: winnerData.name, hp, ticks: t, hammerDmg };
 }
 
 onmessage = (e) => {

@@ -17,6 +17,13 @@ function simulate(bossIndex, seed) {
     battle.canvas = { width: size, height: size, style: {} };
     t = 0;
 
+    // Lowest values seen over the whole match (not just at the moment it
+    // ends), so e.g. a boss that dropped low and regenerated, or raiders who
+    // dropped low and got healed/regrew, still count as having been near
+    // defeat/wipeout.
+    let minBossHpFrac = Infinity;
+    let minRaidersHp = Infinity;
+
     for (let i = 0; i < MAX_TICKS; i++) {
         t++;
         battle.updateTimeScale();
@@ -25,16 +32,26 @@ function simulate(bossIndex, seed) {
         const boss = battle.balls.find(b => b.id === bossId);
         const raiders = battle.balls.filter(b => b.team === raidTeam && !b.owner);
         let raidersHp = raiders.reduce((sum, b) => sum + b.hp, 0);
-        if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
+        if (bossIndex == 11) {
+            if (raiders.length == 1 && raiders[0] instanceof WrenchBall) raidersHp *= 5;
+        }
+        else {
+            if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
+        }
 
         const bossHp = boss ? boss.hp : 0;
 
         const bossAlive = !!boss;
         const raidersAlive = battle.balls.some(b => b.team === raidTeam && !b.owner);
 
+        if (bossAlive) minBossHpFrac = Math.min(minBossHpFrac, bossHp / boss.maxHp);
+        if (raidersAlive) minRaidersHp = Math.min(minRaidersHp, raidersHp);
+
         if (!bossAlive || !raidersAlive) {
             const winner = bossAlive ? 'boss' : 'raiders';
-            const winnerHp = bossAlive ? bossHp / boss.maxHp : raidersHp;
+            const winnerHp = bossAlive
+                ? Math.min(bossHp / boss.maxHp, minBossHpFrac)
+                : Math.min(raidersHp, minRaidersHp);
             return {
                 winner,
                 winnerHp,
@@ -60,7 +77,7 @@ onmessage = (e) => {
     let progress = '';
 
     for (let bi = 0; bi < BOSS_TYPES.length; bi++) {
-        // if (bi != 6 && bi != 9) continue;
+        // if (bi != 9) continue;
 
         const bossName = BOSS_TYPES[bi].name;
         const bossIndex = ballClasses.indexOf(BOSS_TYPES[bi]);
@@ -75,11 +92,6 @@ onmessage = (e) => {
             .filter(r => r.winner === 'boss' && r.winnerHp <= bossHpThreshold)
             .map(r => r.seed);
 
-        // Raider HP threshold is dynamic: pick however many raider-win seeds
-        // (sorted most-dramatic-first, i.e. lowest surviving raider HP) are
-        // needed to roughly match the boss-win dramatic count, so overall
-        // the pool ends up ~50/50 boss vs raider wins regardless of how
-        // lopsided a given matchup naturally is.
         const raiderWinSeeds = results
             .filter(r => r.winner === 'raiders')
             .sort((a, b) => a.winnerHp - b.winnerHp)

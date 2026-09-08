@@ -12,6 +12,7 @@ const fs = require('fs');
 
 let code = fs.readFileSync('./index.js', 'utf8');
 code = code.replace('let t = 0;', 'global.t = 0;');
+code = code.replace('let feedMatrix = {};', 'global.feedMatrix = {};');
 code = code.replace(/const d = new Date.*?Math\.seedrandom\(d\);/s, '');
 code = code.replace(/const balls = \[[\s\S]*$/s, '');
 
@@ -41,11 +42,9 @@ const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js'
 
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 20000;
-// Number of matches to simulate. Defaults to 1000; override with a CLI arg,
-// e.g. `node simulate-ffa.js 200` for quicker test runs.
 const argMatches = parseInt(process.argv[2], 10);
 const MATCHES = Number.isInteger(argMatches) && argMatches > 0 ? argMatches : 1000;
-const EXCLUDE_COUNT = 2; // number of ball types sitting out each match (roster size = BALL_TYPES.length - EXCLUDE_COUNT)
+const EXCLUDE_COUNT = 3; // number of ball types sitting out each match (roster size = BALL_TYPES.length - EXCLUDE_COUNT)
 
 // All C(BALL_TYPES.length, EXCLUDE_COUNT) unordered exclusion-sets, enumerated once
 // in a fixed order. Cycling through this list (see `simulate`) gives each ball type
@@ -108,11 +107,6 @@ function simulate(matchIndex, baseSeed) {
 
         let outOfBoundsCount = 0;
         for (const b of battle.balls) {
-            // SnakeSegments are dependent, cosmetic chain extensions (no HP/win
-            // impact of their own) that can legitimately overshoot a shrinking
-            // wall for a tick or two right when a long-stunned, fast-moving
-            // snake wakes up near a boundary that shrank while it was frozen.
-            // Only the independent balls matter for this guard.
             if (b instanceof SnakeSegment) continue;
             if (!battle.inArenaBounds(b.x, b.y, b.radius - 1)) outOfBoundsCount++;
         }
@@ -185,7 +179,7 @@ if (!isMainThread) {
             outliers.push({ seed, excludeIdx, damages: [...damages] });
         }
     }
-    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, participations, count, stalemateCount, outliers });
+    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, participations, count, stalemateCount, outliers, feedMatrix: global.feedMatrix });
 } else {
     const NUM_WORKERS = os.cpus().length;
     // const NUM_WORKERS = 4;
@@ -230,6 +224,7 @@ if (!isMainThread) {
         let totalMatches = 0;
         let totalStalemateCount = 0;
         let allOutliers = [];
+        const feedMatrix = {}; // feedMatrix[victimKey][attackerKey] = count
 
         results.forEach(r => {
             r.wins.forEach((w, i) => wins[i] += w);
@@ -241,6 +236,14 @@ if (!isMainThread) {
             totalMatches += r.count;
             totalStalemateCount += r.stalemateCount;
             if (r.outliers) allOutliers.push(...r.outliers);
+            if (r.feedMatrix) {
+                for (const victimKey in r.feedMatrix) {
+                    const row = feedMatrix[victimKey] ??= {};
+                    for (const attackerKey in r.feedMatrix[victimKey]) {
+                        row[attackerKey] = (row[attackerKey] ?? 0) + r.feedMatrix[victimKey][attackerKey];
+                    }
+                }
+            }
         });
 
         console.log('=== FFA RESULTS ===\n');
@@ -262,6 +265,84 @@ if (!isMainThread) {
         console.log('-'.repeat(70));
         stats.forEach(s => {
             console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10) + String(s.stdDmg).padStart(10) + String(s.avgKills).padStart(11) + String(s.avgPlacement).padStart(11));
+        });
+
+        // Feed matrix: feedMatrix[victimKey][attackerKey] = number of scaling/growth
+        // hits attackerKey landed on victimKey (see recordFeed() in index.js). Keyed
+        // by each class's constructor name with the "Ball" suffix stripped, which is
+        // how recordFeed() derives its keys - map back to BALL_TYPES via the same
+        // derivation rather than display name, since e.g. "Machine Gun" has a space
+        // that the constructor-derived key doesn't.
+        const keyForType = (t) => t.class.name.endsWith("Ball") ? t.class.name.slice(0, -4) : t.class.name;
+        const typeForKey = {};
+        BALL_TYPES.forEach((t, i) => typeForKey[keyForType(t)] = i);
+
+        const fedIn = new Array(BALL_TYPES.length).fill(0);  // times this type was credited with a feed hit
+        const feedCounts = BALL_TYPES.map(() => new Array(BALL_TYPES.length).fill(0)); // feedCounts[victim][attacker]
+        for (const victimKey in feedMatrix) {
+            const vi = typeForKey[victimKey];
+            if (vi === undefined) continue;
+            for (const attackerKey in feedMatrix[victimKey]) {
+                const ai = typeForKey[attackerKey];
+                if (ai === undefined) continue;
+                const n = feedMatrix[victimKey][attackerKey];
+                feedCounts[vi][ai] += n;
+                fedIn[ai] += n;
+            }
+        }
+
+        console.log('\n=== FEED MATRIX (rows fed columns, per-match averages) ===\n');
+        const colWidth = 8;
+        console.log(''.padEnd(12) + BALL_TYPES.map(t => t.name.slice(0, colWidth - 1).padStart(colWidth)).join(''));
+        BALL_TYPES.forEach((t, vi) => {
+            const p = participations[vi] || 1;
+            const row = feedCounts[vi].map(n => (n / p).toFixed(2).padStart(colWidth)).join('');
+            console.log(t.name.padEnd(12) + row);
+        });
+
+        // Normalized feed matrix: for each attacker (column), each victim's raw feed
+        // count is divided by that attacker's total feed count, then divided again by
+        // the victim's "fair share" of that total - i.e. the fraction of the attacker's
+        // potential victims (weighted by how often each victim actually appeared
+        // alongside that attacker) that this victim represents. This controls for
+        // attackers whose mechanic simply scales far more/less often overall (e.g.
+        // Machine Gun's per-bullet scaling vs. Grimoire's per-summon scaling), isolating
+        // whether a given victim is disproportionately the source of an attacker's
+        // scaling - not just how often that attacker scales in general.
+        // Score of 1.0 = victim feeds this attacker exactly proportional to its own
+        // participation rate; >1.0 = feeds more than its "fair share"; <1.0 = less.
+        const totalOtherParticipations = BALL_TYPES.map((t, ai) =>
+            BALL_TYPES.reduce((sum, t2, vi) => sum + (vi === ai ? 0 : participations[vi]), 0));
+
+        console.log('\n=== NORMALIZED FEED MATRIX (victim\'s share of each attacker\'s feeds, vs. fair share) ===\n');
+        console.log(''.padEnd(12) + BALL_TYPES.map(t => t.name.slice(0, colWidth - 1).padStart(colWidth)).join(''));
+        BALL_TYPES.forEach((t, vi) => {
+            const row = BALL_TYPES.map((t2, ai) => {
+                if (vi === ai || fedIn[ai] === 0 || totalOtherParticipations[ai] === 0) return '-'.padStart(colWidth);
+                const actualShare = feedCounts[vi][ai] / fedIn[ai];
+                const fairShare = participations[vi] / totalOtherParticipations[ai];
+                const score = fairShare > 0 ? actualShare / fairShare : 0;
+                return score.toFixed(2).padStart(colWidth);
+            }).join('');
+            console.log(t.name.padEnd(12) + row);
+        });
+
+        console.log('\n=== AVG FEED SHARE (per-match, normalized vs. fair share) ===\n');
+        const avgFeedShare = BALL_TYPES.map((t, vi) => {
+            let sum = 0, count = 0;
+            BALL_TYPES.forEach((t2, ai) => {
+                if (vi === ai || fedIn[ai] === 0 || totalOtherParticipations[ai] === 0) return;
+                const actualShare = feedCounts[vi][ai] / fedIn[ai];
+                const fairShare = participations[vi] / totalOtherParticipations[ai];
+                if (fairShare > 0) { sum += actualShare / fairShare; count++; }
+            });
+            return { name: t.name, avgShare: count > 0 ? sum / count : 0 };
+        }).sort((a, b) => b.avgShare - a.avgShare);
+
+        console.log('Name'.padEnd(12) + 'Avg Feed Share'.padStart(16));
+        console.log('-'.repeat(28));
+        avgFeedShare.forEach(s => {
+            console.log(s.name.padEnd(12) + s.avgShare.toFixed(2).padStart(16));
         });
 
         if (allOutliers.length > 0) {

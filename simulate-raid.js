@@ -41,7 +41,7 @@ eval(code);
 const { RAID_CONFIG, createRaidBattle } = require('./raid-config.js');
 const { createFFABall } = require('./ffa-config.js');
 
-const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
+const BALL_TYPES = global.ballClasses.filter(b => b.name != "Duplicator");
 const MAX_TICKS = 30000;
 const MATCHES = 1000;
 
@@ -99,7 +99,7 @@ if (!isMainThread) {
     const outliers = [];
 
     for (let i = 0; i < count; i++) {
-        if (bossIndex != 1) break;
+        if ([11].indexOf(bossIndex) == -1) break;
 
         const { outcome, seed } = simulate(bossIndex);
         if (outcome === 'boss') bossWins++;

@@ -80,6 +80,12 @@ body {
 
 #balls {
     bottom: -30px;
+    transform-style: preserve-3d;
+}
+
+#balls>:first-child {
+    /* lol */
+    transform: rotateY(-0.061deg);
 }
 
 #balls>* {
@@ -123,9 +129,12 @@ body {
 #balls>[data-disabled] {
     cursor: auto;
     pointer-events: none;
-    opacity: 0.5;
+    background-color: #f7f0e9;
 }
 
+#balls>[data-disabled]>* {
+    opacity: 0.5;
+}
 
 #dramatic-toggle {
     position: absolute;
@@ -268,7 +277,7 @@ body {
     display: none;
     margin-left: 60px;
     overflow-y: auto;
-        overflow-x: hidden;
+    overflow-x: hidden;
     position: relative;
     width: 180px;
 }

@@ -27,6 +27,7 @@ global.MirrorBall = MirrorBall;
 global.HammerBall = HammerBall;
 global.ClubBall = ClubBall;
 global.SnakeBall = SnakeBall;
+global.VampireBall = VampireBall;
 
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -48,11 +49,12 @@ const BALL_TYPES = [
     { name: 'Mirror', create: (pos, rng) => new global.MirrorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Hammer', create: (pos, rng) => new global.HammerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Club', create: (pos, rng) => new global.ClubBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
-    { name: 'Snake', create: (pos, rng) => new global.SnakeBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) }
+    { name: 'Snake', create: (pos, rng) => new global.SnakeBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
+    { name: 'Vampire', create: (pos, rng) => new global.VampireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
 ];
 
 const MAX_TICKS = 10000;
-const MATCHES = 500;
+const MATCHES = 1000;
 
 function simulate(t1Idx, t2Idx) {
     const rng = new Math.seedrandom();
@@ -115,12 +117,13 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                // if (i != 9 && j != 9) continue;
-                // if (i == 6 && j == 8) continue;
+                // if (i != 1 || j != 11) continue;
+                if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;
                 if (i == 0 && j == 8 /* Dupe vs Mirror */) { w1 = MATCHES * 0.4; w2 = MATCHES * 0.6; draws = 0 } else
                     if (i == 0 && j == 6 /* Dupe vs Grim */) { w1 = MATCHES * 0.8; w2 = MATCHES * 0.2; draws = 0 } else
+                        // if (i == 0 && j == 11 /* Dupe vs Snake */) { w1 = MATCHES * 0.333; w2 = MATCHES * 0.667; draws = 0 } else
                         ({ w1, w2, draws } = await runMatchup(i, j));
                 const t1 = BALL_TYPES[i], t2 = BALL_TYPES[j];
 
