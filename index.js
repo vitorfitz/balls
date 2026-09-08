@@ -23,8 +23,17 @@ function loadImage(src) {
 class Weapon {
     constructor(theta, sprite, scale = 1, offset = 0, spriteShift = 0, rotation = Math.PI / 4, flipped = false) {
         this.theta = theta;
-        if (!(sprite in spriteReqs)) spriteReqs[sprite] = [];
-        spriteReqs[sprite].push(this);
+        // Sprite images are only ever drawn by a real browser page (see
+        // BallBattle.run()'s render loop, which resolves and clears
+        // spriteReqs). Headless simulations (find-seeds-worker.js,
+        // simulate.js) never call run(), so registering here would leak a
+        // reference to every weapon/ball/battle ever created for the life of
+        // the process — skip it entirely when there's no document to render
+        // sprites into.
+        if (typeof document !== "undefined") {
+            if (!(sprite in spriteReqs)) spriteReqs[sprite] = [];
+            spriteReqs[sprite].push(this);
+        }
         this.scale = scale;
         this.offset = offset;
         this.spriteShift = spriteShift;
