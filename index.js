@@ -2768,7 +2768,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 7880) {
+        // while (t < 3650) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -4502,8 +4502,8 @@ class SnakeSegment extends Ball {
     handleCollision(b, reflector) {
         if (!(b instanceof Ball) || b.team == this.owner.team) return;
         if (this.dmgCooldown[b.id] > EPS) return;
-        this.dmgCooldown[b.id] = this.battle.mode == FFA ? 12 : 3;
-        b.damage(1, this.owner);
+        this.dmgCooldown[b.id] = 3;
+        b.damage(1, this);
         if (!b.owner && !(b instanceof DuplicatorBall || b instanceof GrowerBall)) addToHitHistory([this.owner, b], 1);
     }
 
@@ -4643,9 +4643,6 @@ class VampireBall extends Ball {
         if (this.dmgBlock <= EPS && (this.healBlock > EPS || this.inDeferred || srcType == "bullet" || source instanceof MirrorBall)) {
             super.damage(dmg, source);
         }
-        else if (!(source instanceof GrowerBall)) {
-            this.dmgBlock = this.freshDmgBlock;
-        }
         this.healBlock = this.freshHealBlock;
     }
 
@@ -4682,7 +4679,7 @@ class VampireBall extends Ball {
             // if the Grower damages this Vampire back in that window (see damage()
             // above) instead of applying it immediately on contact.
             if (b instanceof GrowerBall) {
-                this.deferredHits.push({ hitFn: doLifesteal, source: b, t: 0, threshold: 7, vsGrower: true });
+                this.deferredHits.push({ hitFn: doLifesteal, source: b, t: 0, threshold: (this.battle.mode == FFA ? 4 : 6), vsGrower: true });
             } else {
                 doLifesteal();
             }
