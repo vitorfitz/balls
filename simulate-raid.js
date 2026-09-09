@@ -99,7 +99,7 @@ if (!isMainThread) {
     const outliers = [];
 
     for (let i = 0; i < count; i++) {
-        if ([11].indexOf(bossIndex) == -1) break;
+        // if ([11, 12].indexOf(bossIndex) == -1) break;
 
         const { outcome, seed } = simulate(bossIndex);
         if (outcome === 'boss') bossWins++;

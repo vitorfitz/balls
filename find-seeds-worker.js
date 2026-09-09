@@ -144,33 +144,37 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (j != 11) continue;
+            // if (j != 12) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             // if (!(key in DRAMATIC_SEEDS)) continue;
+            if (key != "Wrench_Mirror" && key != "Mirror_Vampire") continue;
             const results = [];
 
             let m = key == "Duplicator_Mirror" ? 0.25 :
                 key == "Duplicator_Grimoire" ? 0.5 :
-                    key == "Mirror_Hammer" ? 4 :
-                        i == 10 || j == 10 ? 2 :
-                            i == 12 || j == 12 ? 2 :
-                                1;
+                    key == "Duplicator_Snake" ? 0.5 :
+                        key == "Mirror_Hammer" ? 4 :
+                            key == "Wrench_Mirror" ? 4 :
+                                i == 10 || j == 10 ? 2 :
+                                    1;
 
             for (let seed = 0; seed < matches * m; seed++) {
                 const r = simulate(i, j, seed);
                 if (r.winner !== 'draw') results.push({ seed, ...r });
             }
 
-            const durations = results.map(r => r.ticks).sort((a, b) => a - b);
-            const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" || key == "Wrench_Snake" || key == "Duplicator_Club" ? 6000 : 4000;
-            const median = durations[Math.floor(durations.length / 2)] || durLimit;
-            const maxTicks = Math.max(durLimit, median);
-
             const hasDupe = BALL_TYPES[i].name === 'Duplicator' || BALL_TYPES[j].name === 'Duplicator';
             const hasVamp = BALL_TYPES[i].name === 'Vampire' || BALL_TYPES[j].name === 'Vampire';
             const isSwordDagger = (BALL_TYPES[i].name === 'Sword' && BALL_TYPES[j].name === 'Dagger') || (BALL_TYPES[i].name === 'Dagger' && BALL_TYPES[j].name === 'Sword');
+
+            const durations = results.map(r => r.ticks).sort((a, b) => a - b);
+            const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" || key == "Wrench_Snake" || key == "Duplicator_Club" || key == "Dagger_Vampire" || key == "Mirror_Vampire" ? 6000 :
+                hasVamp && key != "Snake_Vampire" && key != "Duplicator_Vampire" ? 5000 :
+                    4000;
+            const median = durations[Math.floor(durations.length / 2)] || durLimit;
+            const maxTicks = Math.max(durLimit, median);
 
             const dramaticResults = results.filter(r => {
                 if (r.ticks > maxTicks) return false;
@@ -197,11 +201,12 @@ onmessage = (e) => {
                 const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror || (BALL_TYPES[winnerIdx].name === 'Snake' && BALL_TYPES[loserIdx].name === 'Sword');
 
                 const isGrimVsClub = BALL_TYPES[winnerIdx].name === 'Grimoire' && BALL_TYPES[loserIdx].name === 'Club' || BALL_TYPES[winnerIdx].name === 'Club' && BALL_TYPES[loserIdx].name === 'Grimoire';
+                const isGrimVsVamp = hasVamp && (BALL_TYPES[loserIdx].name === 'Grimoire' || BALL_TYPES[winnerIdx].name === 'Grimoire');
 
                 const threshold = useHammerDmg ? r.hammerDmg :
                     isDupBeatsWrench ? 50 :
                         isWrenchBeatsDupe ? 10 :
-                            isGrimVsClub ? 25 :
+                            isGrimVsClub || isGrimVsVamp ? 25 :
                                 hasDupe && hasVamp && winnerIsDupe ? 10 :
                                     (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
                                         (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :

@@ -1,7 +1,6 @@
 "use strict"
 
 const seedOverride = null;
-// const seedOverride = 374; // DUPE VS GRIMOIRE
 const dramaticCheck = document.getElementById("dramatic-check");
 
 const menuDiv = document.getElementById("menu");
@@ -21,8 +20,8 @@ let mode = 0;
 let battleSeed;
 
 {
-    const theta0 = 19 * Math.PI / 12;
-    // const theta0 = 3 * Math.PI / 2;
+    // const theta0 = 19 * Math.PI / 12;
+    const theta0 = 3 * Math.PI / 2;
     for (let i = 0; i < ballClasses.length; i++) {
         const btn = document.createElement("button");
         btn.style.width = btn.style.height = ballBtnDiameter + "px";
@@ -137,13 +136,13 @@ for (let i = 0; i < modeBtns.length; i++) {
             delete ballBtns[duplicatorIdx].dataset.disabled;
         }
 
-        const snakeIdx = ballClasses.findIndex(b => b.name === "Snake");
-        if (i == 2) {
-            ballBtns[snakeIdx].dataset.disabled = "";
-        }
-        else {
-            delete ballBtns[snakeIdx].dataset.disabled;
-        }
+        // const snakeIdx = ballClasses.findIndex(b => b.name === "Snake");
+        // if (i == 2) {
+        //     ballBtns[snakeIdx].dataset.disabled = "";
+        // }
+        // else {
+        //     delete ballBtns[snakeIdx].dataset.disabled;
+        // }
     });
 }
 
@@ -470,7 +469,7 @@ async function startFFA() {
         console.log("used", battleSeed);
     }
 
-    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, null, 2);
+    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, null, 3);
     battle = result.battle;
     ffaCombatants = result.combatants;
     const { armStart, armEnd } = result;

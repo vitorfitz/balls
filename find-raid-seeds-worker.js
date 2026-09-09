@@ -36,7 +36,7 @@ function simulate(bossIndex, seed) {
             if (raiders.length == 1 && raiders[0] instanceof WrenchBall) raidersHp *= 5;
         }
         else {
-            if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
+            if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10 || bossIndex == 12) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
         }
 
         const bossHp = boss ? boss.hp : 0;
@@ -77,13 +77,13 @@ onmessage = (e) => {
     let progress = '';
 
     for (let bi = 0; bi < BOSS_TYPES.length; bi++) {
-        // if (bi != 9) continue;
+        // if (bi != 11) continue;
 
         const bossName = BOSS_TYPES[bi].name;
         const bossIndex = ballClasses.indexOf(BOSS_TYPES[bi]);
         const results = [];
 
-        for (let seed = 0; seed < matches; seed++) {
+        for (let seed = 0; seed < bi == 11 ? matches * 2 : matches; seed++) {
             const r = simulate(bossIndex, seed);
             if (r.winner !== 'draw') results.push({ seed, ...r });
         }

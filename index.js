@@ -1630,6 +1630,7 @@ class BallBattle {
         this.timeScale = 1;
         this.baseTimeScale = null;
         this.targetTimeScale = 1;
+        this.nyooooom = 1;
 
         this.rng = new Math.seedrandom(seed);
         this.seed = seed;
@@ -1651,7 +1652,7 @@ class BallBattle {
                         else count++;
                     }
                     else {
-                        if (b instanceof SnakeSegment && (b.owner.owner instanceof GrimoireBall || isDupeDuel)) count += 0.01;
+                        if (b instanceof SnakeSegment && (b.owner.owner instanceof GrimoireBall || isDupeDuel)) count += 0.02;
                         else if (b instanceof SnakeSegment) count += 0.1;
                         else if (count >= 0 && !dupeVsVamp) count += 0.2;
                     }
@@ -1736,11 +1737,14 @@ class BallBattle {
             }
             this.timeScale = Math.max(0.2, this.baseTimeScale * ts);
 
-            const speedUpThresh = 150;
             if (dupeVsVamp) {
-                const hp = Math.max(this.balls[0].hp, this.balls[1].hp);
-                if (hp > speedUpThresh) {
-                    this.timeScale += (hp - speedUpThresh) ** 2 * (1 / 10000);
+                const hp = this.balls[0] instanceof VampireBall ? this.balls[0].hp : this.balls[1].hp;
+                if (hp <= 25) {
+                    this.nyooooom = 1;
+                }
+                else if (hp >= 200 || this.nyooooom > 1) {
+                    this.nyooooom = this.nyooooom * 1.001 * (1 + this.nyooooom / 500);
+                    this.timeScale += this.nyooooom - 1;
                 }
             }
         }
@@ -2211,7 +2215,7 @@ class BallBattle {
         }
         weapon.setIFrames(target, key);
         // if (target instanceof SnakeSegment) console.log(predictedWeaponDist(weapon, target.owner), predictedWeaponDist(weapon, target.owner, true));
-        if (target instanceof VampireBall && !target.isStunned() || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+        if ((target instanceof VampireBall && !target.isStunned()) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
             target.deferredHits.push({ hitFn: () => weapon.ballColFns.forEach(fn => fn(target)), source: weapon.ball, t: 0 });
         }
         else {
@@ -4457,7 +4461,7 @@ const snakeSegOverlap = 7.5;
 // solved on velocities, Gauss-Seidel, a few passes per tick.
 const snakeLinkPasses = 4;       // solver passes per tick over the chain
 const snakeLinkStiffness = 0.25; // fraction of the remaining length error corrected per pass
-const snakeLinkMaxCorrection = 0.25; // per-link velocity change cap, in restDist per tick
+const snakeLinkMaxCorrection = 1; // per-link velocity change cap, in restDist per tick
 const snakeLinkFriction = 0.01;
 const snakeExtraEnergyDecay = 0.01; // fraction of extraEnergy bled off per tick (scaled by timeScale)
 const headRadius = 25;
@@ -4628,7 +4632,7 @@ class VampireBall extends Ball {
     }
 
     bleed(dt) {
-        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5000 : this.giga ? 6500 : 8000);
+        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5000 : this.giga ? 6000 : 8000);
     }
 
     damage(dmg, source, srcType) {
@@ -4636,10 +4640,10 @@ class VampireBall extends Ball {
             this.deferredHits = this.deferredHits.filter((x) => !(x.source === source && x.vsGrower && x.t > 0));
         }
 
-        if (this.dmgBlock <= EPS && (this.healBlock > EPS || this.inDeferred || srcType == "bullet")) {
+        if (this.dmgBlock <= EPS && (this.healBlock > EPS || this.inDeferred || srcType == "bullet" || source instanceof MirrorBall)) {
             super.damage(dmg, source);
         }
-        else {
+        else if (!(source instanceof GrowerBall)) {
             this.dmgBlock = this.freshDmgBlock;
         }
         this.healBlock = this.freshHealBlock;
@@ -4653,14 +4657,17 @@ class VampireBall extends Ball {
             const doLifesteal = () => {
                 b.damage(this.lifesteal, owner, "weapon");
 
-                if (!(b instanceof SnakeSegment) && !(this.battle.mode != DUEL && reflector)) {
-                    const healAmt = this.lifesteal / (b.getDmgResistance?.() ?? 1);
-                    owner.hp += healAmt;
-                    owner.showDmg(healAmt, 0, true);
+                if (!(b instanceof SnakeSegment) && !(this.battle.mode == FFA && reflector)) {
+                    // Not the final hit of a simulated battle. Healing there would affect dramatic seed calculation
+                    if (!(typeof document == "undefined" && (this.battle.balls.length <= 2 || this.battle.balls[2].owner) && b.hp <= 0)) {
+                        const healAmt = this.lifesteal / (b.getDmgResistance?.() ?? 1) / (reflector && b.giga ? 2 : 1);
+                        owner.hp += healAmt;
+                        owner.showDmg(healAmt, 0, true);
 
-                    this.dmgBlock = this.freshDmgBlock;
-                    this.deferredHits = this.deferredHits.filter((x) => b != x.source);
-                    if (!b.owner && !(b instanceof DuplicatorBall) && !(this.battle.mode == DUEL && this.owner)) addToHitHistory([owner, b], 10);
+                        this.dmgBlock = this.freshDmgBlock;
+                        this.deferredHits = this.deferredHits.filter((x) => b != x.source);
+                        if (!b.owner && !(b instanceof DuplicatorBall || b instanceof GrowerBall) && !(this.battle.mode == DUEL && this.owner)) addToHitHistory([owner, b], 10);
+                    }
                 }
 
                 this.lifesteal += 0.5;
@@ -4692,7 +4699,7 @@ class VampireBall extends Ball {
         let left = [];
         for (let d of this.deferredHits) {
             d.t += dt;
-            if (d.t >= (d.threshold ?? (this.battle.mode == FFA ? 2 : this.giga ? 3 : 1))) {
+            if (d.t >= (d.threshold ?? (this.battle.mode == DUEL ? 1 : this.giga && d.source instanceof DaggerBall ? 4 : 2))) {
                 if (this.dmgBlock <= EPS) d.hitFn();
                 else if (!d.vsGrower) this.dmgBlock = this.freshDmgBlock;
             }
@@ -4730,7 +4737,7 @@ class VampireBall extends Ball {
 
     onLoad() {
         this.baseHP = this.battle.mode == DUEL || !this.owner ? this.hp : 100;
-        this.freshDmgBlock = 5;
+        this.freshDmgBlock = this.giga ? 10 : 5;
         this.freshHealBlock = this.battle.mode == DUEL || this.giga ? 20 : 20;
     }
 }
@@ -4751,6 +4758,7 @@ class SoulDot extends CircleBody {
             // Find nearest ball, pickable by anyone
             let minDist = Infinity;
             for (const b of this.battle.balls) {
+                if (b instanceof SnakeSegment) continue;
                 const d = Math.hypot(b.x - this.x, b.y - this.y);
                 if (d < minDist) { minDist = d; target = b; }
             }
