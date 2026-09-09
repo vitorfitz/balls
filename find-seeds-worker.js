@@ -149,7 +149,7 @@ onmessage = (e) => {
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             // if (!(key in DRAMATIC_SEEDS)) continue;
-            if (key != "Wrench_Mirror" && key != "Mirror_Vampire") continue;
+            // if (key != "Wrench_Mirror" && key != "Mirror_Vampire") continue;
             const results = [];
 
             let m = key == "Duplicator_Mirror" ? 0.25 :
