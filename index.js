@@ -4502,7 +4502,7 @@ class SnakeSegment extends Ball {
     handleCollision(b, reflector) {
         if (!(b instanceof Ball) || b.team == this.owner.team) return;
         if (this.dmgCooldown[b.id] > EPS) return;
-        this.dmgCooldown[b.id] = this.giga ? 0 : 3;
+        this.dmgCooldown[b.id] = this.owner.giga ? 0 : 3;
         b.damage(1, this);
         if (!b.owner && !(b instanceof DuplicatorBall || b instanceof GrowerBall)) addToHitHistory([this.owner, b], 1);
     }
