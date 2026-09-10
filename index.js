@@ -893,31 +893,31 @@ function timeToCollision(b1, b2, dt, r1Override = null, r2Override = null) {
 }
 
 function decayKnockBoost(b, pct = 0.5, snapshot = b.knockBoost) {
-    if (snapshot > 0 && b.knockBoost > 0) {
-        let speed = Math.hypot(b.vx, b.vy);
-        const speedLimit = 25 + (b.boosts ?? 0) * 5 * boostPct * b.startSpeed;
+    // if (b.knockBoost < 0) pct = Math.min(0.03, pct);
 
-        if (speed > speedLimit /*&& (t < 7700 || pct == 0.5)*/) {
-            // console.log(t, "SPEED LIMIT EXCEEDED", speed.toFixed(2) + "/" + speedLimit, b.constructor.name);
-            const targetKE = 0.5 * speedLimit * speedLimit;
-            const currentKE = 0.5 * speed * speed;
-            const maxDecay = currentKE - targetKE;
-            const actualDecay = Math.min(b.knockBoost, maxDecay);
-            const scale = Math.sqrt((speed * speed - 2 * actualDecay) / (speed * speed));
-            b.vx *= scale;
-            b.vy *= scale;
-            b.knockBoost -= actualDecay;
-            speed = Math.hypot(b.vx, b.vy);
-        }
+    let speed = Math.hypot(b.vx, b.vy);
+    const speedLimit = 25 + (b.boosts ?? 0) * 5 * boostPct * b.startSpeed;
 
-        if (speed >= 1) {
-            const decayKE = snapshot * pct;
-            const actualDecay = Math.min(b.knockBoost, decayKE);
-            const scale = Math.sqrt(Math.max(0, speed * speed - 2 * actualDecay) / (speed * speed));
-            b.vx *= scale;
-            b.vy *= scale;
-            b.knockBoost -= actualDecay;
-        }
+    if (speed > speedLimit /*&& (t < 7700 || pct == 0.5)*/) {
+        // console.log(t, "SPEED LIMIT EXCEEDED", speed.toFixed(2) + "/" + speedLimit, b.constructor.name);
+        const targetKE = 0.5 * speedLimit * speedLimit;
+        const currentKE = 0.5 * speed * speed;
+        const maxDecay = currentKE - targetKE;
+        const actualDecay = Math.min(b.knockBoost, maxDecay);
+        const scale = Math.sqrt((speed * speed - 2 * actualDecay) / (speed * speed));
+        b.vx *= scale;
+        b.vy *= scale;
+        b.knockBoost -= actualDecay;
+        speed = Math.hypot(b.vx, b.vy);
+    }
+
+    if (snapshot > 0 && speed >= 1 || snapshot < 0 && speed <= speedLimit) {
+        const decayKE = snapshot * pct;
+        const actualDecay = Math.min(b.knockBoost, decayKE);
+        const scale = Math.sqrt(Math.max(0, speed * speed - 2 * actualDecay) / (speed * speed));
+        b.vx *= scale;
+        b.vy *= scale;
+        b.knockBoost -= actualDecay;
     }
 }
 
@@ -1611,8 +1611,8 @@ class BallBattle {
         this.mode = mode;
 
         this.nextID = 0;
-        // this.debug = true;
-        this.debug = false;
+        this.debug = true;
+        // this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -1815,6 +1815,8 @@ class BallBattle {
     }
 
     updatePhysics() {
+        // console.log(t, battle.balls.reduce((x, c) => x + c.totalEnergy(), 0));
+
         // Decay knock boost once per tick
         for (const b of this.bodies) {
             const decay = b._pendingKnockDecay ? Math.max(0.5, 1 - b.getTimeScale()) : b.giga ? 0.05 : 0.02;
@@ -2768,7 +2770,7 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 3650) {
+        // while (t < 1250) {
         //     t++
         //     this.updateTimeScale();
         //     this.update();
@@ -3891,6 +3893,9 @@ class GrimoireBall extends Ball {
         else if (target instanceof ClubBall) {
             minion.stunDur = target.stunDur;
         }
+        else if (target instanceof MagnetBall) {
+            minion.attraction = target.giga ? 1 + (target.attraction - 1) / 2 : target.attraction;
+        }
         else if (target.segments) { // snake or mirror with segments
             if (!minion.segments) minion.segments = []; // mirror clones don't init segments in their constructor
             minion.extraEnergy = 0; // mirror clones don't init this in their constructor either; segments start dormant so no surplus has accrued yet
@@ -3924,7 +3929,7 @@ class GrimoireBall extends Ball {
         let speed = this.battle.lol ? this.startSpeed : speedNum / speedDen;
         const baseArgs = [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed];
 
-        if (Constructor === DaggerBall || Constructor === SwordBall || Constructor === MachineGunBall || Constructor === WrenchBall || Constructor === MirrorBall || Constructor === HammerBall || Constructor === ClubBall) {
+        if (Constructor === DaggerBall || Constructor === SwordBall || Constructor === MachineGunBall || Constructor === WrenchBall || Constructor === MirrorBall || Constructor === HammerBall || Constructor === ClubBall || Constructor === MagnetBall) {
             return [...baseArgs, target.weapons[0]?.theta || 0, 1, this.nextMinionHP, newRadius];
         }
         if (Constructor === GrimoireBall) {
@@ -4454,6 +4459,96 @@ class ClubBall extends Ball {
     }
 }
 
+// Magnet: Attracts other balls
+const magnetPullBase = 1000;
+class MagnetBall extends Ball {
+    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c9c9c9", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        this.attraction = 1;
+        this.scalingCooldown = 0;
+
+        const cfg = getWeaponConfig(MagnetBall);
+        const magnet = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
+        magnet.addCollider(36, 20, 0);
+        magnet.addSpin(0.013 * Math.PI * dir);
+        magnet.addParry();
+        magnet.addDamage(1, 0, true, 3);
+
+        magnet.ballColFns.push((b) => {
+            const magnetTheta = ((magnet.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+            const nx = Math.cos(magnetTheta);
+            const ny = Math.sin(magnetTheta);
+
+            const relVx = b.vx - this.vx, relVy = b.vy - this.vy;
+            const velAlongNormal = relVx * nx + relVy * ny;
+            console.log(t, velAlongNormal);
+            if (velAlongNormal < 0) {
+                const bounced = velAlongNormal <= -1;
+                if (bounced) {
+                    this._pendingKnockDecay = true;
+                    b._pendingKnockDecay = true;
+                }
+                const prevBoost1 = this.knockBoost;
+                const prevBoost2 = b.knockBoost;
+                applyElasticCollision(this, b, nx, ny, true);
+                shareKnockBoost(this, b, prevBoost1, prevBoost2);
+            }
+        });
+
+        magnet.ballColFns.push((b, reflector) => {
+            if (this.scalingCooldown <= EPS) {
+                this.attraction += 0.25;
+                recordFeed(reflector ?? b, this);
+                this.scalingCooldown = 4;
+            }
+        });
+
+        this.addWeapon(magnet);
+    }
+
+    handleUpdate(dt) {
+        this.scalingCooldown -= dt;
+
+        const magnet = this.weapons[0];
+        const midR = this.radius + (magnet.colliderOffset + magnet.range) / 2;
+        const magnetX = this.x + Math.cos(magnet.theta) * midR;
+        const magnetY = this.y + Math.sin(magnet.theta) * midR;
+
+        let weaponPull = 0;
+
+        for (const b of this.battle.balls) {
+            if (b === this) continue;
+            const dx = b.x - magnetX, dy = b.y - magnetY;
+            const dist = Math.hypot(dx, dy);
+            if (dist <= EPS) continue;
+            const nx = dx / dist, ny = dy / dist;
+
+            const pull = Math.min(0.25, magnetPullBase * this.attraction * (b.attraction ?? 1) / dist ** 2) * dt;
+            weaponPull -= 500 * Math.sin(this.weapons[0].theta - Math.atan2(b.y - this.y, b.x - this.x)) / dist ** 2;
+
+            // const thisSpeedBefore = Math.hypot(this.vx, this.vy);
+            // this.vx += nx * pull;
+            // this.vy += ny * pull;
+            // const thisSpeedAfter = Math.hypot(this.vx, this.vy);
+            // this.knockBoost += 0.5 * (thisSpeedAfter * thisSpeedAfter - thisSpeedBefore * thisSpeedBefore);
+
+            const bSpeedBefore = Math.hypot(b.vx, b.vy);
+            b.vx -= nx * pull * this.mass / b.mass;
+            b.vy -= ny * pull * this.mass / b.mass;
+            const bSpeedAfter = Math.hypot(b.vx, b.vy);
+            b.knockBoost += 0.5 * (bSpeedAfter * bSpeedAfter - bSpeedBefore * bSpeedBefore);
+        }
+
+        this.weapons[0].angVel = Math.min(0.04 * Math.PI, weaponPull);
+    }
+
+    getInfoEl() {
+        return this.propsToList({
+            "Attraction": { text: Math.round(this.attraction * 100) + "%", grad: { from: 100, to: 2000 } },
+        });
+    }
+}
+
 // Snake: gains a trailing segment (which also deals contact damage) each time
 // its head damages an enemy
 const snakeSegOverlap = 7.5;
@@ -4950,6 +5045,7 @@ const ballClasses = [
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
     { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c88941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
     { name: "Club", class: ClubBall, hp: 100, radius: 25, color: "#b35237", weapon: { sprite: "sprites/club.webp", scale: 2, offset: -2, shift: -2, rotation: 3 * Math.PI / 4, spin: true } },
+    { name: "Magnet", class: MagnetBall, hp: 100, radius: 25, color: "#c9c9c9", weapon: { sprite: "sprites/magnet.png", scale: 1.4, offset: -9, rotation: Math.PI / 4, spin: true } },
     { name: "Snake", class: SnakeBall, hp: 100, radius: 25, color: "#e0d030" },
     { name: "Vampire", class: VampireBall, hp: 100, radius: 25, color: "#eb2876" },
 ];
