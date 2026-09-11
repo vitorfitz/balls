@@ -1103,6 +1103,84 @@ function shareKnockBoost(b1, b2, prevBoost1 = b1.knockBoost, prevBoost2 = b2.kno
     // if (b1.knockBoost < 0 || b2.knockBoost < 0) console.log(`[t=${t}] b1.knockBoost=${b1.knockBoost} b2.knockBoost=${b2.knockBoost}`);
 }
 
+// Identifies the Mirror/Magnet pair (if any) between w1 and w2's wielders and
+// reports whether they're currently closing on each other along the normal
+// bounceMirrorMagnetWeapons() would use. Split out from that function so
+// callers can check this *before* running weaponColFns (to decide whether to
+// suppress each weapon's addParry() for this contact) while the actual bounce
+// still runs *after* weaponColFns (so it reflects post-parry/post-reflect
+// state, same as the original ordering).
+function mirrorMagnetWouldBounce(w1, w2) {
+    const b1 = w1.ball, b2 = w2.ball;
+    const mirror = b1 instanceof MirrorBall ? b1 : (b2 instanceof MirrorBall ? b2 : null);
+    const magnet = b1 instanceof MagnetBall ? b1 : (b2 instanceof MagnetBall ? b2 : null);
+    if (!mirror || !magnet || mirror === magnet) return false;
+
+    const mirrorW = mirror === b1 ? w1 : w2;
+    const magnetW = magnet === b1 ? w1 : w2;
+    const mirrorSeg = mirrorW.getHitSegment();
+    const magnetSeg = magnetW.getHitSegment();
+    const contact = segmentToSegmentContactPoint(
+        mirrorSeg.x1, mirrorSeg.y1, mirrorSeg.x2, mirrorSeg.y2,
+        magnetSeg.x1, magnetSeg.y1, magnetSeg.x2, magnetSeg.y2
+    );
+
+    let dx = magnet.x - contact.x, dy = magnet.y - contact.y;
+    let dist = Math.hypot(dx, dy);
+    if (dist < EPS) { dx = magnet.x - mirror.x; dy = magnet.y - mirror.y; dist = Math.hypot(dx, dy) || 1; }
+    const nx = dx / dist, ny = dy / dist;
+
+    const relVx = magnet.vx - mirror.vx, relVy = magnet.vy - mirror.vy;
+    const velAlongNormal = relVx * nx + relVy * ny;
+    return velAlongNormal < 0;
+}
+
+// Physically bounces two wielders apart when their weapons touch, for the
+// Mirror/Magnet pairing specifically. Both of these weapons already bounce
+// balls off their blade on ball-body contact (see bounceOffWeaponFace() calls
+// in their ballColFns); this extends the same physical push to blade-vs-blade
+// contact between the two of them, since otherwise Magnet's longer reach (36)
+// can stay lodged against Mirror's short face (16) applying continuous DoT
+// with no knockback to separate them.
+//
+// Returns true if a bounce was applied. Callers should suppress each
+// weapon's own addParry() direction-flip when this returns true — the parry
+// logic and the physical bounce are two competing ways of resolving the same
+// contact, and running both fights over the blades' geometry rather than
+// cleanly separating them (see call site).
+function bounceMirrorMagnetWeapons(w1, w2) {
+    const b1 = w1.ball, b2 = w2.ball;
+    const mirror = b1 instanceof MirrorBall ? b1 : (b2 instanceof MirrorBall ? b2 : null);
+    const magnet = b1 instanceof MagnetBall ? b1 : (b2 instanceof MagnetBall ? b2 : null);
+    if (!mirror || !magnet || mirror === magnet) return false;
+
+    const mirrorW = mirror === b1 ? w1 : w2;
+    const magnetW = magnet === b1 ? w1 : w2;
+    const mirrorSeg = mirrorW.getHitSegment();
+    const magnetSeg = magnetW.getHitSegment();
+    const contact = segmentToSegmentContactPoint(
+        mirrorSeg.x1, mirrorSeg.y1, mirrorSeg.x2, mirrorSeg.y2,
+        magnetSeg.x1, magnetSeg.y1, magnetSeg.x2, magnetSeg.y2
+    );
+
+    let dx = magnet.x - contact.x, dy = magnet.y - contact.y;
+    let dist = Math.hypot(dx, dy);
+    if (dist < EPS) { dx = magnet.x - mirror.x; dy = magnet.y - mirror.y; dist = Math.hypot(dx, dy) || 1; }
+    const nx = dx / dist, ny = dy / dist;
+
+    const relVx = magnet.vx - mirror.vx, relVy = magnet.vy - mirror.vy;
+    const velAlongNormal = relVx * nx + relVy * ny;
+    if (velAlongNormal >= 0) return false; // already separating
+
+    const prevBoost1 = mirror.knockBoost, prevBoost2 = magnet.knockBoost;
+    mirror._pendingKnockDecay = true;
+    magnet._pendingKnockDecay = true;
+    applyElasticCollision(mirror, magnet, nx, ny, true);
+    shareKnockBoost(mirror, magnet, prevBoost1, prevBoost2);
+    return true;
+}
+
+
 function bounceOffWeaponFace(weapon, wielder, b) {
     const theta = ((weapon.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
     const nx = Math.cos(theta), ny = Math.sin(theta);
@@ -2315,8 +2393,29 @@ class BallBattle {
                     for (const w1 of A.parryWeapons) {
                         for (const w2 of B.parryWeapons) {
                             if (weaponWeaponContact(w1, w2)) {
+                                // If this pair physically bounces (Mirror/Magnet only), suppress
+                                // each weapon's own addParry() direction-flip for this contact by
+                                // no-oping changeDir() before running weaponColFns. The parry flip
+                                // and the physical bounce are two competing ways of resolving the
+                                // same contact — running both fights over the blades' geometry
+                                // (parry flips spin based on current approach angle, the bounce
+                                // changes the velocities that angle depends on) rather than
+                                // cleanly separating them, and undoing the flip after the fact
+                                // would still leave a stale (wrongly-reversed) breakpoint in
+                                // _thetaSegments, so it has to be prevented up front instead.
+                                const wouldBounce = mirrorMagnetWouldBounce(w1, w2);
+                                const origChangeDir1 = w1.changeDir, origChangeDir2 = w2.changeDir;
+                                if (wouldBounce) {
+                                    w1.changeDir = () => { };
+                                    w2.changeDir = () => { };
+                                }
                                 w1.weaponColFns.forEach(fn => fn(w2));
                                 w2.weaponColFns.forEach(fn => fn(w1));
+                                if (wouldBounce) {
+                                    w1.changeDir = origChangeDir1;
+                                    w2.changeDir = origChangeDir2;
+                                }
+                                bounceMirrorMagnetWeapons(w1, w2);
                             }
                         }
                     }
