@@ -914,7 +914,12 @@ function decayKnockBoost(b, pct = 0.5, snapshot = b.knockBoost) {
         speed = Math.hypot(b.vx, b.vy);
     }
 
-    if (snapshot > 0 && speed >= 1 || snapshot < 0 && speed <= speedLimit) {
+    // speed can be 0 here (e.g. a ball just stunned, vx=vy=0, with a leftover
+    // negative knockBoost snapshot from just before the stun) — the scale
+    // computation below divides by speed*speed, which would blow up to
+    // Infinity/NaN. With no velocity there's nothing to decay against, so skip
+    // entirely rather than risk corrupting vx/vy.
+    if (speed > EPS && (snapshot > 0 && speed >= 1 || snapshot < 0 && speed <= speedLimit)) {
         const decayKE = snapshot * pct;
         const actualDecay = Math.min(b.knockBoost, decayKE);
         const scale = Math.sqrt(Math.max(0, speed * speed - 2 * actualDecay) / (speed * speed));
@@ -1087,6 +1092,15 @@ function applyElasticCollision(b1, b2, nx, ny, fromMirror = false) {
 
 // Share knockBoost proportional to post-collision KE weighted by mass
 function shareKnockBoost(b1, b2, prevBoost1 = b1.knockBoost, prevBoost2 = b2.knockBoost) {
+    // Infinite-mass bodies (stunned balls, turrets) don't participate in
+    // knockBoost accounting: they have no velocity of their own to carry it, and
+    // prevBoost * Infinity below would blow totalBoost up to Infinity, which
+    // then divides back out against b.mass (also Infinity) as Infinity/Infinity
+    // = NaN once redistributed. Their knockBoost is frozen state anyway (restored
+    // verbatim on clearStun() rather than earned via this tick's collision), so
+    // just leave it untouched here.
+    if (!isFinite(b1.mass) || !isFinite(b2.mass)) return;
+
     const totalBoost = prevBoost1 * b1.mass + prevBoost2 * b2.mass;
     if (totalBoost > 0) {
         b1.knockBoost -= prevBoost1;
@@ -1718,8 +1732,8 @@ class BallBattle {
         this.mode = mode;
 
         this.nextID = 0;
-        this.debug = true;
-        // this.debug = false;
+        // this.debug = true;
+        this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -2898,11 +2912,11 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 1250) {
-        //     t++
-        //     this.updateTimeScale();
-        //     this.update();
-        // }
+        while (t < 2100) {
+            t++
+            this.updateTimeScale();
+            this.update();
+        }
 
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
@@ -4569,7 +4583,7 @@ class ClubBall extends Ball {
 }
 
 // Magnet: Attracts other balls
-const magnetPullBase = 800;
+const magnetPullBase = 500;
 class MagnetBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c9c9c9", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -4615,14 +4629,22 @@ class MagnetBall extends Ball {
         let weaponPull = 0.012 * Math.PI * Math.sign(this.weapons[0].angVel);
 
         for (const b of this.battle.balls) {
-            if (b.team == this.team || b instanceof SnakeSegment) continue;
-            const dx = b.x - magnetX, dy = b.y - magnetY;
+            if (b.team == this.team || b instanceof SnakeSegment || b.isStunned()) continue;
+
+            let bx = b.x, by = b.y;
+            if (b instanceof MirrorBall) {
+                const att = (b.radius + b.weapons[0].range);
+                bx += att * Math.cos(b.weapons[0].theta);
+                by += att * Math.sin(b.weapons[0].theta);
+            }
+
+            const dx = bx - magnetX, dy = by - magnetY;
             const dist = Math.hypot(dx, dy);
             if (dist <= EPS) continue;
             const nx = dx / dist, ny = dy / dist;
 
-            const pull = Math.min(0.25, magnetPullBase * this.attraction * (b.attraction ?? 1) / dist ** 2) * dt;
-            weaponPull -= 0.55 * this.attraction * Math.sin(this.weapons[0].theta - Math.atan2(b.y - this.y, b.x - this.x)) / (dist + 50);
+            const pull = Math.min(0.25, magnetPullBase * this.attraction / dist ** 2) * dt;
+            weaponPull -= 0.55 * this.attraction * Math.sin(this.weapons[0].theta - Math.atan2(by - this.y, bx - this.x)) / (dist + 50);
 
             // const thisSpeedBefore = Math.hypot(this.vx, this.vy);
             // this.vx += nx * pull;
@@ -4979,12 +5001,6 @@ class SoulDot extends CircleBody {
                 this.vx = along * dirX + perpX * drag;
                 this.vy = along * dirY + perpY * drag;
             }
-
-            // {
-            //     const drag = Math.exp(-dt * 1 / 100);
-            //     this.vx *= drag;
-            //     this.vy *= drag;
-            // }
 
             const accel = 0.3;
             this.vx += (dx / dist) * accel * dt;
