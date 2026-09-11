@@ -132,6 +132,12 @@ class Weapon {
         this.updateFns.push((dt) => this.theta += dt * this.angVel);
     }
 
+    changeDir() {
+        this.angVel = -this.angVel;
+        this._thetaSegments?.push({ theta: this.theta, f: this.ball.battle._weaponSubF ?? 1 });
+        this.flipped = this.angVel < 0;
+    }
+
     addParry() {
         // return;
         this.flipped = this.angVel < 0;
@@ -141,11 +147,8 @@ class Weapon {
             const toOther = Math.atan2(other.ball.y - this.ball.y, other.ball.x - this.ball.x);
             const approaching = Math.sin(toOther - this.theta) * this.angVel > 0;
             if (approaching) {
-                this.angVel = -this.angVel;
-                this._thetaSegments?.push({ theta: this.theta, f: this.ball.battle._weaponSubF ?? 1 });
-                // this.ball.slowTime = other.ball.slowTime = 15;
+                this.changeDir();
             }
-            this.flipped = this.angVel < 0;
         });
     }
 
@@ -164,9 +167,9 @@ class Weapon {
     }
 
     addDirChange() {
+        this.flipped = this.angVel < 0;
         this.ballColFns.push(() => {
-            this.angVel *= -1;
-            this._thetaSegments?.push({ theta: this.theta, f: this.ball.battle._weaponSubF ?? 1 });
+            this.changeDir();
         });
     }
 
@@ -1098,6 +1101,32 @@ function shareKnockBoost(b1, b2, prevBoost1 = b1.knockBoost, prevBoost2 = b2.kno
         }
     }
     // if (b1.knockBoost < 0 || b2.knockBoost < 0) console.log(`[t=${t}] b1.knockBoost=${b1.knockBoost} b2.knockBoost=${b2.knockBoost}`);
+}
+
+function bounceOffWeaponFace(weapon, wielder, b) {
+    const theta = ((weapon.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const nx = Math.cos(theta), ny = Math.sin(theta);
+
+    const relVx = b.vx - wielder.vx, relVy = b.vy - wielder.vy;
+    const velAlongNormal = relVx * nx + relVy * ny;
+    const bounced = velAlongNormal <= -1;
+
+    if (velAlongNormal < 0) {
+        if (bounced) {
+            wielder._pendingKnockDecay = true;
+            b._pendingKnockDecay = true;
+        }
+        const prevBoost1 = wielder.knockBoost;
+        const prevBoost2 = b.knockBoost;
+        applyElasticCollision(wielder, b, nx, ny, true);
+        shareKnockBoost(wielder, b, prevBoost1, prevBoost2);
+    }
+
+    weapon._inContact ??= {};
+    const freshHit = !weapon._inContact[b.id];
+    weapon._inContact[b.id] = true;
+
+    return { freshHit, bounced };
 }
 
 function applyPendingSlam(b) {
@@ -4251,35 +4280,11 @@ class MirrorBall extends Ball {
         mirror.DoT = true;
         mirror._inContact = {};
         mirror.ballColFns.push((b) => {
-            const mirrorTheta = ((mirror.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-            // const oldvx = this.vx, oldvy = this.vy;
-
-            // Mirror normal (perpendicular to mirror surface)
-            const nx = Math.cos(mirrorTheta);
-            const ny = Math.sin(mirrorTheta);
-
-            // Skip if ball is already moving away from mirror
-            const relVx = b.vx - this.vx, relVy = b.vy - this.vy;
-            const velAlongNormal = relVx * nx + relVy * ny;
-            let bounced = velAlongNormal <= -1;
-
-            if (velAlongNormal < 0) {
-                if (bounced) {
-                    this._pendingKnockDecay = true;
-                    b._pendingKnockDecay = true;
-                }
-                const prevBoost1 = this.knockBoost;
-                const prevBoost2 = b.knockBoost
-                applyElasticCollision(this, b, nx, ny, true);
-                shareKnockBoost(this, b, prevBoost1, prevBoost2);
-            }
+            const { freshHit, bounced } = bounceOffWeaponFace(mirror, this, b);
 
             if (b.dmgWeapons.length === 0 && b.team !== this.team) {
-                const newContact = !mirror._inContact[b.id];
-                mirror._inContact[b.id] = true;
-
-                const nColl = Math.max(+bounced, +newContact, this.collsThisFrame[b.id] ?? 0);
-                // if (nColl > 0) console.log(+bounced, +newContact, this.collsThisFrame[b.id] ?? 0);
+                const nColl = Math.max(+freshHit, +bounced, this.collsThisFrame[b.id] ?? 0);
+                // if (nColl > 0) console.log(+freshOrBounced, this.collsThisFrame[b.id] ?? 0);
                 for (let i = 0; i < nColl; i++) {
                     b.handleCollision(b, this);
                     applyPendingSlam(b);
@@ -4460,7 +4465,7 @@ class ClubBall extends Ball {
 }
 
 // Magnet: Attracts other balls
-const magnetPullBase = 1000;
+const magnetPullBase = 800;
 class MagnetBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#c9c9c9", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -4470,36 +4475,28 @@ class MagnetBall extends Ball {
         const cfg = getWeaponConfig(MagnetBall);
         const magnet = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         magnet.addCollider(36, 20, 0);
-        magnet.addSpin(0.013 * Math.PI * dir);
+        magnet.addSpin(0.012 * dir);
         magnet.addParry();
-        magnet.addDamage(1, 0, true, 3);
-
-        magnet.ballColFns.push((b) => {
-            const magnetTheta = ((magnet.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-            const nx = Math.cos(magnetTheta);
-            const ny = Math.sin(magnetTheta);
-
-            const relVx = b.vx - this.vx, relVy = b.vy - this.vy;
-            const velAlongNormal = relVx * nx + relVy * ny;
-            console.log(t, velAlongNormal);
-            if (velAlongNormal < 0) {
-                const bounced = velAlongNormal <= -1;
-                if (bounced) {
-                    this._pendingKnockDecay = true;
-                    b._pendingKnockDecay = true;
-                }
-                const prevBoost1 = this.knockBoost;
-                const prevBoost2 = b.knockBoost;
-                applyElasticCollision(this, b, nx, ny, true);
-                shareKnockBoost(this, b, prevBoost1, prevBoost2);
-            }
-        });
+        magnet.dmg = 2;
+        magnet.iframes = 0;
+        magnet.DoT = true;
+        magnet._inContact = {};
 
         magnet.ballColFns.push((b, reflector) => {
+            const { freshHit, bounced } = bounceOffWeaponFace(magnet, this, b);
+            if (!freshHit && !bounced) return;
+            // if (freshHit) magnet.changeDir();
+
             if (this.scalingCooldown <= EPS) {
-                this.attraction += 0.25;
+                this.attraction += 0.5;
                 recordFeed(reflector ?? b, this);
-                this.scalingCooldown = 4;
+                this.scalingCooldown = 20;
+            }
+
+            const source = reflector || this;
+            b.damage(magnet.dmg, source, "weapon");
+            if (!b.owner && !(b instanceof DuplicatorBall)) {
+                addToHitHistory([source, b], 5);
             }
         });
 
@@ -4510,21 +4507,20 @@ class MagnetBall extends Ball {
         this.scalingCooldown -= dt;
 
         const magnet = this.weapons[0];
-        const midR = this.radius + (magnet.colliderOffset + magnet.range) / 2;
-        const magnetX = this.x + Math.cos(magnet.theta) * midR;
-        const magnetY = this.y + Math.sin(magnet.theta) * midR;
+        const magnetX = this.x + Math.cos(magnet.theta) * magnet.range;
+        const magnetY = this.y + Math.sin(magnet.theta) * magnet.range;
 
-        let weaponPull = 0;
+        let weaponPull = 0.012 * Math.PI * Math.sign(this.weapons[0].angVel);
 
         for (const b of this.battle.balls) {
-            if (b === this) continue;
+            if (b.team == this.team || b instanceof SnakeSegment) continue;
             const dx = b.x - magnetX, dy = b.y - magnetY;
             const dist = Math.hypot(dx, dy);
             if (dist <= EPS) continue;
             const nx = dx / dist, ny = dy / dist;
 
             const pull = Math.min(0.25, magnetPullBase * this.attraction * (b.attraction ?? 1) / dist ** 2) * dt;
-            weaponPull -= 500 * Math.sin(this.weapons[0].theta - Math.atan2(b.y - this.y, b.x - this.x)) / dist ** 2;
+            weaponPull -= 0.5 * this.attraction * Math.sin(this.weapons[0].theta - Math.atan2(b.y - this.y, b.x - this.x)) / (dist + 50);
 
             // const thisSpeedBefore = Math.hypot(this.vx, this.vy);
             // this.vx += nx * pull;
@@ -4533,13 +4529,14 @@ class MagnetBall extends Ball {
             // this.knockBoost += 0.5 * (thisSpeedAfter * thisSpeedAfter - thisSpeedBefore * thisSpeedBefore);
 
             const bSpeedBefore = Math.hypot(b.vx, b.vy);
-            b.vx -= nx * pull * this.mass / b.mass;
-            b.vy -= ny * pull * this.mass / b.mass;
+            b.vx -= nx * pull;
+            b.vy -= ny * pull;
             const bSpeedAfter = Math.hypot(b.vx, b.vy);
             b.knockBoost += 0.5 * (bSpeedAfter * bSpeedAfter - bSpeedBefore * bSpeedBefore);
         }
 
-        this.weapons[0].angVel = Math.min(0.04 * Math.PI, weaponPull);
+        const maxSpin = 0.04 * Math.PI;
+        this.weapons[0].angVel = Math.max(-maxSpin, Math.min(maxSpin, weaponPull));
     }
 
     getInfoEl() {
