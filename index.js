@@ -4495,9 +4495,7 @@ class MagnetBall extends Ball {
 
             const source = reflector || this;
             b.damage(magnet.dmg, source, "weapon");
-            if (!b.owner && !(b instanceof DuplicatorBall)) {
-                addToHitHistory([source, b], 5);
-            }
+            addToHitHistory([source, b], !b.owner && !(b instanceof DuplicatorBall) ? 5 : 1);
         });
 
         this.addWeapon(magnet);
