@@ -3151,7 +3151,12 @@ class LanceBall extends Ball {
     handleUpdate(dt) {
         this.damageThisTick = -1;
         if (this.vx != 0 && this.vy != 0) this.weapons[0].theta = Math.atan2(this.vy, this.vx);
-        this.dist -= Math.min((3 * this.startSpeed + this.startSpeed * (this.boosts * boostPct)) ** 2, (this.vx ** 2 + this.vy ** 2)) * dt;
+        // knockBoost is extra KE-per-mass layered on top of the lance's own speed
+        // (e.g. from getting knocked around in a collision); speed² attributable to
+        // it is 2*knockBoost, so subtract that out before feeding into the combo
+        // distance decrement, which should track the lance's own travel speed only.
+        const speed2 = Math.max(0, this.vx ** 2 + this.vy ** 2 - 2 * (this.knockBoost || 0));
+        this.dist -= Math.min((3 * this.startSpeed + this.startSpeed * (this.boosts * boostPct)) ** 2, speed2) * dt;
         if (this.hit <= 0) {
             this.combo = 0;
             this.comboHits.clear();
@@ -4518,7 +4523,7 @@ class MagnetBall extends Ball {
             const nx = dx / dist, ny = dy / dist;
 
             const pull = Math.min(0.25, magnetPullBase * this.attraction * (b.attraction ?? 1) / dist ** 2) * dt;
-            weaponPull -= 0.5 * this.attraction * Math.sin(this.weapons[0].theta - Math.atan2(b.y - this.y, b.x - this.x)) / (dist + 50);
+            weaponPull -= 0.55 * this.attraction * Math.sin(this.weapons[0].theta - Math.atan2(b.y - this.y, b.x - this.x)) / (dist + 50);
 
             // const thisSpeedBefore = Math.hypot(this.vx, this.vy);
             // this.vx += nx * pull;
