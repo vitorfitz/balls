@@ -1,6 +1,6 @@
 "use strict"
 
-const seedOverride = null;
+const seedOverride = null; // 113 mg vs dupe
 const dramaticCheck = document.getElementById("dramatic-check");
 
 const menuDiv = document.getElementById("menu");
@@ -469,7 +469,7 @@ async function startFFA() {
         console.log("used", battleSeed);
     }
 
-    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, null, 3);
+    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, null, 4);
     battle = result.battle;
     ffaCombatants = result.combatants;
     const { armStart, armEnd } = result;

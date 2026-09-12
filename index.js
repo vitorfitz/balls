@@ -1712,8 +1712,8 @@ class BallBattle {
         this.mode = mode;
 
         this.nextID = 0;
-        // this.debug = true;
-        this.debug = false;
+        this.debug = true;
+        // this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -5155,7 +5155,7 @@ const ballClasses = [
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
     { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c88941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
     { name: "Club", class: ClubBall, hp: 100, radius: 25, color: "#b35237", weapon: { sprite: "sprites/club.webp", scale: 2, offset: -2, shift: -2, rotation: 3 * Math.PI / 4, spin: true } },
-    { name: "Magnet", class: MagnetBall, hp: 100, radius: 25, color: "#c9c9c9", weapon: { sprite: "sprites/magnet.png", scale: 2, offset: -14, rotation: Math.PI / 4, spin: true } },
+    { name: "Magnet", class: MagnetBall, hp: 100, radius: 25, color: "#c9c9c9", weapon: { sprite: "sprites/magnet.png", scale: 3, offset: -12, rotation: Math.PI / 4, spin: true } },
     { name: "Snake", class: SnakeBall, hp: 100, radius: 25, color: "#e0d030" },
     { name: "Vampire", class: VampireBall, hp: 100, radius: 25, color: "#eb2876" },
 ];
