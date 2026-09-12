@@ -5,7 +5,7 @@ const MAX_TICKS = 20000;
 function simulate(seed) {
     const { size } = FFA_CONFIG;
 
-    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle, null, 3);
+    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle, null, 4);
     const battle = result.battle;
 
     battle.width = battle.height = size;

@@ -37,7 +37,7 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
     // Grimoire and Mirror are mutually banned as raiders against each other's boss,
     // to avoid infinite minion-summoning loops (Grimoire clones Mirror's reflect behavior).
     let bannedNames = bossName === "Grimoire" || bossName === "Mirror" || bossName === "Duplicator" ? ["Grimoire", "Mirror"]
-        : bossName === "Snake" ? ["Grimoire", "Snake", "Grower"]
+        : bossName === "Snake" ? ["Grimoire", "Grower"]
             : bossName === "Vampire" ? ["Lance", "Grimoire"]
                 : bossName === "Magnet" ? ["Grower", "Grimoire"]
                     : [bossName];
