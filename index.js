@@ -4660,7 +4660,7 @@ class MagnetBall extends Ball {
 
     getInfoEl() {
         return this.propsToList({
-            "Pull": { text: this.attraction.toFixed(1) + "x", grad: { from: 1, to: 20 } },
+            "Pull": { text: this.attraction.toFixed(1) + "x", grad: { from: 1, to: 25 } },
         });
     }
 }
