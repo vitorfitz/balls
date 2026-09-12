@@ -23,6 +23,7 @@ const RAID_CONFIG = {
         "Club": 500,
         "Snake": 999,
         "Vampire": 500,
+        "Magnet": 300,
     }
 };
 
@@ -38,10 +39,12 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
     let bannedNames = bossName === "Grimoire" || bossName === "Mirror" || bossName === "Duplicator" ? ["Grimoire", "Mirror"]
         : bossName === "Snake" ? ["Grimoire", "Snake", "Grower"]
             : bossName === "Vampire" ? ["Lance", "Grimoire"]
-                : [bossName];
+                : bossName === "Magnet" ? ["Grower", "Grimoire"]
+                    : [bossName];
     bannedNames.push("Duplicator");
     bannedNames.push("Snake");
     bannedNames.push("Vampire");
+    bannedNames.push("Magnet");
 
     const raiderIndices = ballClasses
         .map((b, i) => i)
