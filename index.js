@@ -536,7 +536,7 @@ class Ball extends CircleBody {
     }
 
     propsToList(p) {
-        if (this.giga && !((this instanceof DaggerBall) || (this instanceof LanceBall) || (this instanceof GrowerBall) || (this instanceof MagnetBall))) {
+        if (this.giga && !((this instanceof DaggerBall) || (this instanceof LanceBall) || (this instanceof GrowerBall))) {
             for (let key in p) {
                 if (p[key].grad) {
                     p[key].grad.to += (p[key].grad.to - p[key].grad.from) * 2;
@@ -4580,12 +4580,12 @@ class MagnetBall extends Ball {
         magnet._inContact = {};
 
         magnet.ballColFns.push((b, reflector) => {
-            const { freshHit, bounced } = bounceOffWeaponFace(magnet, this, b);
+            const { freshHit, bounced } = bounceOffWeaponFace(magnet, this, b, this.giga ? 1.5 : 1);
             if (!freshHit && !bounced) return;
             // if (freshHit) magnet.changeDir();
 
             if (this.scalingCooldown <= EPS) {
-                this.attraction += (this.giga ? 0.2 : 0.5);
+                this.attraction += 0.5;
                 recordFeed(reflector ?? b, this);
                 this.scalingCooldown = 20;
             }
@@ -4594,6 +4594,12 @@ class MagnetBall extends Ball {
             b.damage(magnet.dmg, source, "weapon");
             addToHitHistory([source, b], this.battle.mode != DUEL || this.owner ? 3 : !b.owner && !(b instanceof DuplicatorBall) ? 5 : 1);
         });
+
+        const origChangeDir = magnet.changeDir.bind(magnet);
+        magnet.changeDir = () => {
+            origChangeDir();
+            if (this.prevBaseSpin !== undefined) this.prevBaseSpin *= -1;
+        };
 
         this.addWeapon(magnet);
     }
@@ -4605,7 +4611,12 @@ class MagnetBall extends Ball {
         const magnetX = this.x + Math.cos(magnet.theta) * magnet.range;
         const magnetY = this.y + Math.sin(magnet.theta) * magnet.range;
 
-        let weaponPull = 0.012 * Math.PI * Math.sign(this.weapons[0].angVel);
+        // const seedTarget = Math.min(0.012 * Math.PI, Math.abs(this.weapons[0].angVel)) * Math.sign(this.weapons[0].angVel);
+        const seedTarget = 0.012 * Math.PI * Math.sign(this.weapons[0].angVel);
+        const prevSeed = this.prevBaseSpin ?? seedTarget;
+        const seedMaxDelta = 0.0012 * Math.PI * dt;
+        let weaponPull = prevSeed + Math.max(-seedMaxDelta, Math.min(seedMaxDelta, seedTarget - prevSeed));
+        this.prevBaseSpin = weaponPull;
 
         const targets = [];
         for (const b of this.battle.balls) {
@@ -4631,9 +4642,9 @@ class MagnetBall extends Ball {
         targets.forEach(({ b, bx, by, dx, dy, dist }, rank) => {
             const nx = dx / dist, ny = dy / dist;
 
-            const pull = Math.min(0.25, 400 * this.attraction / dist ** 2) * dt;
+            const pull = Math.min(0.25, (b.giga ? 1600 : this.battle.mode == FFA || this.giga ? 200 : 400) * this.attraction / dist ** 2) * dt;
             const rankWeight = weaponPullDecay ** rank;
-            weaponPull -= rankWeight * (this.giga ? 0.27777 : 0.55555) * this.attraction * Math.sin(this.weapons[0].theta - Math.atan2(by - this.y, bx - this.x)) / (dist + 50);
+            weaponPull -= rankWeight * (b.giga ? 2.4 : this.giga ? 0.3 : 0.6) * this.attraction * Math.sin(this.weapons[0].theta - Math.atan2(by - this.y, bx - this.x)) / (dist + 50);
 
             const bSpeedBefore = Math.hypot(b.vx, b.vy);
             b.vx -= nx * pull;
@@ -4867,7 +4878,7 @@ class VampireBall extends Ball {
                     }
                 }
 
-                this.lifesteal += 0.5;
+                this.lifesteal += this.battle.mode == RAID && !this.giga ? 1 : 0.5;
                 recordFeed(reflector ?? b, this);
                 this.wasHealBlocked = true;
 
@@ -4941,6 +4952,7 @@ class VampireBall extends Ball {
 class SoulDot extends CircleBody {
     constructor(x, y, target, vx = 0, vy = 0) {
         super(x, y, vx, vy, 1, 5, 1, false);
+        if (target instanceof SnakeSegment) target = target.owner;
         this.target = target;
         this.color = "#00cc44";
         this.zIndex = -1;
@@ -5143,7 +5155,7 @@ const ballClasses = [
     { name: "Mirror", class: MirrorBall, hp: 100, radius: 25, color: "#7adac8", weapon: { sprite: "sprites/mirror.png", scale: 1, offset: -8, shift: 33, rotation: 0, spin: true } },
     { name: "Hammer", class: HammerBall, hp: 100, radius: 25, color: "#c88941", weapon: { sprite: "sprites/hammer.png", scale: 2.5, offset: -7, rotation: 3 * Math.PI / 4, spin: true } },
     { name: "Club", class: ClubBall, hp: 100, radius: 25, color: "#b35237", weapon: { sprite: "sprites/club.webp", scale: 2, offset: -2, shift: -2, rotation: 3 * Math.PI / 4, spin: true } },
-    { name: "Magnet", class: MagnetBall, hp: 100, radius: 25, color: "#c9c9c9", weapon: { sprite: "sprites/magnet.png", scale: 1.4, offset: -9, rotation: Math.PI / 4, spin: true } },
+    { name: "Magnet", class: MagnetBall, hp: 100, radius: 25, color: "#c9c9c9", weapon: { sprite: "sprites/magnet.png", scale: 2, offset: -14, rotation: Math.PI / 4, spin: true } },
     { name: "Snake", class: SnakeBall, hp: 100, radius: 25, color: "#e0d030" },
     { name: "Vampire", class: VampireBall, hp: 100, radius: 25, color: "#eb2876" },
 ];

@@ -25,6 +25,7 @@ global.HammerBall = HammerBall;
 global.ClubBall = ClubBall;
 global.SnakeBall = SnakeBall;
 global.VampireBall = VampireBall;
+global.MagnetBall = MagnetBall;
 global.Ball = Ball;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -40,16 +41,17 @@ class DummyBall extends global.Ball {
 }
 
 const BALL_TYPES = [
-    // { name: 'Dagger', create: (rng) => new global.DaggerBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
-    // { name: 'Lance', create: (rng) => new global.LanceBall(50, 200, ...global.randomVel(5, rng), 100) },
-    // { name: 'Machine Gun', create: (rng) => new global.MachineGunBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
-    // { name: 'Wrench', create: (rng) => new global.WrenchBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
+    { name: 'Dagger', create: (rng) => new global.DaggerBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
+    { name: 'Lance', create: (rng) => new global.LanceBall(50, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Machine Gun', create: (rng) => new global.MachineGunBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
+    { name: 'Wrench', create: (rng) => new global.WrenchBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
     { name: 'Sword', create: (rng) => new global.SwordBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
-    // { name: 'Grower', create: (rng) => new global.GrowerBall(50, 200, ...global.randomVel(5, rng), 100) },
-    // { name: 'Hammer', create: (rng) => new global.HammerBall(50, 200, ...global.randomVel(5, rng), 100) },
-    // { name: 'Club', create: (rng) => new global.ClubBall(50, 200, ...global.randomVel(5, rng), 100) },
-    // { name: 'Snake', create: (rng) => new global.SnakeBall(50, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Grower', create: (rng) => new global.GrowerBall(50, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Hammer', create: (rng) => new global.HammerBall(50, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Club', create: (rng) => new global.ClubBall(50, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Snake', create: (rng) => new global.SnakeBall(50, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Vampire', create: (rng) => new global.VampireBall(50, 200, ...global.randomVel(5, rng), 100) },
+    { name: 'Magnet', create: (rng) => new global.MagnetBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
 ];
 
 const MAX_TICKS = 50000;

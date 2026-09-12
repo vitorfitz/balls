@@ -39,12 +39,11 @@ global.SnakeSegment = SnakeSegment;
 
 eval(code);
 const { FFA_CONFIG, createFFABattle, createFFABall } = require('./ffa-config.js');
-
 const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 20000;
 const argMatches = parseInt(process.argv[2], 10);
 const MATCHES = Number.isInteger(argMatches) && argMatches > 0 ? argMatches : 1000;
-const EXCLUDE_COUNT = 3; // number of ball types sitting out each match (roster size = BALL_TYPES.length - EXCLUDE_COUNT)
+const EXCLUDE_COUNT = 4; // number of ball types sitting out each match (roster size = BALL_TYPES.length - EXCLUDE_COUNT)
 
 // All C(BALL_TYPES.length, EXCLUDE_COUNT) unordered exclusion-sets, enumerated once
 // in a fixed order. Cycling through this list (see `simulate`) gives each ball type
