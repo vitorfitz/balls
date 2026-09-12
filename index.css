@@ -84,7 +84,6 @@ body {
 }
 
 #balls>:first-child {
-    /* lol */
     transform: rotateY(-0.061deg);
 }
 
