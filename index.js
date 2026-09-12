@@ -1712,8 +1712,8 @@ class BallBattle {
         this.mode = mode;
 
         this.nextID = 0;
-        this.debug = true;
-        // this.debug = false;
+        // this.debug = true;
+        this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
