@@ -22,23 +22,18 @@ function loadImage(src) {
 
 class Weapon {
     constructor(theta, sprite, scale = 1, offset = 0, spriteShift = 0, rotation = Math.PI / 4, flipped = false) {
-        this.theta = theta;
-        // Sprite images are only ever drawn by a real browser page (see
-        // BallBattle.run()'s render loop, which resolves and clears
-        // spriteReqs). Headless simulations (find-seeds-worker.js,
-        // simulate.js) never call run(), so registering here would leak a
-        // reference to every weapon/ball/battle ever created for the life of
-        // the process — skip it entirely when there's no document to render
-        // sprites into.
         if (typeof document !== "undefined") {
             if (!(sprite in spriteReqs)) spriteReqs[sprite] = [];
             spriteReqs[sprite].push(this);
         }
+
+        this.theta = theta;
         this.scale = scale;
         this.offset = offset;
         this.spriteShift = spriteShift;
         this.rotation = rotation;
         this.flipped = flipped;
+
         this.ball = null;
         this.updateFns = [];
         this.weaponColFns = [];
@@ -211,6 +206,39 @@ class Weapon {
     };
 }
 
+// Mirror's hit segment is a wide surface perpendicular to its facing direction
+// rather than the usual radial rectangle, so it overrides getHitSegment() as a
+// real (inherited) method instead of a per-instance function property.
+class MirrorWeapon extends Weapon {
+    getHitSegment() {
+        const b = this.ball;
+        const dist = b.radius + (this.colliderOffset + this.range) / 2;
+        const nx = Math.cos(this.theta), ny = Math.sin(this.theta);
+        const tx = -ny, ty = nx;  // perpendicular
+        const cx = b.x + nx * dist, cy = b.y + ny * dist;
+        return {
+            x1: cx - tx * this.thickness,
+            y1: cy - ty * this.thickness,
+            x2: cx + tx * this.thickness,
+            y2: cy + ty * this.thickness,
+            r: (this.range - this.colliderOffset) / 2
+        };
+    }
+}
+
+// Magnet's weapon flips direction on parry/bounce like any other, but also
+// needs to flip the sign of the ball's own pull-driven spin target
+// (prevBaseSpin) so the two stay in sync. Overriding as a real method (rather
+// than a per-instance closure assigned in the constructor) keeps this correct
+// for any MagnetWeapon instance, including ones reconstructed via cloning.
+class MagnetWeapon extends Weapon {
+    changeDir() {
+        super.changeDir();
+        const owner = this.ball;
+        if (owner.prevBaseSpin !== undefined) owner.prevBaseSpin *= -1;
+    }
+}
+
 class CircleBody {
     constructor(x, y, vx, vy, hp, radius, mass = radius * radius, grav = true) {
         this.x = x;
@@ -276,6 +304,7 @@ class Ball extends CircleBody {
         this.hitsThisFrame = 0;
         this.startSpeed = Math.hypot(vx, vy);
         this.damageDealt = 0;
+        this.minionDmgDealt = 0;
         this.slamTimer = 0;
         this.slamSource = null;
         this.killCount = 0;
@@ -367,12 +396,17 @@ class Ball extends CircleBody {
         if (this.giga && (source instanceof MirrorBall)) dmg /= 2;
 
         super.damage(dmg);
-        this.flashTime = performance.now() + flashDur;
+        if (!this.battle.headless) this.flashTime = performance.now() + flashDur;
 
-        if (source && !this.owner) {
+        if (source) {
             const credit = Math.max(0, Math.min(dmg, hpBefore));
-            source.getRootOwner().damageDealt += credit;
-            if (this.hp <= 0) this.killer = source;
+            if (!this.owner) {
+                source.getRootOwner().damageDealt += credit;
+                if (this.hp <= 0) this.killer = source;
+            }
+            else {
+                source.getRootOwner().minionDmgDealt += credit;
+            }
         }
 
         if (source && this.segments) {
@@ -402,6 +436,8 @@ class Ball extends CircleBody {
     }
 
     showDmg(dmg, comboGroup = 0, isHeal = false) {
+        if (this.battle.headless) return;
+
         const existing = comboGroup == null ? null : this.battle.dmgIndicators.find(d => d.owner == this && d.life > indicatorComboThresh && d.comboGroup == comboGroup && d.isHeal == isHeal);
         if (existing) {
             existing.setDmg(existing.dmg + dmg);
@@ -624,7 +660,7 @@ class Wall {
             return;
         }
 
-        b.onWallCollision();
+        b.onWallCollision(this);
         const ballVel = this.axis === VERTICAL ? b.vx * b.getTimeScale() : b.vy * b.getTimeScale();
         const wallVel = (this.velocity - ballVel) * this.normal > 0 ? this.velocity / b.getTimeScale() : 0;
         const speedBefore = Math.hypot(b.vx, b.vy);
@@ -1702,7 +1738,7 @@ function weaponQueryRadius(b) {
 // let debugBodies = [];
 const DUEL = 0, FFA = 1, RAID = 2;
 class BallBattle {
-    constructor(balls, seed, gravity = 0.1, mode = DUEL) {
+    constructor(balls, seed, gravity = 0.1, mode = DUEL, headless = typeof document === "undefined") {
         this.balls = [];
         this.bodies = [];
         this.dots = [];
@@ -1710,6 +1746,7 @@ class BallBattle {
         this.dmgIndicators = [];
         this.gravity = gravity;
         this.mode = mode;
+        this.headless = headless;
 
         this.nextID = 0;
         // this.debug = true;
@@ -2291,10 +2328,14 @@ class BallBattle {
         const dead = this.balls.filter((b) => b.hp <= 0);
         dead.forEach((b) => {
             b.slowTime = 0;
-            const count = Math.ceil(b.radius * 0.5);
-            for (let i = 0; i < count; i++) {
-                this.particles.push(new DeathParticle(this, b.x, b.y, b.color));
+
+            if (!this.headless) {
+                const count = Math.ceil(b.radius * 0.5);
+                for (let i = 0; i < count; i++) {
+                    this.particles.push(new DeathParticle(this, b.x, b.y, b.color));
+                }
             }
+
             if (this.mode == FFA && !b.owner) {
                 let killer = b.killer || null;
                 while (killer && killer.hp <= 0) killer = killer.owner || null;
@@ -2318,8 +2359,11 @@ class BallBattle {
         }
         weapon.setIFrames(target, key);
         // if (target instanceof SnakeSegment) console.log(predictedWeaponDist(weapon, target.owner), predictedWeaponDist(weapon, target.owner, true));
-        if ((target instanceof VampireBall && !target.isStunned()) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
-            target.deferredHits.push({ hitFn: () => weapon.ballColFns.forEach(fn => fn(target)), source: weapon.ball, t: 0 });
+        if ((target instanceof VampireBall && !target.isStunned()) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+            // Store enough to re-resolve the weapon (rather than closing over it
+            // directly) so a cloned battle's deferred hit fires against its own
+            // weapon/target instances instead of the original's.
+            target.deferredHits.push({ weaponBall: weapon.ball, weaponIdx: weapon.ball.dmgWeapons.indexOf(weapon), source: weapon.ball, t: 0 });
         }
         else {
             weapon.ballColFns.forEach(fn => fn(target));
@@ -2567,7 +2611,7 @@ class BallBattle {
                 this.zoom += zoomDelta * rate;
             }
             this._wasShrinking = true;
-            this.canvas.style.transform = `scale(${this.zoom})`;
+            if (!this.headless) this.canvas.style.transform = `scale(${this.zoom})`;
         } else {
             this._wasShrinking = false;
         }
@@ -2956,6 +3000,105 @@ class BallBattle {
     stop() {
         this.stopped = true;
     }
+
+    evilFork() {
+        const cloned = new Map();
+        const reconstructedWeapons = new Set();
+
+        const rec = (_new, obj) => {
+            const loop = (key) => {
+                if (obj == this && ["canvas", "ctx", "dmgIndicators", "particles"].indexOf(key) != -1) {
+                    return;
+                }
+
+                if (reconstructedWeapons.has(_new) && (key === "ball" || key === "updateFns" || key === "weaponColFns" || key === "ballColFns")) {
+                    return;
+                }
+
+                const prop = obj[key];
+
+                if (typeof prop == "function") {
+                    _new[key] = prop;
+                }
+
+                else if (typeof prop == "object" && prop !== null) {
+                    if (cloned.has(prop)) {
+                        _new[key] = cloned.get(prop);
+                    }
+
+                    else if (typeof Node !== "undefined" && prop instanceof Node) {
+                        _new[key] = prop;
+                    }
+
+                    else if (prop instanceof Ball && prop.weapons[0]) {
+                        let args;
+                        const xyvv = [0, 0, 0, 0];
+                        if (prop.weapons[0].angVel) {
+                            args = [...xyvv, 0, 1, 1, 1]; // x,y,vx,vy,theta,dir,hp,radius
+                        }
+                        else {
+                            args = [...xyvv, 1, 1]; // x,y,vx,vy,hp,radius
+                        }
+
+
+                        const reconstructed = new prop.constructor(...args);
+                        _new[key] = reconstructed;
+                        cloned.set(prop, reconstructed);
+
+                        for (let i = 0; i < prop.weapons.length && i < reconstructed.weapons.length; i++) {
+                            const origWeapon = prop.weapons[i], newWeapon = reconstructed.weapons[i];
+                            cloned.set(origWeapon, newWeapon);
+                            reconstructedWeapons.add(newWeapon);
+                            rec(newWeapon, origWeapon);
+                        }
+
+                        rec(reconstructed, prop);
+                    }
+                    else if (prop instanceof Set) {
+                        _new[key] = new Set(prop);
+                        cloned.set(prop, _new[key]);
+                    }
+                    else if (ArrayBuffer.isView(prop)) {
+                        _new[key] = prop.slice();
+                        cloned.set(prop, _new[key]);
+                    }
+                    else {
+                        _new[key] = Array.isArray(prop) ? [] : Object.create(prop.constructor.prototype);
+                        cloned.set(prop, _new[key]);
+                        rec(_new[key], prop);
+                    }
+                }
+
+                else {
+                    _new[key] = prop;
+                }
+            }
+
+            if (Array.isArray(_new)) {
+                for (let i = 0; i < obj.length; i++) {
+                    loop(i);
+                }
+            }
+            else {
+                const constructorStr = obj.constructor.toString();
+                if (constructorStr.includes("[native code]") && obj.constructor !== Object && !constructorStr.includes(`constructorStr.includes("[native code]")`)) {
+                    console.log("rec() failing on obj:", obj, "constructor:", obj.constructor.name);
+                    throw new Error("Unsupported object " + obj.constructor.name);
+                }
+                else {
+                    for (let key of Reflect.ownKeys(obj)) {
+                        loop(key);
+                    }
+                }
+            }
+        };
+
+        let newBattle = Object.create(BallBattle.prototype);
+        cloned.set(this, newBattle);
+        rec(newBattle, this);
+        newBattle.headless = true;
+        return newBattle;
+    }
 }
 
 function propsToList(propsMap) {
@@ -3048,7 +3191,7 @@ class DuplicatorBall extends Ball {
 
         child.dmgCooldown = dmgCooldown;
         child.dupeCooldown = dupeCooldown;
-        child.flashTime = performance.now() + flashDur;
+        if (!this.battle.headless) child.flashTime = performance.now() + flashDur;
         child.inert = true;
         child.team = owner.team;
         child.color = owner.color;
@@ -3086,7 +3229,8 @@ class DaggerBall extends Ball {
         this.scalingCooldown = 0;
         dagger.ballColFns.push((b, reflector) => {
             if (this.scalingCooldown <= EPS) {
-                dagger.angVel = (Math.abs(dagger.angVel) + this.baseSpin * 0.1) * Math.sign(dagger.angVel);
+                const w = this.weapons[0];
+                w.angVel = (Math.abs(w.angVel) + this.baseSpin * 0.1) * Math.sign(w.angVel);
                 recordFeed(reflector ?? b, this);
                 this.scalingCooldown = this.battle.mode == FFA ? 10 : this.giga ? 25 : 4;
             }
@@ -3126,7 +3270,7 @@ class SwordBall extends Ball {
         sword.addDamage(1, 40);
         // sword.addDirChange();
         sword.ballColFns.push((target, reflector) => {
-            sword.dmg += this.battle.mode == RAID && !this.giga ? 2 : 1
+            this.weapons[0].dmg += this.battle.mode == RAID && !this.giga ? 2 : 1
             recordFeed(reflector ?? target, this);
         });
         this.addWeapon(sword);
@@ -3922,7 +4066,7 @@ class GrimoireBall extends Ball {
         minion.hp = this.nextMinionHP;
         minion.team = reflector?.team ?? this.team;
         minion.color = reflector?.color ?? this.color;
-        minion.flashTime = performance.now() + flashDur;
+        if (!this.battle.headless) minion.flashTime = performance.now() + flashDur;
         minion.id = this.battle.nextID++;
         minion.owner = reflector ?? this;
         minion.slowTime = this.slowTime;
@@ -4042,6 +4186,9 @@ class GrimoireBall extends Ball {
         else if (target instanceof VampireBall) {
             minion.lifesteal = target.lifesteal;
         }
+        else if (target instanceof CloverBall) {
+            minion.foresight = target.foresight / 5;
+        }
 
         minion.battle = target.battle;
         // console.log("ASDF", "energy", minion.totalEnergy(false), "speed", Math.hypot(minion.vx, minion.vy), "mass", minion.mass, "radius", minion.radius);
@@ -4056,29 +4203,16 @@ class GrimoireBall extends Ball {
         let speed = this.battle.lol ? this.startSpeed : speedNum / speedDen;
         const baseArgs = [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed];
 
-        if (Constructor === DaggerBall || Constructor === SwordBall || Constructor === MachineGunBall || Constructor === WrenchBall || Constructor === MirrorBall || Constructor === HammerBall || Constructor === ClubBall || Constructor === MagnetBall) {
-            return [...baseArgs, target.weapons[0]?.theta || 0, 1, this.nextMinionHP, newRadius];
-        }
-        if (Constructor === GrimoireBall) {
+        if (target.weapons[0]?.angVel != null) {
             return [...baseArgs, target.weapons[0]?.theta || 0, 1, this.nextMinionHP, newRadius];
         }
         if (Constructor === LanceBall) {
-            // Minions cloned from a raid boss only inherit half of its speed boosts.
             speed *= 1 + boostPct * (target.giga ? target.boosts / 2 : target.boosts);
             return [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed, this.nextMinionHP, newRadius];
         }
         if (Constructor === GrowerBall) {
-            // copyBoosts() scales the minion's mass linearly with target.scale (mass ∝ scale),
-            // but the base `speed` above is a fixed constant independent of how grown the
-            // parent currently is. Left uncompensated, KE = 0.5*mass*v² would grow linearly
-            // with target.scale every time a boosted Grower gets cloned, compounding across
-            // successive Grimoire summons (unlike e.g. Sword, whose KE per clone stays
-            // constant). Divide by sqrt(scale) so KE stays independent of parent scale.
             speed /= Math.sqrt(target.scale ?? 1);
             return [target.x, target.y, Math.cos(theta) * speed, Math.sin(theta) * speed, this.nextMinionHP, newRadius];
-        }
-        if (Constructor === DuplicatorBall) {
-            return [...baseArgs, this.nextMinionHP, newRadius];
         }
         return [...baseArgs, this.nextMinionHP, newRadius];
     }
@@ -4323,26 +4457,10 @@ class MirrorBall extends Ball {
         this.extraUpdates = [];
 
         const cfg = getWeaponConfig(MirrorBall);
-        const mirror = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
+        const mirror = new MirrorWeapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         mirror.addCollider(16, 31, 0);
         mirror.addSpin(Math.PI * 0.020 * dir);
         mirror.addParry();
-
-        // Override hit segment to be perpendicular (wide mirror surface)
-        mirror.getHitSegment = function () {
-            const b = this.ball;
-            const dist = b.radius + (this.colliderOffset + this.range) / 2;
-            const nx = Math.cos(this.theta), ny = Math.sin(this.theta);
-            const tx = -ny, ty = nx;  // perpendicular
-            const cx = b.x + nx * dist, cy = b.y + ny * dist;
-            return {
-                x1: cx - tx * this.thickness,
-                y1: cy - ty * this.thickness,
-                x2: cx + tx * this.thickness,
-                y2: cy + ty * this.thickness,
-                r: (this.range - this.colliderOffset) / 2
-            };
-        };
 
         // Reflect damage using attacker's own weapon logic
         mirror.weaponColFns.push((otherWeapon) => {
@@ -4361,7 +4479,7 @@ class MirrorBall extends Ball {
             // Use attacker's ballColFns against themselves
             if (!(attacker.id in otherWeapon.iFrames)) {
                 otherWeapon.setIFrames(attacker);
-                const mySeg = mirror.getHitSegment();
+                const mySeg = this.weapons[0].getHitSegment();
                 const theirSeg = otherWeapon.getHitSegment();
                 const contactPoint = segmentToSegmentContactPoint(
                     mySeg.x1, mySeg.y1, mySeg.x2, mySeg.y2,
@@ -4378,7 +4496,7 @@ class MirrorBall extends Ball {
         mirror.DoT = true;
         mirror._inContact = {};
         mirror.ballColFns.push((b) => {
-            const { freshHit, bounced } = bounceOffWeaponFace(mirror, this, b);
+            const { freshHit, bounced } = bounceOffWeaponFace(this.weapons[0], this, b);
 
             if (b.dmgWeapons.length === 0 && b.team !== this.team) {
                 const nColl = Math.max(+freshHit, +bounced, this.collsThisFrame[b.id] ?? 0);
@@ -4414,8 +4532,23 @@ class MirrorBall extends Ball {
         this.collsThisFrame2 = {};
 
         for (let u of this.extraUpdates) {
-            u(dt);
+            // .call(this) so unbound prototype methods (e.g. Clover's handleUpdate,
+            // see CloverBall) run against this mirror; already-bound closures
+            // ignore it, so existing pushes are unaffected.
+            u.call(this, dt);
         }
+    }
+
+    // Track bounces like CloverBall does, so a mirror that has adopted Clover's
+    // cheat (via reflection) knows when to run it.
+    onWallCollision(w) {
+        super.onWallCollision(w);
+        this._bounced = w;
+    }
+
+    onCollision(b) {
+        super.onCollision(b);
+        this._bounced = b;
     }
 
     damage(dmg, source, isBullet = false) {
@@ -4473,8 +4606,8 @@ class HammerBall extends Ball {
             }
 
             this.power = 0;
-            hammer.dmg = 1;
-            hammer.iframes = 40;
+            this.weapons[0].dmg = 1;
+            this.weapons[0].iframes = 40;
 
             if (!this.isStunned()) {
                 this.antiSwarmBoost += (this.battle.mode == DUEL ? 1 : this.giga ? 0 : 0) + (this.antiSwarmBoost / (4 + 0.1 * this.antiSwarmBoost));
@@ -4570,7 +4703,7 @@ class MagnetBall extends Ball {
         this.scalingCooldown = 0;
 
         const cfg = getWeaponConfig(MagnetBall);
-        const magnet = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
+        const magnet = new MagnetWeapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
         magnet.addCollider(36, 20, 0);
         magnet.addSpin(0.012 * Math.PI * dir);
         magnet.addParry();
@@ -4594,12 +4727,6 @@ class MagnetBall extends Ball {
             b.damage(magnet.dmg, source, "weapon");
             addToHitHistory([source, b], this.battle.mode != DUEL || this.owner ? 3 : !b.owner && !(b instanceof DuplicatorBall) ? 5 : 1);
         });
-
-        const origChangeDir = magnet.changeDir.bind(magnet);
-        magnet.changeDir = () => {
-            origChangeDir();
-            if (this.prevBaseSpin !== undefined) this.prevBaseSpin *= -1;
-        };
 
         this.addWeapon(magnet);
     }
@@ -4693,7 +4820,7 @@ class SnakeSegment extends Ball {
 
     damage(dmg, source, srcType) {
         if (srcType == "weapon") this.showDmg(0);
-        this.flashTime = performance.now() + flashDur;
+        if (!this.battle.headless) this.flashTime = performance.now() + flashDur;
     }
 
     onCollision(b) {
@@ -4754,7 +4881,8 @@ class SnakeSegment extends Ball {
             d.t += dt;
             if (d.t >= 10) {
                 // console.log(t, "applied");
-                d.hitFn();
+                const w = d.weaponBall.dmgWeapons[d.weaponIdx];
+                if (w) w.ballColFns.forEach(fn => fn(this));
             }
             else {
                 left.push(d);
@@ -4862,37 +4990,13 @@ class VampireBall extends Ball {
         if ((!reflector && b.team == this.team) || !(b instanceof Ball)) return;
 
         if (!this.healCooldown[b.id] && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked))) {
-            const doLifesteal = () => {
-                b.damage(this.lifesteal, owner, "weapon");
-
-                if (!(b instanceof SnakeSegment) && !(this.battle.mode == FFA && reflector)) {
-                    // Not the final hit of a simulated battle. Healing there would affect dramatic seed calculation
-                    if (!(typeof document == "undefined" && (this.battle.balls.length <= 2 || this.battle.balls[2].owner) && b.hp <= 0)) {
-                        const healAmt = this.lifesteal / (b.getDmgResistance?.() ?? 1) / (reflector && b.giga ? 2 : 1);
-                        owner.hp += healAmt;
-                        owner.showDmg(healAmt, 0, true);
-
-                        this.dmgBlock = this.freshDmgBlock;
-                        this.deferredHits = this.deferredHits.filter((x) => b != x.source);
-                        if (!b.owner && !(b instanceof DuplicatorBall || b instanceof GrowerBall) && !(this.battle.mode == DUEL && this.owner)) addToHitHistory([owner, b], 10);
-                    }
-                }
-
-                this.lifesteal += this.battle.mode == RAID && !this.giga ? 1 : 0.5;
-                recordFeed(reflector ?? b, this);
-                this.wasHealBlocked = true;
-
-                if (this.battle.mode == FFA) this.healBlock = this.freshHealBlock;
-                else this.healCooldown[b.id] = 4;
-            };
-
             // Against Growers, delay the lifesteal a few ticks and drop it entirely
             // if the Grower damages this Vampire back in that window (see damage()
             // above) instead of applying it immediately on contact.
             if (b instanceof GrowerBall) {
-                this.deferredHits.push({ hitFn: doLifesteal, source: b, t: 0, threshold: (this.battle.mode == FFA ? 4 : 6), vsGrower: true });
+                this.deferredHits.push({ source: b, reflector, t: 0, threshold: (this.battle.mode == FFA ? 4 : 6), vsGrower: true });
             } else {
-                doLifesteal();
+                this.applyLifesteal(b, reflector);
             }
         }
 
@@ -4902,13 +5006,52 @@ class VampireBall extends Ball {
         // }
     }
 
+    // Extracted from handleCollision() so deferred hits (see the Grower delay
+    // above) can re-resolve against `b`/`reflector` by id after a clone, rather
+    // than a closure captured at the moment of the original collision.
+    applyLifesteal(b, reflector) {
+        const owner = reflector || this;
+        b.damage(this.lifesteal, owner, "weapon");
+
+        if (!(b instanceof SnakeSegment) && !(this.battle.mode == FFA && reflector)) {
+            // Not the final hit of a simulated battle. Healing there would affect dramatic seed calculation
+            if (!(this.battle.headless && (this.battle.balls.length <= 2 || this.battle.balls[2].owner) && b.hp <= 0)) {
+                const healAmt = this.lifesteal / (b.getDmgResistance?.() ?? 1) / (reflector && b.giga ? 2 : 1);
+                owner.hp += healAmt;
+                owner.showDmg(healAmt, 0, true);
+
+                this.dmgBlock = this.freshDmgBlock;
+                this.deferredHits = this.deferredHits.filter((x) => b != x.source);
+                if (!b.owner && !(b instanceof DuplicatorBall || b instanceof GrowerBall) && !(this.battle.mode == DUEL && this.owner)) addToHitHistory([owner, b], 10);
+            }
+        }
+
+        this.lifesteal += this.battle.mode == RAID && !this.giga ? 1 : 0.5;
+        recordFeed(reflector ?? b, this);
+        this.wasHealBlocked = true;
+
+        if (this.battle.mode == FFA) this.healBlock = this.freshHealBlock;
+        else this.healCooldown[b.id] = 4;
+    }
+
     handleUpdate(dt) {
         this.inDeferred = true;
         let left = [];
         for (let d of this.deferredHits) {
             d.t += dt;
             if (d.source instanceof MagnetBall || d.t >= (d.threshold ?? (this.battle.mode == DUEL ? 1 : this.giga && d.source instanceof DaggerBall ? 4 : 2))) {
-                if (this.dmgBlock <= EPS) d.hitFn();
+                if (this.dmgBlock <= EPS) {
+                    if (d.vsGrower) this.applyLifesteal(d.source, d.reflector);
+                    else {
+                        // Weapon hit deferred via weaponBallCol() (see BallBattle):
+                        // re-run the attacking weapon's own ballColFns against this
+                        // Vampire, same as SnakeSegment's deferredHits consumer, so
+                        // it actually takes the weapon's damage instead of being
+                        // treated as a lifesteal trigger against the attacker.
+                        const w = d.weaponBall.dmgWeapons[d.weaponIdx];
+                        if (w) w.ballColFns.forEach(fn => fn(this));
+                    }
+                }
             }
             else {
                 left.push(d);
@@ -4946,6 +5089,127 @@ class VampireBall extends Ball {
         this.baseHP = this.battle.mode == DUEL || !this.owner ? this.hp : 100;
         this.freshDmgBlock = this.giga ? 10 : 5;
         this.freshHealBlock = this.battle.mode == DUEL || this.giga ? 20 : 20;
+    }
+}
+
+// Clover: Gets "lucky", aka cheats
+const cloverCandidateAngles = [-0.012 * Math.PI, -0.006 * Math.PI, 0, 0.006 * Math.PI, 0.012 * Math.PI];
+class CloverBall extends Ball {
+    constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#3fae4a", mass = radius * radius) {
+        super(x, y, vx, vy, hp, radius, color, mass);
+        this.foresight = 0;
+        this.cheatCooldown = 0;
+
+        const cfg = getWeaponConfig(CloverBall);
+        const clover = new Weapon(theta, cfg.sprite, cfg.scale, cfg.offset, cfg.shift || 0, cfg.rotation);
+        clover.addCollider(45, 15, 15);
+        clover.addSpin(Math.PI * 0.02 * dir);
+        clover.addParry();
+        clover.addDamage(4, 40, false, 10);
+        clover.ballColFns.push((b, reflector) => {
+            this.foresight += 10;
+            recordFeed(reflector ?? b, this);
+
+            if (reflector) {
+                if (reflector.foresight == null) {
+                    reflector.cheatCooldown = 0;
+                    reflector.cheat = CloverBall.prototype.cheat;
+                    reflector.scoreCandidate = CloverBall.prototype.scoreCandidate;
+                    reflector.extraUpdates.push(CloverBall.prototype.handleUpdate);
+                }
+                reflector.foresight = this.foresight;
+            }
+        });
+
+        this.addWeapon(clover);
+    }
+
+    onWallCollision(w) {
+        super.onWallCollision(w);
+        this._bounced = w;
+    }
+
+    onCollision(b) {
+        super.onCollision(b);
+        this._bounced = b;
+    }
+
+    handleUpdate(dt) {
+        this.cheatCooldown -= dt;
+        const bounced = this._bounced;
+        this._bounced = null;
+
+        if (bounced == null || this.cheatCooldown > EPS) return;
+        if (this._bounceCount) this._bounceCount; this._bounceCount++;
+
+        if (!(bounced instanceof Turret)) {
+            this.cheatCooldown = 10;
+            this.cheat(bounced);
+        }
+    }
+
+    static rotateVel(ball, deltaRad) {
+        const speed = Math.hypot(ball.vx, ball.vy);
+        if (speed < EPS) return;
+        const theta = Math.atan2(ball.vy, ball.vx) + deltaRad;
+        ball.vx = Math.cos(theta) * speed;
+        ball.vy = Math.sin(theta) * speed;
+    }
+
+    scoreCandidate(deltaRad, lookahead, bounced) {
+        const fork = this.battle.evilFork();
+        fork.evil = true;
+        const idx = this.battle.bodies.indexOf(this);
+        const fSelf = fork.bodies[idx];
+        CloverBall.rotateVel(fSelf, deltaRad);
+
+        const dealtBefore = fSelf.getRootOwner().damageDealt + fSelf.getRootOwner().minionDmgDealt / 10;
+        const hpBefore = fSelf.hp;
+        let win = false;
+        fSelf._bounceCount = 0;
+
+        for (let i = 0; i < lookahead; i++) {
+            if (fSelf.hp <= 0) break;
+            if (!fork.balls.some(b => b.team != fSelf.team)) {
+                win = true;
+                break;
+            }
+            fork.update();
+            if (fSelf._bounceCount >= (bounced instanceof GrowerBall ? 10 : 5)) break;
+        }
+
+        const dealt = fSelf.getRootOwner().damageDealt + fSelf.getRootOwner().minionDmgDealt / 10 - dealtBefore;
+        let taken = Math.max(0, hpBefore - fSelf.hp);
+        if (bounced instanceof DuplicatorBall) taken *= 100;
+        const winBonus = win ? 100 : 0;
+        const deathPenalty = fSelf.hp <= 0 ? 100 : 0;
+
+        return dealt + winBonus - taken - deathPenalty;
+    }
+
+    cheat(bounced = null) {
+        if (this.hp <= 0 || this.isStunned() || this.foresight == 0 || this.battle.evil) return;
+
+        let bestScore = -Infinity, bestDelta = 0;
+        for (const delta of cloverCandidateAngles) {
+            const score = this.scoreCandidate(delta, this.foresight, bounced);
+            if (score > bestScore + EPS ||
+                (Math.abs(score - bestScore) <= EPS && Math.abs(delta) < Math.abs(bestDelta))) {
+                bestScore = score;
+                bestDelta = delta;
+            }
+        }
+
+        if (bestDelta !== 0) {
+            CloverBall.rotateVel(this, bestDelta);
+            // console.log("CHEATED", bestDelta);
+        }
+    }
+
+    getInfoEl() {
+        return this.propsToList({
+            "Foresight": { text: (this.foresight / 100).toFixed(1) + "s", grad: { from: 0, to: 2.5 } },
+        });
     }
 }
 
@@ -5158,6 +5422,7 @@ const ballClasses = [
     { name: "Magnet", class: MagnetBall, hp: 100, radius: 25, color: "#c9c9c9", weapon: { sprite: "sprites/magnet.png", scale: 3, offset: -12, rotation: Math.PI / 4, spin: true } },
     { name: "Snake", class: SnakeBall, hp: 100, radius: 25, color: "#e0d030" },
     { name: "Vampire", class: VampireBall, hp: 100, radius: 25, color: "#eb2876" },
+    { name: "Clover", class: CloverBall, hp: 100, radius: 25, color: "#3fae4a", weapon: { sprite: "sprites/clover.png", scale: 3, offset: -5, shift: -20, rotation: Math.PI / 2, spin: true } },
 ];
 
 function getWeaponConfig(BallClass) {
