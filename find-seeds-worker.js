@@ -57,7 +57,7 @@ function simulate(t1Idx, t2Idx, seed) {
 
     let minHpDiff = 0, maxHpDiff = 0;
     let dupeNearDeath = { [b1.team]: false, [b2.team]: false };
-    let swordDaggerDramaticTick = { [b1.team]: null, [b2.team]: null };
+    let dramaticTick = { [b1.team]: null, [b2.team]: null };
     let dupeReachedMax = false;
     // Lowest HP seen for each side's "primary" ball over the whole match (not
     // just at the moment the match ends), so e.g. a Vampire that bled down low
@@ -65,6 +65,7 @@ function simulate(t1Idx, t2Idx, seed) {
     let minHpSeen = { [b1.team]: Infinity, [b2.team]: Infinity };
 
     const isSwordDagger = (b1 instanceof SwordBall && b2 instanceof DaggerBall) || (b1 instanceof DaggerBall && b2 instanceof SwordBall);
+    const isSwordMagnet = (b1 instanceof SwordBall && b2 instanceof MagnetBall) || (b1 instanceof MagnetBall && b2 instanceof SwordBall);
     const isDupeHammer = (b1 instanceof DuplicatorBall && b2 instanceof HammerBall) || (b1 instanceof HammerBall && b2 instanceof DuplicatorBall);
 
     const isDupeWrench = (b1 instanceof DuplicatorBall && b2 instanceof WrenchBall) || (b1 instanceof WrenchBall && b2 instanceof DuplicatorBall);
@@ -100,10 +101,10 @@ function simulate(t1Idx, t2Idx, seed) {
             }
         }
 
-        if (isSwordDagger) {
+        if (isSwordDagger || isSwordMagnet) {
             for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
-                if (ball instanceof DaggerBall && swordDaggerDramaticTick[team] == null && ball.hp <= 10) {
-                    swordDaggerDramaticTick[team] = t;
+                if ((ball instanceof DaggerBall || ball instanceof MagnetBall) && dramaticTick[team] == null && ball.hp <= 10) {
+                    dramaticTick[team] = t;
                 }
             }
         }
@@ -133,7 +134,7 @@ function simulate(t1Idx, t2Idx, seed) {
             const loserBall = winnerLabel === 'p1' ? b2 : b1;
             const hp = minHpSeen[winnerTeam];
             const hammerDmg = loserBall.weapons?.[0]?.dmg;
-            return { winner: winnerLabel, hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[winnerTeam], swordDaggerDramaticTick: swordDaggerDramaticTick[winnerTeam], hammerDmg, boxedInFraction, vampLifesteal };
+            return { winner: winnerLabel, hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[winnerTeam], dramaticTick: dramaticTick[winnerTeam], hammerDmg, boxedInFraction, vampLifesteal };
         }
     }
     return { winner: 'draw' };
@@ -146,7 +147,7 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i != 0) continue;
+            if (i != 2 || j != 11) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -171,7 +172,6 @@ onmessage = (e) => {
 
             const hasDupe = BALL_TYPES[i].name === 'Duplicator' || BALL_TYPES[j].name === 'Duplicator';
             const hasVamp = BALL_TYPES[i].name === 'Vampire' || BALL_TYPES[j].name === 'Vampire';
-            const isSwordDagger = (BALL_TYPES[i].name === 'Sword' && BALL_TYPES[j].name === 'Dagger') || (BALL_TYPES[i].name === 'Dagger' && BALL_TYPES[j].name === 'Sword');
 
             const durations = results.map(r => r.ticks).sort((a, b) => a - b);
             const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" || key == "Wrench_Snake" || key == "Duplicator_Club" || key == "Dagger_Vampire" || key == "Mirror_Vampire" ? 6000 :
@@ -208,19 +208,22 @@ onmessage = (e) => {
                 const isGrimVsVamp = hasVamp && (BALL_TYPES[loserIdx].name === 'Grimoire' || BALL_TYPES[winnerIdx].name === 'Grimoire');
 
                 const isGrowerBeatsMag = BALL_TYPES[winnerIdx].name === 'Grower' && BALL_TYPES[loserIdx].name === 'Magnet';
+                const isVampBeatsMag = BALL_TYPES[winnerIdx].name === 'Vampire' && BALL_TYPES[loserIdx].name === 'Magnet';
+                const isMagBeatsDagger = BALL_TYPES[winnerIdx].name === 'Magnet' && BALL_TYPES[loserIdx].name === 'Dagger';
 
                 const threshold = useHammerDmg ? r.hammerDmg :
                     isDupBeatsWrench ? 50 :
                         isWrenchBeatsDupe ? 10 :
                             isGrimVsClub || isGrimVsVamp ? 25 :
-                                isGrowerBeatsMag ? 20 :
-                                    hasDupe && hasVamp && winnerIsDupe ? 10 :
-                                        (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
-                                            (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
-                                                10;
+                                isGrowerBeatsMag || isVampBeatsMag ? 20 :
+                                    isMagBeatsDagger ? 5 :
+                                        hasDupe && hasVamp && winnerIsDupe ? 10 :
+                                            (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
+                                                (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
+                                                    10;
                 // if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
                 return (r.hp <= threshold || (winnerIsDupe && r.dupeNearDeath))
-                    && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 100)
+                    && !(r.dramaticTick !== null && r.ticks - r.dramaticTick <= 100)
                     && !(key === "Duplicator_Wrench" && r.boxedInFraction > 0.3);
             });
 
