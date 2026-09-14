@@ -5,6 +5,17 @@ const flashDur = 500; // ms
 const hitHistorySize = 100;
 const samePairStunBreakLimit = 20;
 
+// Rendering is deliberately kept this many physics ticks behind the
+// simulation. This absorbs brief main-thread stalls (e.g. CloverBall.cheat()'s
+// lookahead simulation, see evilFork()) without a visible stutter: as long as
+// a stall's duration fits inside this delay window, the renderer just keeps
+// drawing from already-computed buffered ticks while physics catches up in
+// the background, rather than blocking the frame the stall happens on. Does
+// nothing to reduce or eliminate the underlying blocking work itself (JS is
+// single-threaded), only hides its visual symptom, and adds a small constant
+// amount of input-to-screen latency (RENDER_DELAY_TICKS * dt) for everything.
+const RENDER_DELAY_TICKS = 10;
+
 let t = 0;
 
 let spriteReqs = {};
@@ -1770,7 +1781,22 @@ class BallBattle {
         this.targetTimeScale = 1;
         this.nyooooom = 1;
 
-        this.rng = new Math.seedrandom(seed);
+        // Ring buffer of fully-rendered frames (as ImageBitmaps), used to draw
+        // RENDER_DELAY_TICKS behind the physics simulation (see RENDER_DELAY_TICKS
+        // above). The simulation is drawn at full fidelity to an offscreen canvas
+        // every tick, exactly as before; only the final blit to the visible canvas
+        // is delayed. Delaying whole rendered frames (rather than individual
+        // fields like position/theta) avoids having to separately re-derive every
+        // draw()-time consumer of live state (damage flashes, indicators,
+        // stun-shake, etc.) at the delayed point — those keep reading live state
+        // and drawing normally, and the delay is applied once, uniformly, as a
+        // final compositing step.
+        this.frameHistory = [];
+
+        // {state: true} lets evilFork() snapshot/clone this generator's internal
+        // state (via .state()) instead of sharing the same closure-based RNG
+        // instance across the real battle and every forked simulation.
+        this.rng = new Math.seedrandom(seed, { state: true });
         this.seed = seed;
     }
 
@@ -1904,9 +1930,18 @@ class BallBattle {
         this.balls.push(ball);
     }
 
+    // `canvas` is the visible, on-page canvas. All drawing (this.ctx) actually
+    // targets an offscreen canvas of the same size; render() blits from a
+    // delayed ring buffer of that offscreen canvas's content onto `canvas` as
+    // its final step. See frameHistory/RENDER_DELAY_TICKS.
     addCanvas(canvas, offset = 0) {
-        this.canvas = canvas;
-        this.ctx = canvas.getContext("2d");
+        this.visibleCanvas = canvas;
+        this.visibleCtx = canvas.getContext("2d");
+
+        this.canvas = document.createElement("canvas");
+        this.canvas.width = canvas.width;
+        this.canvas.height = canvas.height;
+        this.ctx = this.canvas.getContext("2d");
         this.ctx.imageSmoothingEnabled = false;
         this.ctx.resetTransform();
         if (offset) this.ctx.translate(offset, offset);
@@ -2507,6 +2542,7 @@ class BallBattle {
     }
 
     render(realDt = 0) {
+
         const alpha = this.renderAlpha || 0;
 
         // Interpolate positions for smooth rendering
@@ -2572,6 +2608,30 @@ class BallBattle {
             if (d.life <= 0) this.dmgIndicators.splice(i, 1);
             else d.draw(this.ctx);
         }
+
+        if (this.headless) return;
+
+        // Buffer this fully-drawn frame (plus anything else the visible canvas
+        // needs to stay in sync with it, e.g. the CSS zoom transform) and blit
+        // the one from RENDER_DELAY_TICKS frames ago onto the visible canvas.
+        // See frameHistory's declaration for why frames are delayed whole
+        // rather than delaying individual draw() inputs.
+        const pooled = this._framePool?.pop() ?? document.createElement("canvas");
+        pooled.width = this.canvas.width;
+        pooled.height = this.canvas.height;
+        pooled.getContext("2d").drawImage(this.canvas, 0, 0);
+        this.frameHistory.push({ canvas: pooled, zoom: this.zoom ?? 1 });
+
+        if (this.frameHistory.length > RENDER_DELAY_TICKS) {
+            const frame = this.frameHistory.shift();
+            this.visibleCtx.clearRect(0, 0, this.visibleCanvas.width, this.visibleCanvas.height);
+            this.visibleCtx.drawImage(frame.canvas, 0, 0);
+            this.visibleCanvas.style.transform = `scale(${frame.zoom})`;
+
+            // Return the backing canvas to the pool instead of discarding it,
+            // so steady-state playback doesn't keep allocating new canvases.
+            (this._framePool ??= []).push(frame.canvas);
+        }
     }
 
     updateArenaShrink() {
@@ -2611,7 +2671,6 @@ class BallBattle {
                 this.zoom += zoomDelta * rate;
             }
             this._wasShrinking = true;
-            if (!this.headless) this.canvas.style.transform = `scale(${this.zoom})`;
         } else {
             this._wasShrinking = false;
         }
@@ -3007,7 +3066,7 @@ class BallBattle {
 
         const rec = (_new, obj) => {
             const loop = (key) => {
-                if (obj == this && ["canvas", "ctx", "dmgIndicators", "particles"].indexOf(key) != -1) {
+                if (obj == this && ["ctx", "dmgIndicators", "particles", "frameHistory", "visibleCtx"].indexOf(key) != -1) {
                     return;
                 }
 
@@ -3017,7 +3076,20 @@ class BallBattle {
 
                 const prop = obj[key];
 
-                if (typeof prop == "function") {
+                // seedrandom generators are functions carrying closure-based
+                // internal state. Copying by reference (like other functions
+                // below) would make the fork share the same generator as the
+                // real battle, so any rng() call made while simulating a
+                // lookahead (e.g. Duplicator/Grimoire/Wrench spawns) would
+                // consume random numbers from — and permanently perturb —
+                // the real battle's future RNG stream. Snapshot its state
+                // instead so the fork gets an independent generator that
+                // starts at the same point but diverges from there.
+                if (key === "rng" && typeof prop == "function" && typeof prop.state == "function") {
+                    _new[key] = new Math.seedrandom(null, { state: prop.state() });
+                }
+
+                else if (typeof prop == "function") {
                     _new[key] = prop;
                 }
 
@@ -5093,7 +5165,7 @@ class VampireBall extends Ball {
 }
 
 // Clover: Gets "lucky", aka cheats
-const cloverCandidateAngles = [-0.012 * Math.PI, -0.006 * Math.PI, 0, 0.006 * Math.PI, 0.012 * Math.PI];
+const cloverCandidateAngles = [-0.024 * Math.PI, -0.012 * Math.PI, 0, 0.012 * Math.PI, 0.024 * Math.PI];
 class CloverBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#3fae4a", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -5105,7 +5177,7 @@ class CloverBall extends Ball {
         clover.addCollider(45, 15, 15);
         clover.addSpin(Math.PI * 0.02 * dir);
         clover.addParry();
-        clover.addDamage(4, 40, false, 10);
+        clover.addDamage(3, 40, false, 10);
         clover.ballColFns.push((b, reflector) => {
             this.foresight += 10;
             recordFeed(reflector ?? b, this);
@@ -5178,11 +5250,11 @@ class CloverBall extends Ball {
             if (fSelf._bounceCount >= (bounced instanceof GrowerBall ? 10 : 5)) break;
         }
 
-        const dealt = fSelf.getRootOwner().damageDealt + fSelf.getRootOwner().minionDmgDealt / 10 - dealtBefore;
+        const dealt = (fSelf.getRootOwner().damageDealt + fSelf.getRootOwner().minionDmgDealt / 10 - dealtBefore) * (this.battle.mode == DUEL && this.battle.balls.some(x => x instanceof HammerBall || x instanceof GrowerBall) ? 100 : 1);
         let taken = Math.max(0, hpBefore - fSelf.hp);
         if (bounced instanceof DuplicatorBall) taken *= 100;
         const winBonus = win ? 100 : 0;
-        const deathPenalty = fSelf.hp <= 0 ? 100 : 0;
+        const deathPenalty = fSelf.hp <= 0 ? Infinity : 0;
 
         return dealt + winBonus - taken - deathPenalty;
     }
