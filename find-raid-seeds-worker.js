@@ -77,13 +77,13 @@ onmessage = (e) => {
     let progress = '';
 
     for (let bi = 0; bi < BOSS_TYPES.length; bi++) {
-        // if (bi != 11) continue;
+        // if (bi != 10) continue;
 
         const bossName = BOSS_TYPES[bi].name;
         const bossIndex = ballClasses.indexOf(BOSS_TYPES[bi]);
         const results = [];
 
-        for (let seed = 0; seed < bi == 11 ? matches * 2 : matches; seed++) {
+        for (let seed = 0; seed < (bi == 12 ? matches * 2 : matches); seed++) {
             const r = simulate(bossIndex, seed);
             if (r.winner !== 'draw') results.push({ seed, ...r });
         }

@@ -29,6 +29,7 @@ global.ClubBall = ClubBall;
 global.SnakeBall = SnakeBall;
 global.VampireBall = VampireBall;
 global.MagnetBall = MagnetBall;
+global.CloverBall = CloverBall;
 
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -53,6 +54,7 @@ const BALL_TYPES = [
     { name: 'Snake', create: (pos, rng) => new global.SnakeBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
     { name: 'Vampire', create: (pos, rng) => new global.VampireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
     { name: 'Magnet', create: (pos, rng) => new global.MagnetBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
+    { name: 'Clover', create: (pos, rng) => new global.CloverBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
 ];
 
 const MAX_TICKS = 10000;
