@@ -9,18 +9,21 @@ const RAID_CONFIG = {
     raidTeam: "sus",
     positions: [[100, 100], [100, 333], [100, 566], [100, 800], [450, 800], [800, 800], [800, 450], [800, 100], [450, 100]],
     shrinkStages: [
-        { players: 3, size: 700, zoom: 1.14 },
+        { players: 4, size: 700, zoom: 1.14 },
     ],
     bossHP: {
         "Sword": 300,
         "Dagger": 300,
         "Lance": 300,
         "Wrench": 500,
-        "Grimoire": 500,
+        "Grimoire": 600,
         "Machine Gun": 500,
         "Hammer": 500,
-        "Mirror": 500,
+        "Mirror": 600,
         "Club": 500,
+        "Snake": 999,
+        "Vampire": 500,
+        "Magnet": 300,
     }
 };
 
@@ -34,8 +37,14 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
     // Grimoire and Mirror are mutually banned as raiders against each other's boss,
     // to avoid infinite minion-summoning loops (Grimoire clones Mirror's reflect behavior).
     let bannedNames = bossName === "Grimoire" || bossName === "Mirror" || bossName === "Duplicator" ? ["Grimoire", "Mirror"]
-        : [bossName];
+        : bossName === "Snake" ? ["Grimoire", "Grower"]
+            : bossName === "Vampire" ? ["Lance", "Grimoire"]
+                : bossName === "Magnet" ? ["Grower", "Grimoire"]
+                    : [bossName];
     bannedNames.push("Duplicator");
+    bannedNames.push("Snake");
+    bannedNames.push("Vampire");
+    bannedNames.push("Magnet");
 
     const raiderIndices = ballClasses
         .map((b, i) => i)
@@ -80,7 +89,7 @@ function createBossBall(ballClasses, i, pos, speed, hp, scale, rng) {
     b.boostEnergy = 1;
     b.mass = b.baseMass = 5000;
     // b.angVelNerf = data.class == ClubBall || data.class == WrenchBall ? 2.7 : 3;
-    b.angVelNerf = data.class == DaggerBall ? 3 : 2.5;
+    b.angVelNerf = data.class == DaggerBall ? 2.8 : 2.5;
 
     for (const w of b.weapons) {
         if (b instanceof LanceBall) {

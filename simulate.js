@@ -26,6 +26,9 @@ global.GrimoireBall = GrimoireBall;
 global.MirrorBall = MirrorBall;
 global.HammerBall = HammerBall;
 global.ClubBall = ClubBall;
+global.SnakeBall = SnakeBall;
+global.VampireBall = VampireBall;
+global.MagnetBall = MagnetBall;
 
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -40,17 +43,48 @@ const BALL_TYPES = [
     { name: 'Grower', create: (pos, rng) => new global.GrowerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
     { name: 'Dagger', create: (pos, rng) => new global.DaggerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Lance', create: (pos, rng) => new global.LanceBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
-    { name: 'Machine Gun', create: (pos, rng) => new global.MachineGunBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
+    { name: 'MachineGun', create: (pos, rng) => new global.MachineGunBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Wrench', create: (pos, rng) => new global.WrenchBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Grimoire', create: (pos, rng) => new global.GrimoireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Sword', create: (pos, rng) => new global.SwordBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Mirror', create: (pos, rng) => new global.MirrorBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
     { name: 'Hammer', create: (pos, rng) => new global.HammerBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
-    { name: 'Club', create: (pos, rng) => new global.ClubBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) }
+    { name: 'Club', create: (pos, rng) => new global.ClubBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
+    { name: 'Snake', create: (pos, rng) => new global.SnakeBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
+    { name: 'Vampire', create: (pos, rng) => new global.VampireBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), hp) },
+    { name: 'Magnet', create: (pos, rng) => new global.MagnetBall(pos == 0 ? 50 : 350, 200, ...global.randomVel(5, rng), pos == 0 ? 0 : Math.PI, pos == 0 ? 1 : -1, hp) },
 ];
 
 const MAX_TICKS = 10000;
-const MATCHES = 1000;
+
+const cliArgs = process.argv.slice(2);
+const ballNameArgs = [];
+let argMatches;
+for (const arg of cliArgs) {
+    const parsed = parseInt(arg, 10);
+    if (Number.isInteger(parsed) && parsed > 0 && String(parsed) === arg) {
+        argMatches = parsed;
+    } else {
+        ballNameArgs.push(arg);
+    }
+}
+const MATCHES = Number.isInteger(argMatches) && argMatches > 0 ? argMatches : 1000;
+
+if (ballNameArgs.length > 2) {
+    console.error(`Too many ball names given (max 2): ${ballNameArgs.join(', ')}`);
+    process.exit(1);
+}
+
+function findBallIndex(name) {
+    const idx = BALL_TYPES.findIndex(t => t.name.toLowerCase() === name.toLowerCase());
+    if (idx === -1) {
+        console.error(`Unknown ball name: "${name}". Valid names: ${BALL_TYPES.map(t => t.name).join(', ')}`);
+        process.exit(1);
+    }
+    return idx;
+}
+
+const selectedIndices = ballNameArgs.map(findBallIndex);
 
 function simulate(t1Idx, t2Idx) {
     const rng = new Math.seedrandom();
@@ -113,12 +147,13 @@ if (!isMainThread) {
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
             for (let j = i + 1; j < BALL_TYPES.length; j++) {
-                // if (i != 1 && j != 1) continue;
+                if (selectedIndices.some(k => k != i && k != j)) continue;
                 if (i == 6 && j == 8) continue;
 
                 let w1, w2, draws;
                 if (i == 0 && j == 8 /* Dupe vs Mirror */) { w1 = MATCHES * 0.4; w2 = MATCHES * 0.6; draws = 0 } else
                     if (i == 0 && j == 6 /* Dupe vs Grim */) { w1 = MATCHES * 0.8; w2 = MATCHES * 0.2; draws = 0 } else
+                        // if (i == 0 && j == 11 /* Dupe vs Snake */) { w1 = MATCHES * 0.333; w2 = MATCHES * 0.667; draws = 0 } else
                         ({ w1, w2, draws } = await runMatchup(i, j));
                 const t1 = BALL_TYPES[i], t2 = BALL_TYPES[j];
 
@@ -131,6 +166,7 @@ if (!isMainThread) {
 
         console.log('\n=== RANKINGS ===');
         Object.entries(results)
+            .filter(([name]) => selectedIndices.length === 0 || selectedIndices.some(idx => BALL_TYPES[idx].name === name))
             .map(([name, r]) => ({ name, ...r, score: r.wins - r.losses }))
             .sort((a, b) => b.score - a.score)
             .forEach((r, i) => console.log(`${i + 1}. ${r.name}: ${r.wins}W-${r.losses}L-${r.draws}D (score: ${r.score})`));

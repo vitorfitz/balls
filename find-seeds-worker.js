@@ -2,7 +2,6 @@ importScripts('seedrandom.js', 'index.js', 'pathfinding.js');
 
 const MAX_TICKS = 10000;
 const BALL_TYPES = ballClasses.map(b => ({ name: b.name }));
-const threshold = 10;
 
 // How often (in ticks) to re-check whether the Wrench is boxed in by its own
 // turrets and unreachable by the Duplicator. Turret cages change slowly, so
@@ -49,6 +48,7 @@ function simulate(t1Idx, t2Idx, seed) {
     const rng = new Math.seedrandom(seed);
     const b1 = makeBall(t1Idx, 0, rng), b2 = makeBall(t2Idx, 1, rng);
     const battle = new BallBattle([b1, b2], seed);
+    battle.vampDupeFFwd = true;
     battle.width = battle.height = 400;
     battle.walls = createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
@@ -57,10 +57,15 @@ function simulate(t1Idx, t2Idx, seed) {
 
     let minHpDiff = 0, maxHpDiff = 0;
     let dupeNearDeath = { [b1.team]: false, [b2.team]: false };
-    let swordDaggerDramaticTick = { [b1.team]: null, [b2.team]: null };
+    let dramaticTick = { [b1.team]: null, [b2.team]: null };
     let dupeReachedMax = false;
+    // Lowest HP seen for each side's "primary" ball over the whole match (not
+    // just at the moment the match ends), so e.g. a Vampire that bled down low
+    // and then healed back up still counts as having been near death.
+    let minHpSeen = { [b1.team]: Infinity, [b2.team]: Infinity };
 
     const isSwordDagger = (b1 instanceof SwordBall && b2 instanceof DaggerBall) || (b1 instanceof DaggerBall && b2 instanceof SwordBall);
+    const isSwordMagnet = (b1 instanceof SwordBall && b2 instanceof MagnetBall) || (b1 instanceof MagnetBall && b2 instanceof SwordBall);
     const isDupeHammer = (b1 instanceof DuplicatorBall && b2 instanceof HammerBall) || (b1 instanceof HammerBall && b2 instanceof DuplicatorBall);
 
     const isDupeWrench = (b1 instanceof DuplicatorBall && b2 instanceof WrenchBall) || (b1 instanceof WrenchBall && b2 instanceof DuplicatorBall);
@@ -74,9 +79,19 @@ function simulate(t1Idx, t2Idx, seed) {
         const p1 = battle.balls.find(b => b.team === b1.team && !b.owner);
         const p2 = battle.balls.find(b => b.team === b2.team && !b.owner);
 
-        const diff = (p1 ? p1.hp : 0) - (p2 ? p2.hp : 0);
+        // Highest HP among a team's real, standalone units this tick — excludes
+        // owned minions (e.g. Grimoire clones) and SnakeSegments (infinite HP),
+        // so a Duplicator swarm's many low-HP children (or a snake's segments)
+        // don't distort what "the team's HP" means.
+        const teamMaxHp = (team) => Math.max(...battle.balls.filter(b => b.team === team && !b.owner && !(b instanceof SnakeSegment)).map(b => b.hp));
+
+        const maxHp1 = teamMaxHp(b1.team), maxHp2 = teamMaxHp(b2.team);
+        const diff = maxHp1 - maxHp2;
         minHpDiff = Math.min(minHpDiff, diff);
         maxHpDiff = Math.max(maxHpDiff, diff);
+
+        if (p1) minHpSeen[b1.team] = Math.min(minHpSeen[b1.team], maxHp1);
+        if (p2) minHpSeen[b2.team] = Math.min(minHpSeen[b2.team], maxHp2);
 
         if (isDupeWrench && t % boxedInCheckInterval === 0) {
             const wrenchBall = p1 instanceof WrenchBall ? p1 : (p2 instanceof WrenchBall ? p2 : null);
@@ -86,41 +101,40 @@ function simulate(t1Idx, t2Idx, seed) {
             }
         }
 
-        if (isSwordDagger) {
+        if (isSwordDagger || isSwordMagnet) {
             for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
-                if (ball instanceof DaggerBall && swordDaggerDramaticTick[team] === null && ball.hp <= threshold) {
-                    swordDaggerDramaticTick[team] = t;
+                if ((ball instanceof DaggerBall || ball instanceof MagnetBall) && dramaticTick[team] == null && ball.hp <= 10) {
+                    dramaticTick[team] = t;
                 }
             }
         }
 
         // Track if dupe ever had <=3 units with <=50 HP
-        for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
+        for (const [ball, team, maxHp] of [[p1, b1.team, maxHp1], [p2, b2.team, maxHp2]]) {
             if (ball instanceof DuplicatorBall) {
                 const units = battle.teamCount?.[team] ?? 1;
-                const maxHp = Math.max(...battle.balls.filter(b => b.team === team).map(b => b.hp));
                 if ((isDupeHammer && units <= 6 && dupeReachedMax) || (units <= 3 && maxHp <= 50)) dupeNearDeath[team] = true;
                 if (units >= 25) dupeReachedMax = true;
             }
         }
 
-        if (p1 && !p2) {
-            let hp = p1.hp;
-            if (p1 instanceof DuplicatorBall || ((p1 instanceof MirrorBall) && (p2 instanceof DuplicatorBall))) {
-                hp = Math.max(...battle.balls.filter(b => b.team === b1.team).map(b => b.hp));
-            }
-            const hammerDmg = b2 instanceof HammerBall ? b2.weapons[0].dmg : null;
-            const boxedInFraction = totalSamples > 0 ? boxedInSamples / totalSamples : 0;
-            return { winner: 'p1', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b1.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b1.team], hammerDmg, boxedInFraction };
-        }
-        if (p2 && !p1) {
-            let hp = p2.hp;
-            if (p2 instanceof DuplicatorBall || ((p2 instanceof MirrorBall) && (p1 instanceof DuplicatorBall))) {
-                hp = Math.max(...battle.balls.filter(b => b.team === b2.team).map(b => b.hp));
-            }
-            const hammerDmg = b1 instanceof HammerBall ? b1.weapons[0].dmg : null;
-            const boxedInFraction = totalSamples > 0 ? boxedInSamples / totalSamples : 0;
-            return { winner: 'p2', hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[b2.team], swordDaggerDramaticTick: swordDaggerDramaticTick[b2.team], hammerDmg, boxedInFraction };
+        const boxedInFraction = totalSamples > 0 ? boxedInSamples / totalSamples : 0;
+        const vampLifesteal = b2 instanceof VampireBall ? b2.lifesteal : (b1 instanceof VampireBall ? b1.lifesteal : undefined);
+
+        // winner/loser bookkeeping, shared by both p1-wins and p2-wins below.
+        // hp is minHpSeen[winnerTeam] rather than the winner's current HP: it's
+        // already the min-over-time of the winning team's max HP (see the
+        // per-tick tracking above), which is <= the current tick's value, so
+        // re-deriving it here would be redundant.
+        let winnerLabel = null;
+        if (p1 && !p2) winnerLabel = 'p1';
+        else if (p2 && !p1) winnerLabel = 'p2';
+        if (winnerLabel) {
+            const winnerTeam = winnerLabel === 'p1' ? b1.team : b2.team;
+            const loserBall = winnerLabel === 'p1' ? b2 : b1;
+            const hp = minHpSeen[winnerTeam];
+            const hammerDmg = loserBall.weapons?.[0]?.dmg;
+            return { winner: winnerLabel, hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[winnerTeam], dramaticTick: dramaticTick[winnerTeam], hammerDmg, boxedInFraction, vampLifesteal };
         }
     }
     return { winner: 'draw' };
@@ -133,34 +147,42 @@ onmessage = (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            if (i != 0 || (j != 8 && j != 6)) continue;
+            if (i != 2 || j != 11) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             // if (!(key in DRAMATIC_SEEDS)) continue;
+            // if (key != "Wrench_Mirror" && key != "Mirror_Vampire") continue;
             const results = [];
 
             let m = key == "Duplicator_Mirror" ? 0.25 :
                 key == "Duplicator_Grimoire" ? 0.5 :
-                    key == "Mirror_Hammer" ? 4 :
-                        i == 10 || j == 10 ? 2 :
-                            1;
+                    key == "Duplicator_Snake" ? 0.5 :
+                        key == "Grower_Magnet" ? 4 :
+                            key == "Mirror_Hammer" ? 4 :
+                                key == "Wrench_Mirror" ? 2 :
+                                    i == 10 || j == 10 ? 2 :
+                                        i == 13 || j == 13 ? 2 :
+                                            1;
 
-            for (let seed = 0; seed < matches * m; seed++) {
+            for (let seed = 16; seed < matches * m + 16; seed++) {
                 const r = simulate(i, j, seed);
                 if (r.winner !== 'draw') results.push({ seed, ...r });
             }
 
+            const hasDupe = BALL_TYPES[i].name === 'Duplicator' || BALL_TYPES[j].name === 'Duplicator';
+            const hasVamp = BALL_TYPES[i].name === 'Vampire' || BALL_TYPES[j].name === 'Vampire';
+
             const durations = results.map(r => r.ticks).sort((a, b) => a - b);
-            const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" || key == "Duplicator_Club" ? 6000 : 4000;
+            const durLimit = key == "Duplicator_Wrench" || key == "Grower_Wrench" || key == "Wrench_Snake" || key == "Duplicator_Club" || key == "Dagger_Vampire" || key == "Mirror_Vampire" ? 6000 :
+                hasVamp && key != "Snake_Vampire" && key != "Duplicator_Vampire" ? 5000 :
+                    4000;
             const median = durations[Math.floor(durations.length / 2)] || durLimit;
             const maxTicks = Math.max(durLimit, median);
 
-            const hasDupe = BALL_TYPES[i].name === 'Duplicator' || BALL_TYPES[j].name === 'Duplicator';
-            const isSwordDagger = (BALL_TYPES[i].name === 'Sword' && BALL_TYPES[j].name === 'Dagger') || (BALL_TYPES[i].name === 'Dagger' && BALL_TYPES[j].name === 'Sword');
-            const seeds = results.filter(r => {
+            const dramaticResults = results.filter(r => {
                 if (r.ticks > maxTicks) return false;
-                if (!hasDupe && r.hpSwing < 25) return false;
+                if (!hasDupe && !hasVamp && r.hpSwing < 25) return false;
 
                 const winnerIdx = r.winner === 'p1' ? i : j;
                 const loserIdx = r.winner === 'p1' ? j : i;
@@ -179,26 +201,70 @@ onmessage = (e) => {
                 const isWrenchBeatsDupe = BALL_TYPES[winnerIdx].name === 'Wrench' && loserIsDupe;
                 const isHammerBeatsDupe = BALL_TYPES[winnerIdx].name === 'Hammer' && loserIsDupe;
                 const isHammerBeatsMirror = BALL_TYPES[winnerIdx].name === 'Hammer' && BALL_TYPES[loserIdx].name === 'Mirror';
-                const hammerBeaters = ['Sword', 'Machine Gun', 'Wrench', 'Lance', 'Mirror', 'Grimoire', 'Club'];
-                const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror;
+                const hammerBeaters = ['Sword', 'Machine Gun', 'Wrench', 'Lance', 'Mirror', 'Grimoire', 'Club', 'Snake'];
+                const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror || (BALL_TYPES[winnerIdx].name === 'Snake' && BALL_TYPES[loserIdx].name === 'Sword');
 
                 const isGrimVsClub = BALL_TYPES[winnerIdx].name === 'Grimoire' && BALL_TYPES[loserIdx].name === 'Club' || BALL_TYPES[winnerIdx].name === 'Club' && BALL_TYPES[loserIdx].name === 'Grimoire';
+                const isGrimVsVamp = hasVamp && (BALL_TYPES[loserIdx].name === 'Grimoire' || BALL_TYPES[winnerIdx].name === 'Grimoire');
 
-                const effectiveThreshold = useHammerDmg ? r.hammerDmg :
+                const isGrowerBeatsMag = BALL_TYPES[winnerIdx].name === 'Grower' && BALL_TYPES[loserIdx].name === 'Magnet';
+                const isVampBeatsMag = BALL_TYPES[winnerIdx].name === 'Vampire' && BALL_TYPES[loserIdx].name === 'Magnet';
+                const isMagBeatsDagger = BALL_TYPES[winnerIdx].name === 'Magnet' && BALL_TYPES[loserIdx].name === 'Dagger';
+
+                const threshold = useHammerDmg ? r.hammerDmg :
                     isDupBeatsWrench ? 50 :
                         isWrenchBeatsDupe ? 10 :
-                            isGrimVsClub ? 25 :
-                                (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
-                                    (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
-                                        threshold;
-                if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
-                return (r.hp <= effectiveThreshold || (winnerIsDupe && r.dupeNearDeath))
-                    && !(isSwordDagger && r.swordDaggerDramaticTick !== null && r.ticks - r.swordDaggerDramaticTick <= 100)
+                            isGrimVsClub || isGrimVsVamp ? 25 :
+                                isGrowerBeatsMag || isVampBeatsMag ? 20 :
+                                    isMagBeatsDagger ? 5 :
+                                        hasDupe && hasVamp && winnerIsDupe ? 10 :
+                                            (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
+                                                (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
+                                                    10;
+                // if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
+                return (r.hp <= threshold || (winnerIsDupe && r.dupeNearDeath))
+                    && !(r.dramaticTick !== null && r.ticks - r.dramaticTick <= 100)
                     && !(key === "Duplicator_Wrench" && r.boxedInFraction > 0.3);
-            }).map(r => r.seed);
+            });
+
+            // Duplicator_Vampire: on top of the usual "winner nearly died" criteria,
+            // also flag the seeds where Vampire lost but had ramped its lifesteal
+            // (i.e. regenerated/dealt the most damage) the highest — one for each
+            // dramatic seed where Vampire actually won, so the two sets balance out.
+            if (key === "Duplicator_Vampire") {
+                const dramaticSeedSet = new Set(dramaticResults.map(r => r.seed));
+                const vampWinnerName = (r) => BALL_TYPES[r.winner === 'p1' ? i : j].name;
+                const vampWinCount = dramaticResults.filter(r => vampWinnerName(r) === 'Vampire').length;
+
+                const dupeWinsByLifesteal = results
+                    .filter(r => vampWinnerName(r) === 'Duplicator' && !dramaticSeedSet.has(r.seed) && r.vampLifesteal !== undefined)
+                    .sort((a, b) => b.vampLifesteal - a.vampLifesteal)
+                    .slice(0, vampWinCount);
+
+                dramaticResults.push(...dupeWinsByLifesteal);
+            }
+
+            const seeds = dramaticResults.map(r => r.seed);
+
+            // Win counts per ball name: overall (all non-draw results) and within
+            // the dramatic-seed subset.
+            const winnerName = (r) => BALL_TYPES[r.winner === 'p1' ? i : j].name;
+            const countWins = (rs) => {
+                const counts = {};
+                for (const r of rs) {
+                    const name = winnerName(r);
+                    counts[name] = (counts[name] || 0) + 1;
+                }
+                return counts;
+            };
+            const totalWinCounts = countWins(results);
+            const dramaticWinCounts = countWins(dramaticResults);
+            const formatCounts = (counts) => Object.entries(counts).map(([name, n]) => `${name}: ${n}`).join(', ');
 
             dramaticSeeds[key] = seeds;
             progress += `${key}: [${seeds.join(', ')}] (median: ${median}, cap: ${maxTicks})\n`;
+            progress += `  wins (total): ${formatCounts(totalWinCounts)}\n`;
+            progress += `  wins (dramatic): ${formatCounts(dramaticWinCounts)}\n`;
             postMessage({ progress });
         }
     }

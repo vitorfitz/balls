@@ -5,7 +5,7 @@ const MAX_TICKS = 20000;
 function simulate(seed) {
     const { size } = FFA_CONFIG;
 
-    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle);
+    const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle, null, 4);
     const battle = result.battle;
 
     battle.width = battle.height = size;
@@ -68,10 +68,12 @@ onmessage = (e) => {
         }
 
         const result = simulate(seed);
-        const effectiveThreshold = result?.hammerDmg ?? threshold;
-        const tooLong = result && result.ticks > 15000 && result.winnerName !== "Club";
-        if (result && !tooLong && result.hp <= effectiveThreshold) {
-            dramatic.push({ seed, ...result });
+        if (result) {
+            const effectiveThreshold = result?.hammerDmg ?? threshold * (result.winnerName == "Vampire" ? 2 : 1);
+            const tooLong = result.ticks > 15000 && result.winnerName !== "Club";
+            if (!tooLong && result.hp <= effectiveThreshold) {
+                dramatic.push({ seed, ...result });
+            }
         }
     }
 

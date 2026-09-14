@@ -13,17 +13,38 @@ const FFA_CONFIG = {
     ],
 };
 
-function createFFABattle(ballClasses, seed, createBallFn, BallBattle) {
+function createFFABattle(ballClasses, seed, createBallFn, BallBattle, excludeIdx = null, excludeCount = 1) {
     const { size, armWidth, holeSize, gravity, speed, positions } = FFA_CONFIG;
     const rng = new Math.seedrandom(seed);
 
-    const pos = [...positions];
-    shuffle(pos, rng);
-
-    const combatants = ballClasses
+    const eligible = ballClasses
         .map((b, i) => ({ b, i }))
         .filter(({ b }) => b.name !== "Duplicator")
         .map(({ i }) => i);
+
+    // Exclude `excludeCount` balls so the roster fits within `positions.length`.
+    // Drawn before the position shuffle so it's stable regardless of how many
+    // positions exist. Callers that need an exact, evenly-distributed exclusion
+    // across many battles (e.g. bulk simulation) can pass `excludeIdx` (a single
+    // index, or an array of indices into `eligible`) instead of leaving it to be
+    // drawn from `rng`.
+    let chosenExcludeIdxs;
+    if (excludeIdx != null) {
+        chosenExcludeIdxs = Array.isArray(excludeIdx) ? excludeIdx : [excludeIdx];
+    } else {
+        chosenExcludeIdxs = [];
+        const pool = [...eligible.keys()];
+        for (let i = 0; i < excludeCount && pool.length > 0; i++) {
+            const j = Math.floor(rng() * pool.length);
+            chosenExcludeIdxs.push(pool[j]);
+            pool.splice(j, 1);
+        }
+    }
+    const excludeSet = new Set(chosenExcludeIdxs);
+    const combatants = eligible.filter((_, j) => !excludeSet.has(j));
+
+    const pos = [...positions];
+    shuffle(pos, rng);
 
     let balls = combatants.map((i, j) => createBallFn(ballClasses, i, pos[j], rng, speed));
     // balls = balls.filter((b) => !(b instanceof GrimoireBall));
