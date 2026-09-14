@@ -83,7 +83,7 @@ onmessage = (e) => {
         const bossIndex = ballClasses.indexOf(BOSS_TYPES[bi]);
         const results = [];
 
-        for (let seed = 0; seed < bi == 11 ? matches * 2 : matches; seed++) {
+        for (let seed = 0; seed < (bi == 11 ? matches * 2 : matches); seed++) {
             const r = simulate(bossIndex, seed);
             if (r.winner !== 'draw') results.push({ seed, ...r });
         }
