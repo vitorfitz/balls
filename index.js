@@ -5,17 +5,6 @@ const flashDur = 500; // ms
 const hitHistorySize = 100;
 const samePairStunBreakLimit = 20;
 
-// Rendering is deliberately kept this many physics ticks behind the
-// simulation. This absorbs brief main-thread stalls (e.g. CloverBall.cheat()'s
-// lookahead simulation, see evilFork()) without a visible stutter: as long as
-// a stall's duration fits inside this delay window, the renderer just keeps
-// drawing from already-computed buffered ticks while physics catches up in
-// the background, rather than blocking the frame the stall happens on. Does
-// nothing to reduce or eliminate the underlying blocking work itself (JS is
-// single-threaded), only hides its visual symptom, and adds a small constant
-// amount of input-to-screen latency (RENDER_DELAY_TICKS * dt) for everything.
-const RENDER_DELAY_TICKS = 10;
-
 let t = 0;
 
 let spriteReqs = {};
@@ -181,11 +170,13 @@ class Weapon {
 
     setIFrames(target, key = iframeKeyFor(target)) {
         let iframes = this.iframes;
-        if (target instanceof GrowerBall) {
-            iframes = Math.min(target.battle.mode == FFA ? 20 : 7, iframes);
-        }
-        else if (target instanceof SnakeSegment) {
-            iframes = Math.min(7, iframes);
+        if (!this.DoT) {
+            if (target instanceof GrowerBall) {
+                iframes = Math.min(target.battle.mode == FFA ? 20 : 7, iframes);
+            }
+            else if (target instanceof SnakeSegment) {
+                iframes = Math.min(7, iframes);
+            }
         }
         this.iFrames[key] = Math.max(iframes, this.iFrames[key] ?? 0);
     }
@@ -431,19 +422,35 @@ class Ball extends CircleBody {
         this.showDmg(dmg);
     }
 
+    // Color mixed toward white by how recently damage() set flashTime, fading
+    // out over flashDur. Shared by real balls (Ball.draw()) and Clover's
+    // simulated ghost trajectories (BallBattle.drawCloverGhosts()), which
+    // snapshot flashTime off the same wall clock (performance.now()) at fork
+    // time rather than advancing it themselves (forks run headless, so
+    // damage() never sets a new flashTime during their simulated ticks).
+    static flashColor(color, flashTime, now = performance.now()) {
+        const flashPct = Math.max(0, (flashTime ?? 0) - now);
+        return flashPct > 0
+            ? `color-mix(in srgb, white ${Math.min(flashPct * 125 / flashDur, 84)}%, ${color})`
+            : color;
+    }
+
+    // HP text as drawBall() expects it: blank for infinite-HP bodies (snake
+    // segments, etc.), otherwise rounded up.
+    static hpText(hp) {
+        return hp == Infinity ? "" : Math.ceil(hp);
+    }
+
     draw() {
         this.weapons.forEach(w => w.draw());
-        const flashPct = Math.max(0, this.flashTime - performance.now());
-        const color = flashPct > 0
-            ? `color-mix(in srgb, white ${Math.min(flashPct * 125 / flashDur, 84)}%, ${this.color})`
-            : this.color;
+        const color = Ball.flashColor(this.color, this.flashTime);
         let x = this._renderX, y = this._renderY;
         if (this.isStunned()) {
             const shake = 2.5;
             x += (Math.random() - 0.5) * shake;
             y += (Math.random() - 0.5) * shake;
         }
-        Ball.drawBall(this.battle.ctx, x, y, this.radius, color, this.hp == Infinity ? "" : Math.ceil(this.hp), this._renderX, this._renderY);
+        Ball.drawBall(this.battle.ctx, x, y, this.radius, color, Ball.hpText(this.hp), this._renderX, this._renderY);
     }
 
     showDmg(dmg, comboGroup = 0, isHeal = false) {
@@ -511,13 +518,6 @@ class Ball extends CircleBody {
         delete this._savedMass;
         delete this._savedGravity;
 
-        // If the restored velocity points back into a wall this ball was pinned
-        // against while stunned, reflect that component instead of letting it walk
-        // through/into the wall. A stunned ball's resting position is only pinned
-        // against the wall(s) it's touching — nothing guarantees it's not also
-        // flush against a tighter constraint (e.g. squeezed into a narrow gap next
-        // to a hole cutout), so the pre-stun velocity, restored verbatim, can drive
-        // it straight into out-of-bounds territory on the very first tick awake.
         if (this.wallBoundX && this.vx * this.wallBoundX.normal > 0) this.vx = -this.vx;
         if (this.wallBoundY && this.vy * this.wallBoundY.normal > 0) this.vy = -this.vy;
 
@@ -1760,8 +1760,8 @@ class BallBattle {
         this.headless = headless;
 
         this.nextID = 0;
-        // this.debug = true;
-        this.debug = false;
+        this.debug = true;
+        // this.debug = false;
         for (let b of balls) {
             this.addBall(b);
         }
@@ -1781,21 +1781,6 @@ class BallBattle {
         this.targetTimeScale = 1;
         this.nyooooom = 1;
 
-        // Ring buffer of fully-rendered frames (as ImageBitmaps), used to draw
-        // RENDER_DELAY_TICKS behind the physics simulation (see RENDER_DELAY_TICKS
-        // above). The simulation is drawn at full fidelity to an offscreen canvas
-        // every tick, exactly as before; only the final blit to the visible canvas
-        // is delayed. Delaying whole rendered frames (rather than individual
-        // fields like position/theta) avoids having to separately re-derive every
-        // draw()-time consumer of live state (damage flashes, indicators,
-        // stun-shake, etc.) at the delayed point — those keep reading live state
-        // and drawing normally, and the delay is applied once, uniformly, as a
-        // final compositing step.
-        this.frameHistory = [];
-
-        // {state: true} lets evilFork() snapshot/clone this generator's internal
-        // state (via .state()) instead of sharing the same closure-based RNG
-        // instance across the real battle and every forked simulation.
         this.rng = new Math.seedrandom(seed, { state: true });
         this.seed = seed;
     }
@@ -1876,10 +1861,13 @@ class BallBattle {
                 weighted += b.hitHistory[i] * w;
                 totalWeight += w;
             }
+
             let intensity = weighted / totalWeight;
+            const evil = b instanceof CloverBall || (this.evil && this.mode == DUEL);
             if (this.lol) intensity /= (this.balls.length / 2);
+            else if (evil) intensity /= 2;
             else if (this.mode == DUEL && (this.balls[0] instanceof GrimoireBall && this.balls[1] instanceof SnakeBall || this.balls[1] instanceof GrimoireBall && this.balls[0] instanceof SnakeBall)) intensity /= 2;
-            return Math.max(0.2, 1 / (1 + 2 * intensity));
+            return Math.max(evil ? 0.3 : 0.2, 1 / (1 + 2 * intensity));
         };
 
         if (this.mode == FFA) {
@@ -1900,6 +1888,19 @@ class BallBattle {
                 ts = Math.min(ts, b.getTimeScale(false), getHitSlowFactor(b));
             }
             this.timeScale = Math.max(0.2, this.baseTimeScale * ts);
+
+            // While a Clover ghost is showing, cap the real timeScale at the
+            // ghost fork's own timeScale for the tick currently being shown
+            // (see CloverBall.scoreCandidate()'s timeScales array), so
+            // playback doesn't run faster than the ghost's simulated pace at
+            // that point in its path — using the value recorded for the
+            // corresponding tick rather than a single frozen snapshot, since
+            // the fork's timeScale (like the real battle's) changes every
+            // tick rather than staying constant for the whole lookahead.
+            const ghostTS = this.cloverGhostTimeScaleAt?.();
+            if (ghostTS != null) {
+                this.timeScale = Math.min(this.timeScale, ghostTS);
+            }
 
             if (dupeVsVamp) {
                 const hp = this.balls[0] instanceof VampireBall ? this.balls[0].hp : this.balls[1].hp;
@@ -1930,18 +1931,9 @@ class BallBattle {
         this.balls.push(ball);
     }
 
-    // `canvas` is the visible, on-page canvas. All drawing (this.ctx) actually
-    // targets an offscreen canvas of the same size; render() blits from a
-    // delayed ring buffer of that offscreen canvas's content onto `canvas` as
-    // its final step. See frameHistory/RENDER_DELAY_TICKS.
     addCanvas(canvas, offset = 0) {
-        this.visibleCanvas = canvas;
-        this.visibleCtx = canvas.getContext("2d");
-
-        this.canvas = document.createElement("canvas");
-        this.canvas.width = canvas.width;
-        this.canvas.height = canvas.height;
-        this.ctx = this.canvas.getContext("2d");
+        this.canvas = canvas;
+        this.ctx = canvas.getContext("2d");
         this.ctx.imageSmoothingEnabled = false;
         this.ctx.resetTransform();
         if (offset) this.ctx.translate(offset, offset);
@@ -2466,16 +2458,6 @@ class BallBattle {
                     for (const w1 of A.parryWeapons) {
                         for (const w2 of B.parryWeapons) {
                             if (weaponWeaponContact(w1, w2)) {
-                                // If this pair physically bounces (Mirror/Magnet only), suppress
-                                // each weapon's own addParry() direction-flip for this contact by
-                                // no-oping changeDir() before running weaponColFns. The parry flip
-                                // and the physical bounce are two competing ways of resolving the
-                                // same contact — running both fights over the blades' geometry
-                                // (parry flips spin based on current approach angle, the bounce
-                                // changes the velocities that angle depends on) rather than
-                                // cleanly separating them, and undoing the flip after the fact
-                                // would still leave a stale (wrongly-reversed) breakpoint in
-                                // _thetaSegments, so it has to be prevented up front instead.
                                 const wouldBounce = mirrorMagnetWouldBounce(w1, w2);
                                 const origChangeDir1 = w1.changeDir, origChangeDir2 = w2.changeDir;
                                 if (wouldBounce) {
@@ -2541,6 +2523,216 @@ class BallBattle {
         }
     }
 
+    // Simulated timeScale of the currently-shown Clover ghost fork, for the
+    // tick its playhead is currently at (see drawCloverGhosts()'s tickPos,
+    // which this mirrors). Used by updateTimeScale() to cap the real
+    // battle's timeScale to the ghost's own pace at that point in its path,
+    // rather than a single frozen snapshot from when the fork was created.
+    cloverGhostTimeScaleAt() {
+        const ghosts = this.cloverGhosts;
+        if (!ghosts || !ghosts.timeScales) return null;
+        const alpha = this.renderAlpha || 0;
+        const tickPos = Math.max(0, (t - 1 - ghosts.startTick) + alpha);
+        const timeScales = ghosts.timeScales;
+        const i0 = Math.min(Math.floor(tickPos), timeScales.length - 1);
+        const frac = tickPos - i0;
+        const s0 = timeScales[i0];
+        const s1 = timeScales[Math.min(i0 + 1, timeScales.length - 1)];
+        return s0 + (s1 - s0) * frac;
+    }
+
+    drawCloverGhosts() {
+        const ghosts = this.cloverGhosts;
+        if (!ghosts) {
+            this._ghostSlowFactor = 1;
+            return;
+        }
+
+        // Advance the ghost playhead in simulation ticks, not wall-clock time.
+        // The real bodies are drawn at "end of tick (t-1), interpolated by
+        // renderAlpha toward end of tick t" (see the _segments lerp in render()),
+        // and this.timeScale changes every tick, so deriving the playhead from
+        // (elapsed ms) * (current timeScale) doesn't integrate the rate over time
+        // — every change in timeScale re-scales the *whole* elapsed duration,
+        // making the ghosts jump forward/backward relative to the real balls.
+        //
+        // Snapshot alignment: path[0] was taken mid-tick startTick (after
+        // updatePhysics(), so positions are already end-of-tick), and each
+        // fork.update() after that yields path[k] = end of tick startTick + k.
+        // So the snapshot index matching what the real balls are drawn at is
+        // (t - 1 - startTick) + renderAlpha.
+        const alpha = this.renderAlpha || 0;
+        const tickPos = Math.max(0, (t - 1 - ghosts.startTick) + alpha);
+
+        const maxTicks = Math.max(...ghosts.paths.map(p => p.length), 1);
+        if (tickPos >= maxTicks - 1) {
+            this.cloverGhosts = null;
+            return;
+        }
+
+        // const lifeFrac = tickPos / (maxTicks - 1);
+
+        const ctx = this.ctx;
+        const i0 = Math.floor(tickPos);
+        const frac = tickPos - i0;
+        const baseOpacity = 1;
+
+        // Ghost flash-on-hit: compare this tick's hp against the previous
+        // tick's hp (both already in path[]) and stamp a real flashTime
+        // (performance.now() + flashDur) the first time it's noticed, into a
+        // map keyed per (path, body id) and stored on ghosts itself — not on
+        // the per-tick snapshot object. Each path[i] is a distinct object
+        // with its own flashTime field (initially just whatever the real
+        // body's flashTime happened to be at fork-creation time, unrelated
+        // to this ghost's own hits), so stamping onto that object only makes
+        // the flash visible for the single tick where the drop was noticed —
+        // the moment the playhead advances to tick i+1's *different* object,
+        // it reverts to that stale, unrelated value. Keying by body id alone
+        // (shared across every tick of this path) instead makes the stamp
+        // persist and fade correctly over flashDur regardless of how many
+        // ticks the playhead crosses while it's fading — exactly like a real
+        // ball's own this.flashTime field, which is one persistent value on
+        // one persistent object, not reset by moving forward in time.
+        const flashTimes = ghosts._flashTimes ??= new Map(); // "pathIdx-id" -> flashTime
+        const flashTimeFor = (path, pathIdx, i, body) => {
+            if (i > 0) {
+                const prev = path[i - 1].find(x => x.id === body.id);
+                if (prev && body.hp < prev.hp - EPS) {
+                    flashTimes.set(pathIdx + "-" + body.id, performance.now() + flashDur);
+                }
+            }
+            return flashTimes.get(pathIdx + "-" + body.id);
+        };
+
+        const fadeOutDur = 15; // ticks
+        const fadeOutDelay = 10;
+        const fadeStartTickFor = (pathIdx) => {
+            const cache = ghosts._fadeStartTick ??= [];
+            if (cache[pathIdx] !== undefined) return cache[pathIdx];
+            const rewards = ghosts.rewards?.[pathIdx];
+            let start = Infinity;
+            if (rewards) {
+                start = rewards.length - fadeOutDur;
+                for (let i = start - fadeOutDelay; ; i--) {
+                    if (i <= 30 || (rewards[i] < EPS && rewards[i - 1] >= -EPS)) { start = i + fadeOutDelay; break; }
+                }
+            }
+            return cache[pathIdx] = start;
+        };
+
+        const opacityForPath = (pathIdx) => {
+            const rewards = ghosts.rewards?.[pathIdx];
+            if (!rewards) return baseOpacity;
+            const fadeStart = fadeStartTickFor(pathIdx);
+            const ticksSinceFade = tickPos - fadeStart;
+            if (ticksSinceFade <= 0) return baseOpacity;
+            if (ticksSinceFade >= fadeOutDur) return 0;
+            return baseOpacity * (1 - ticksSinceFade / fadeOutDur);
+        };
+
+        const perBody = new Map(); // id -> [{x, y, hp, radius, color, flashTime, weapons, opacity}, ...]
+        for (let pathIdx = 0; pathIdx < ghosts.paths.length; pathIdx++) {
+            const path = ghosts.paths[pathIdx];
+            if (i0 >= path.length) continue; // this candidate's path already finished
+            const snapshot = path[i0];
+            const next = path[i0 + 1];
+            const opacity = opacityForPath(pathIdx);
+
+            let nextById = null;
+            if (next && frac > 0) {
+                nextById = new Map();
+                for (const nb of next) nextById.set(nb.id, nb);
+            }
+
+            for (const body of snapshot) {
+                if (body.hp <= 0) continue;
+                const flashTime = flashTimeFor(path, pathIdx, i0, body);
+                const nb = nextById?.get(body.id);
+                const lerp = nb && nb.hp > 0 ? frac : 0;
+                const x = nb && lerp ? body.x + (nb.x - body.x) * lerp : body.x;
+                const y = nb && lerp ? body.y + (nb.y - body.y) * lerp : body.y;
+                // Infinite-HP bodies (snake segments) would otherwise lerp as
+                // Infinity - Infinity = NaN; leave hp untouched for those so
+                // Ball.hpText()'s `hp == Infinity` check still blanks the label.
+                const hp = nb && lerp && body.hp != Infinity ? body.hp + (nb.hp - body.hp) * lerp : body.hp;
+                const theta = (wi) => {
+                    const w = body.weapons[wi];
+                    const nw = lerp ? nb.weapons[wi] : null;
+                    return nw ? w.theta + (nw.theta - w.theta) * lerp : w.theta;
+                };
+                let list = perBody.get(body.id);
+                if (!list) perBody.set(body.id, list = []);
+                list.push({ x, y, hp, radius: body.radius, color: body.color, flashTime, weapons: body.weapons, theta, ownerId: body.ownerId, opacity });
+            }
+        }
+
+        // Second source per body: the real, live body (already positioned for
+        // this frame by render()'s _renderX/_renderY lerp). Only used to feed
+        // the spread metric, not drawn again here (the real bodies are drawn
+        // separately by the normal render() body loop).
+        const realById = new Map();
+        for (const b of this.bodies) {
+            if (b.hp <= 0) continue;
+            realById.set(b.id, { x: b._renderX ?? b.x, y: b._renderY ?? b.y, ownerId: b.owner ? b.owner.id : null, color: b.color });
+        }
+        for (const [id, list] of perBody) {
+            const real = realById.get(id);
+            if (real) list.push({ x: real.x, y: real.y, ownerId: real.ownerId, color: real.color });
+        }
+
+        // Owned bodies (snake segments, Grimoire minions) shouldn't drive the
+        // slowdown on their own — their spread reflects a snake's tail wiggling
+        // or a minion trailing its owner, not genuinely divergent candidate
+        // outcomes, so they're excluded from the drama/spread metric below
+        // (though still drawn as ghosts further down).
+        //
+        // Each point is weighted by its own opacity (the synthetic real-body
+        // point has none, so it defaults to baseOpacity) so a ghost that has
+        // faded out — either from age or from falling behind the chosen path
+        // (see opacityForPath's fade-out) — stops pulling the centroid/spread
+        // toward it once it's no longer visible.
+        let spread = 0;
+        for (const list of perBody.values()) {
+            if (list.length < 2) continue;
+            if (list[0].ownerId != null) continue;
+            if (list[0].color == ballClasses[12].color) continue;
+            let cx = 0, cy = 0, wSum = 0;
+            for (const p of list) {
+                const w = p.opacity ?? baseOpacity;
+                cx += p.x * w; cy += p.y * w; wSum += w;
+            }
+            if (wSum <= EPS) continue;
+            cx /= wSum; cy /= wSum;
+            for (const p of list) spread += Math.hypot(p.x - cx, p.y - cy) * (p.opacity ?? baseOpacity);
+        }
+
+        const drama = (1 - Math.exp(-spread / 30));
+        this._ghostSlowFactor = 1 - 0.25 * drama;
+        // console.log(this._ghostSlowFactor);
+
+        // Draw only the ghost bodies (i.e. skip the synthetic real-body entries
+        // appended above for the spread metric — those have no radius/weapons
+        // and are already drawn by render()'s normal body loop anyway).
+        for (const list of perBody.values()) {
+            for (const { x, y, hp, radius, color, flashTime, weapons, theta, opacity } of list) {
+                if (radius === undefined) continue;
+                ctx.globalAlpha = opacity;
+                for (let wi = 0; wi < weapons.length; wi++) {
+                    const w = weapons[wi];
+                    if (!w.sprite) continue;
+                    Weapon.drawWeapon(ctx, x, y, theta(wi), w.sprite, w.scale, radius + w.offset, w.spriteShift, w.rotation);
+                }
+                const drawColor = Ball.flashColor(color, flashTime);
+                Ball.drawBall(ctx, x, y, radius, drawColor, Ball.hpText(hp));
+            }
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    // Draws the current sim state (as of the latest completed physics tick,
+    // interpolated by renderAlpha) directly to the visible canvas. Called
+    // from run()'s loop, once per real frame, right after that frame's
+    // ticks/update()s are done — see run()'s loop.
     render(realDt = 0) {
 
         const alpha = this.renderAlpha || 0;
@@ -2598,6 +2790,8 @@ class BallBattle {
 
         for (const dot of this.dots) dot.draw();
 
+        this.drawCloverGhosts();
+
         [...this.bodies]
             .sort((a, b) => (a.getZIndex() - b.getZIndex()))
             .forEach(b => b.draw());
@@ -2610,28 +2804,6 @@ class BallBattle {
         }
 
         if (this.headless) return;
-
-        // Buffer this fully-drawn frame (plus anything else the visible canvas
-        // needs to stay in sync with it, e.g. the CSS zoom transform) and blit
-        // the one from RENDER_DELAY_TICKS frames ago onto the visible canvas.
-        // See frameHistory's declaration for why frames are delayed whole
-        // rather than delaying individual draw() inputs.
-        const pooled = this._framePool?.pop() ?? document.createElement("canvas");
-        pooled.width = this.canvas.width;
-        pooled.height = this.canvas.height;
-        pooled.getContext("2d").drawImage(this.canvas, 0, 0);
-        this.frameHistory.push({ canvas: pooled, zoom: this.zoom ?? 1 });
-
-        if (this.frameHistory.length > RENDER_DELAY_TICKS) {
-            const frame = this.frameHistory.shift();
-            this.visibleCtx.clearRect(0, 0, this.visibleCanvas.width, this.visibleCanvas.height);
-            this.visibleCtx.drawImage(frame.canvas, 0, 0);
-            this.visibleCanvas.style.transform = `scale(${frame.zoom})`;
-
-            // Return the backing canvas to the pool instead of discarding it,
-            // so steady-state playback doesn't keep allocating new canvases.
-            (this._framePool ??= []).push(frame.canvas);
-        }
     }
 
     updateArenaShrink() {
@@ -2885,10 +3057,9 @@ class BallBattle {
         }
 
         this.bodies.sort((a, b) => a.id - b.id);
-        this.bodies.forEach((b) => b.onUpdate(b.getTimeScale()));
+        this.bodies.map((b) => b.onUpdate(b.getTimeScale()));
         this.updateWeapons();
 
-        // Apply deferred stuns from Club
         for (const b of this.balls) {
             if (b._pendingStun) {
                 const sd = b._pendingStun;
@@ -2975,6 +3146,14 @@ class BallBattle {
             if (b instanceof SnakeSegment) return; // don't count toward population caps (dupeLimit, Grimoire's 40-cap)
             this.teamCount[b.team] = (this.teamCount[b.team] ?? 0) + 1
         });
+
+        if (this._pendingCloverCheats) {
+            const pending = this._pendingCloverCheats;
+            this._pendingCloverCheats = null;
+            for (const { clover, bounced } of pending) {
+                if (clover.hp > 0) clover.cheat(bounced);
+            }
+        }
     }
 
     inRectBounds(x, y, radius) {
@@ -2995,16 +3174,22 @@ class BallBattle {
     }
 
     async run(dt) {
-        // while (t < 1740) {
+        // while (t < 4000) {
         //     t++
         //     this.updateTimeScale();
-        //     this.update();
+        //      this.update();
         // }
 
         const loop = async (currentTime) => {
             if (this.lastTime !== null) {
-                this.accumulator += (currentTime - this.lastTime) * this.timeScale;
+                // Dramatic slowdown while Clover ghosts are spread out and
+                // visible (see drawCloverGhosts()'s _ghostSlowFactor). Applied
+                // here rather than folded into this.timeScale itself, since
+                // that's recomputed wholesale by updateTimeScale() every tick
+                // and would just overwrite this factor before it's ever read.
+                this.accumulator += (currentTime - this.lastTime) * this.timeScale * (this._ghostSlowFactor ?? 1);
                 this.accumulator = Math.min(this.accumulator, dt * 100);
+                // if (this._ghostSlowFactor != 1) console.log(this._ghostSlowFactor);
 
                 while (this.accumulator >= dt) {
                     t++;
@@ -3066,7 +3251,7 @@ class BallBattle {
 
         const rec = (_new, obj) => {
             const loop = (key) => {
-                if (obj == this && ["ctx", "dmgIndicators", "particles", "frameHistory", "visibleCtx"].indexOf(key) != -1) {
+                if (obj == this && ["ctx", "dmgIndicators", "particles", "cloverGhosts"].indexOf(key) != -1) {
                     return;
                 }
 
@@ -3076,15 +3261,6 @@ class BallBattle {
 
                 const prop = obj[key];
 
-                // seedrandom generators are functions carrying closure-based
-                // internal state. Copying by reference (like other functions
-                // below) would make the fork share the same generator as the
-                // real battle, so any rng() call made while simulating a
-                // lookahead (e.g. Duplicator/Grimoire/Wrench spawns) would
-                // consume random numbers from — and permanently perturb —
-                // the real battle's future RNG stream. Snapshot its state
-                // instead so the fork gets an independent generator that
-                // starts at the same point but diverges from there.
                 if (key === "rng" && typeof prop == "function" && typeof prop.state == "function") {
                     _new[key] = new Math.seedrandom(null, { state: prop.state() });
                 }
@@ -4259,7 +4435,7 @@ class GrimoireBall extends Ball {
             minion.lifesteal = target.lifesteal;
         }
         else if (target instanceof CloverBall) {
-            minion.foresight = target.foresight / 5;
+            // minion.foresight = target.foresight;
         }
 
         minion.battle = target.battle;
@@ -5165,10 +5341,12 @@ class VampireBall extends Ball {
 }
 
 // Clover: Gets "lucky", aka cheats
-const cloverCandidateAngles = [-0.024 * Math.PI, -0.012 * Math.PI, 0, 0.012 * Math.PI, 0.024 * Math.PI];
+const cloverCandidateAngles = [-0.025 * Math.PI, -0.015 * Math.PI, 0, 0.015 * Math.PI, 0.025 * Math.PI];
+// const cloverCandidateAngles = [-0.02 * Math.PI, 0, 0.02 * Math.PI];
 class CloverBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#3fae4a", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
+        // this.foresight = 200; // TODO: testing value
         this.foresight = 0;
         this.cheatCooldown = 0;
 
@@ -5177,16 +5355,16 @@ class CloverBall extends Ball {
         clover.addCollider(45, 15, 15);
         clover.addSpin(Math.PI * 0.02 * dir);
         clover.addParry();
-        clover.addDamage(3, 40, false, 10);
+        clover.addDamage(4, 15, true, 3);
         clover.ballColFns.push((b, reflector) => {
             this.foresight += 10;
             recordFeed(reflector ?? b, this);
 
             if (reflector) {
                 if (reflector.foresight == null) {
-                    reflector.cheatCooldown = 0;
                     reflector.cheat = CloverBall.prototype.cheat;
                     reflector.scoreCandidate = CloverBall.prototype.scoreCandidate;
+                    reflector.cheatCooldown = 0;
                     reflector.extraUpdates.push(CloverBall.prototype.handleUpdate);
                 }
                 reflector.foresight = this.foresight;
@@ -5207,16 +5385,34 @@ class CloverBall extends Ball {
     }
 
     handleUpdate(dt) {
-        this.cheatCooldown -= dt;
+        // Ticks, not dt-scaled: cheatCooldown is set from a raw simulation-tick
+        // count (see cheat()'s lookahead/path length, driven by fork.update()
+        // calls with no dt involved), and handleUpdate() itself runs exactly
+        // once per real tick regardless of getTimeScale().
+        this.cheatCooldown--;
+
         const bounced = this._bounced;
         this._bounced = null;
 
-        if (bounced == null || this.cheatCooldown > EPS) return;
+        if (bounced == null) return;
         if (this._bounceCount) this._bounceCount; this._bounceCount++;
 
         if (!(bounced instanceof Turret)) {
-            this.cheatCooldown = 10;
-            this.cheat(bounced);
+            // Deferred to after updateWeapons() (see BallBattle.update()'s
+            // "Run any pending Clover cheats" pass) rather than calling
+            // this.cheat(bounced) directly here. handleUpdate() runs before
+            // updateWeapons() advances weapon theta for this tick, so forking
+            // the battle right now (via cheat() -> scoreCandidate() ->
+            // evilFork()) would snapshot every weapon's theta one tick
+            // "behind" where it'll actually be once this tick finishes,
+            // while positions/velocities (already advanced by
+            // updatePhysics(), which runs before onUpdate()) would not have
+            // that lag. That mismatched snapshot let the lookahead simulate
+            // weapon-vs-weapon contacts (e.g. parries) that never happen in
+            // reality, or vice versa, producing predictions that don't match
+            // what actually happens.
+            this.battle._pendingCloverCheats ??= [];
+            this.battle._pendingCloverCheats.push({ clover: this, bounced });
         }
     }
 
@@ -5228,9 +5424,34 @@ class CloverBall extends Ball {
         ball.vy = Math.sin(theta) * speed;
     }
 
-    scoreCandidate(deltaRad, lookahead, bounced) {
+    static snapshotBodies(bodies) {
+        return bodies.map(b => ({
+            id: b.id, x: b.x, y: b.y, radius: b.radius, hp: b.hp, color: b.color, flashTime: b.flashTime,
+            ownerId: b.owner ? b.owner.id : null,
+            weapons: b.weapons ? b.weapons.map(w => ({ theta: w.theta, sprite: w.sprite, scale: w.scale, offset: w.offset, spriteShift: w.spriteShift, rotation: w.rotation })) : []
+        }));
+    }
+
+    scoreCandidate(deltaRad, lookahead, bounced, yieldState) {
+        const debugTiming = this.battle.debug && typeof performance !== "undefined";
+        const forkT0 = debugTiming ? performance.now() : 0;
         const fork = this.battle.evilFork();
         fork.evil = true;
+        if (debugTiming) {
+            console.log(`[t=${t}] Clover scoreCandidate: evilFork() took ${(performance.now() - forkT0).toFixed(2)}ms delta=${deltaRad.toFixed(4)} lookahead=${lookahead} bodies=${this.battle.bodies.length}`);
+        }
+        // DUEL forks never call updateTimeScale() on their own during the
+        // lookahead (see run()'s loop: that's only invoked outside DUEL, or
+        // from the real-time-driven timeScaleAccum loop that forks never
+        // run), so timeScale would otherwise stay frozen at whatever it was
+        // the instant the fork was created for the fork's entire simulated
+        // path — even though the real battle's timeScale keeps changing every
+        // tick (see updateTimeScale()'s DUEL branch). Explicitly recompute it
+        // once per simulated tick here instead, and record one value per
+        // path[]/rewards[] entry, so drawCloverGhosts() can look up the
+        // timeScale for whichever tick it's currently displaying rather than
+        // reusing a single stale snapshot for the whole ghost.
+        fork.updateTimeScale();
         const idx = this.battle.bodies.indexOf(this);
         const fSelf = fork.bodies[idx];
         CloverBall.rotateVel(fSelf, deltaRad);
@@ -5240,36 +5461,72 @@ class CloverBall extends Ball {
         let win = false;
         fSelf._bounceCount = 0;
 
+        const dmgMult = this.battle.mode == DUEL && this.battle.balls.some(x => x instanceof HammerBall || x instanceof GrowerBall) ? 100 : 1;
+        const takenMult = bounced instanceof DuplicatorBall ? 100 : 1;
+
+        // Reward accrued so far (dealt - taken, same weighting as the final
+        // score below), sampled once per path[] entry so drawCloverGhosts()
+        // can compare ghost vs. chosen-path reward at matching tick indices.
+        const rewardAt = () => {
+            const dealtSoFar = (fSelf.getRootOwner().damageDealt + fSelf.getRootOwner().minionDmgDealt / 10 - dealtBefore) * dmgMult;
+            const takenSoFar = Math.max(0, hpBefore - fSelf.hp) * takenMult;
+            return dealtSoFar - takenSoFar;
+        };
+
+        const path = [CloverBall.snapshotBodies(fork.bodies)];
+        const rewards = [rewardAt()];
+        const timeScales = [fork.timeScale];
+
         for (let i = 0; i < lookahead; i++) {
             if (fSelf.hp <= 0) break;
             if (!fork.balls.some(b => b.team != fSelf.team)) {
                 win = true;
                 break;
             }
+
             fork.update();
-            if (fSelf._bounceCount >= (bounced instanceof GrowerBall ? 10 : 5)) break;
+            fork.updateTimeScale();
+            path.push(CloverBall.snapshotBodies(fork.bodies));
+            rewards.push(rewardAt());
+            timeScales.push(fork.timeScale);
+            // if (fSelf._bounceCount >= 5) break;
         }
 
-        const dealt = (fSelf.getRootOwner().damageDealt + fSelf.getRootOwner().minionDmgDealt / 10 - dealtBefore) * (this.battle.mode == DUEL && this.battle.balls.some(x => x instanceof HammerBall || x instanceof GrowerBall) ? 100 : 1);
-        let taken = Math.max(0, hpBefore - fSelf.hp);
-        if (bounced instanceof DuplicatorBall) taken *= 100;
+        const dealt = (fSelf.getRootOwner().damageDealt + fSelf.getRootOwner().minionDmgDealt / 10 - dealtBefore) * dmgMult;
+        let taken = Math.max(0, hpBefore - fSelf.hp) * takenMult;
         const winBonus = win ? 100 : 0;
         const deathPenalty = fSelf.hp <= 0 ? Infinity : 0;
 
-        return dealt + winBonus - taken - deathPenalty;
+        return { score: dealt + winBonus - taken - deathPenalty, path, rewards, timeScales };
     }
 
     cheat(bounced = null) {
-        if (this.hp <= 0 || this.isStunned() || this.foresight == 0 || this.battle.evil) return;
+        if (this.hp <= 0 || this.isStunned() || this.foresight == 0 || this.battle.evil || this.cheatCooldown > 0) return;
 
         let bestScore = -Infinity, bestDelta = 0;
+        const pathsByDelta = new Map();
+        const yieldState = { ticks: 0 };
+
         for (const delta of cloverCandidateAngles) {
-            const score = this.scoreCandidate(delta, this.foresight, bounced);
-            if (score > bestScore + EPS ||
-                (Math.abs(score - bestScore) <= EPS && Math.abs(delta) < Math.abs(bestDelta))) {
+            const { score, path, rewards, timeScales } = this.scoreCandidate(delta, this.foresight, bounced, yieldState);
+            pathsByDelta.set(delta, { path, rewards, timeScales });
+            if (score > bestScore + EPS || (Math.abs(score - bestScore) <= EPS && Math.abs(delta) < Math.abs(bestDelta))) {
                 bestScore = score;
                 bestDelta = delta;
             }
+        }
+
+        this.cheatCooldown = (pathsByDelta.get(bestDelta).path.length - 1) /*/ 2*/;
+        // console.log(this.cheatCooldown);
+
+        if (bestDelta !== 0 && !this.battle.headless) {
+            const chosen = pathsByDelta.get(bestDelta);
+            const noCheat = pathsByDelta.get(0);
+            // Ghost opacity is driven by the ghost path's reward relative to
+            // what actually happened (the chosen path), sampled tick-by-tick;
+            // see drawCloverGhosts()'s use of relRewards.
+            const relRewards = noCheat.rewards.map((r, i) => r - (chosen.rewards[i] ?? chosen.rewards[chosen.rewards.length - 1]));
+            this.battle.cloverGhosts = { startTick: t, paths: [/*mirrorPath,*/ noCheat.path], rewards: [relRewards], timeScales: noCheat.timeScales };
         }
 
         if (bestDelta !== 0) {
