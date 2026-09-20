@@ -141,18 +141,17 @@ onmessage = async (e) => {
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             // if (!(key in DRAMATIC_SEEDS)) continue;
-            // if (key != "Magnet_Vampire" && key != "Grower_Magnet") continue;
+            // if (key != "Duplicator_Magnet") continue;
             const results = [];
 
             let m = key == "Duplicator_Mirror" ? 0.25 :
                 key == "Duplicator_Grimoire" ? 0.5 :
                     key == "Duplicator_Snake" ? 0.5 :
-                        key == "Grower_Magnet" ? 4 :
-                            key == "Mirror_Hammer" ? 4 :
-                                key == "Wrench_Mirror" ? 2 :
-                                    i == 10 || j == 10 ? 2 :
-                                        i == 13 || j == 13 ? 2 :
-                                            1;
+                        key == "Mirror_Hammer" ? 4 :
+                            key == "Wrench_Mirror" ? 2 :
+                                i == 10 || j == 10 ? 2 :
+                                    i == 13 || j == 13 ? 2 :
+                                        1;
 
             for (let seed = 0; seed < matches * m; seed++) {
                 const r = await simulate(i, j, seed);
@@ -179,7 +178,6 @@ onmessage = async (e) => {
                 const winnerIsDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
                 if (loserIsDupe && BALL_TYPES[winnerIdx].name === 'Clover') return true;
-                if (winnerIsDupe && BALL_TYPES[loserIdx].name === 'Magnet') return true;
 
                 const loserIsMirror = BALL_TYPES[loserIdx].name === 'Mirror';
                 const loserIsGrim = BALL_TYPES[loserIdx].name === 'Grimoire';
@@ -199,20 +197,14 @@ onmessage = async (e) => {
                 const isGrimVsClub = BALL_TYPES[winnerIdx].name === 'Grimoire' && BALL_TYPES[loserIdx].name === 'Club' || BALL_TYPES[winnerIdx].name === 'Club' && BALL_TYPES[loserIdx].name === 'Grimoire';
                 const isGrimVsVamp = hasVamp && (BALL_TYPES[loserIdx].name === 'Grimoire' || BALL_TYPES[winnerIdx].name === 'Grimoire');
 
-                // const isGrowerBeatsMag = BALL_TYPES[winnerIdx].name === 'Grower' && BALL_TYPES[loserIdx].name === 'Magnet';
-                // const isVampBeatsMag = BALL_TYPES[winnerIdx].name === 'Vampire' && BALL_TYPES[loserIdx].name === 'Magnet';
-                const isMagBeatsDagger = BALL_TYPES[winnerIdx].name === 'Magnet' && BALL_TYPES[loserIdx].name === 'Dagger';
-
                 const threshold = useHammerDmg ? r.hammerDmg :
                     isDupBeatsWrench ? 50 :
                         isWrenchBeatsDupe ? 10 :
                             isGrimVsClub || isGrimVsVamp ? 25 :
-                                /*isGrowerBeatsMag || isVampBeatsMag ? 20 :*/
-                                isMagBeatsDagger ? 5 :
-                                    hasDupe && hasVamp && winnerIsDupe ? 10 :
-                                        (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
-                                            (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
-                                                10;
+                                hasDupe && hasVamp && winnerIsDupe ? 10 :
+                                    (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
+                                        (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
+                                            10;
                 // if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
                 return (r.hp <= threshold || (winnerIsDupe && r.dupeNearDeath))
                     && !(r.dramaticTick !== null && r.ticks - r.dramaticTick <= 100)

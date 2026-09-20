@@ -97,10 +97,8 @@ async function simulate(t1Idx, t2Idx) {
     battle.walls = createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: 400, height: 400 };
-    battle.t = 0;
 
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
-        battle.t++;
         await battle.update();
         const p1 = battle.balls.find(b => b.team === b1.team && !b.owner);
         const p2 = battle.balls.find(b => b.team === b2.team && !b.owner);
