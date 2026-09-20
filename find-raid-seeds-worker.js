@@ -3,7 +3,7 @@ importScripts('seedrandom.js', 'index.js', 'ffa-config.js', 'raid-config.js');
 const MAX_TICKS = 30000;
 const BOSS_TYPES = ballClasses.filter(b => b.name !== "Duplicator");
 
-function simulate(bossIndex, seed) {
+async function simulate(bossIndex, seed) {
     const { size } = RAID_CONFIG;
 
     const result = createRaidBattle(ballClasses, seed, bossIndex, createFFABall, BallBattle);
@@ -25,7 +25,7 @@ function simulate(bossIndex, seed) {
 
     for (let i = 0; i < MAX_TICKS; i++) {
         battle.updateTimeScale();
-        battle.update();
+        await battle.update();
 
         const boss = battle.balls.find(b => b.id === bossId);
         const raiders = battle.balls.filter(b => b.team === raidTeam && !b.owner);
@@ -60,13 +60,13 @@ function simulate(bossIndex, seed) {
     return { winner: 'draw' };
 }
 
-onmessage = (e) => {
+onmessage = async (e) => {
     const { matches, bossHpThreshold: bossHpThresholdPct, debugSeed, debugBoss } = e.data;
     const bossHpThreshold = bossHpThresholdPct / 100;
 
     if (debugSeed !== undefined) {
         const bossIndex = ballClasses.findIndex(b => b.name === debugBoss);
-        const result = simulate(bossIndex, debugSeed);
+        const result = await simulate(bossIndex, debugSeed);
         postMessage({ result: `Debug seed ${debugSeed} (boss=${debugBoss}): ${JSON.stringify(result)}` });
         return;
     }

@@ -2,7 +2,7 @@ importScripts('seedrandom.js', 'index.js', 'ffa-config.js');
 
 const MAX_TICKS = 20000;
 
-function simulate(seed) {
+async function simulate(seed) {
     const { size } = FFA_CONFIG;
 
     const result = createFFABattle(ballClasses, seed, createFFABall, BallBattle, null, 5);
@@ -16,7 +16,7 @@ function simulate(seed) {
 
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
         battle.updateTimeScale();
-        battle.update();
+        await battle.update();
 
         const alive = battle.balls.filter(b => !b.owner);
         const eliminated = prevAlive.filter(b => !alive.includes(b));
@@ -49,11 +49,11 @@ function simulate(seed) {
     return { winnerName: winnerData.name, hp: Math.ceil(winner.hp), ticks: battle.t, hammerDmg };
 }
 
-onmessage = (e) => {
+onmessage = async (e) => {
     const { matches, threshold, debugSeed } = e.data;
 
     if (debugSeed !== undefined) {
-        const result = simulate(debugSeed);
+        const result = await simulate(debugSeed);
         postMessage({ result: `Debug seed ${debugSeed}: ${result?.winnerName} wins with ${result?.hp} HP` });
         return;
     }
