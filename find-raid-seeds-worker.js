@@ -82,7 +82,7 @@ onmessage = async (e) => {
         const results = [];
 
         for (let seed = 0; seed < (bi == 12 ? matches * 2 : matches); seed++) {
-            const r = simulate(bossIndex, seed);
+            const r = await simulate(bossIndex, seed);
             if (r.winner !== 'draw') results.push({ seed, ...r });
         }
 
