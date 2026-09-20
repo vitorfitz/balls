@@ -11,7 +11,6 @@ Math.seedrandom = seedrandom;
 const fs = require('fs');
 
 let code = fs.readFileSync('./index.js', 'utf8');
-code = code.replace('let t = 0;', 'global.t = 0;');
 code = code.replace('let feedMatrix = {};', 'global.feedMatrix = {};');
 code = code.replace(/const d = new Date.*?Math\.seedrandom\(d\);/s, '');
 code = code.replace(/const balls = \[[\s\S]*$/s, '');
@@ -43,7 +42,7 @@ const BALL_TYPES = global.ballClasses.filter(b => b.name !== "Duplicator");
 const MAX_TICKS = 20000;
 const argMatches = parseInt(process.argv[2], 10);
 const MATCHES = Number.isInteger(argMatches) && argMatches > 0 ? argMatches : 1000;
-const EXCLUDE_COUNT = 4; // number of ball types sitting out each match (roster size = BALL_TYPES.length - EXCLUDE_COUNT)
+const EXCLUDE_COUNT = 5; // number of ball types sitting out each match (roster size = BALL_TYPES.length - EXCLUDE_COUNT)
 
 // All C(BALL_TYPES.length, EXCLUDE_COUNT) unordered exclusion-sets, enumerated once
 // in a fixed order. Cycling through this list (see `simulate`) gives each ball type
@@ -65,7 +64,7 @@ function combinations(n, k) {
 }
 const EXCLUSION_SETS = combinations(BALL_TYPES.length, EXCLUDE_COUNT);
 
-function simulate(matchIndex, baseSeed) {
+async function simulate(matchIndex, baseSeed) {
     const seed = baseSeed + matchIndex;
     const { size } = FFA_CONFIG;
 
@@ -81,7 +80,6 @@ function simulate(matchIndex, baseSeed) {
     battle.width = battle.height = size;
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: size, height: size, style: {} };
-    global.t = 0;
 
     const allBalls = battle.balls.filter(b => !b.owner);
     const deathLog = []; // teams in order of elimination (first dead = index 0)
@@ -90,9 +88,8 @@ function simulate(matchIndex, baseSeed) {
     let consecutiveOOB = 0;
     let prevAlive = new Set(allBalls.map(b => b.team));
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
-        global.t++;
         battle.updateTimeScale();
-        battle.update();
+        await battle.update();
 
         const nowAlive = new Set(battle.balls.filter(b => !b.owner).map(b => b.team));
         for (const team of prevAlive) {
@@ -101,7 +98,7 @@ function simulate(matchIndex, baseSeed) {
         prevAlive = nowAlive;
 
         for (const b of battle.bodies) {
-            if (isNaN(b.x) || isNaN(b.y)) throw new Error(`NaN position on ${b.constructor.name}#${b.id} at t=${global.t} seed=${seed} excludeIdx=${excludeIdx}`);
+            if (isNaN(b.x) || isNaN(b.y)) throw new Error(`NaN position on ${b.constructor.name}#${b.id} at t=${battle.t} seed=${seed} excludeIdx=${excludeIdx}`);
         }
 
         let outOfBoundsCount = 0;
@@ -111,7 +108,7 @@ function simulate(matchIndex, baseSeed) {
         }
         if (outOfBoundsCount > 0) {
             consecutiveOOB = (consecutiveOOB || 0) + 1;
-            if (consecutiveOOB >= 3) throw new Error(`Ball out of bounds for 3+ ticks at t=${global.t} seed=${seed} excludeIdx=${excludeIdx}`);
+            if (consecutiveOOB >= 3) throw new Error(`Ball out of bounds for 3+ ticks at t=${battle.t} seed=${seed} excludeIdx=${excludeIdx}`);
         } else {
             consecutiveOOB = 0;
         }
@@ -152,36 +149,39 @@ function simulate(matchIndex, baseSeed) {
 }
 
 if (!isMainThread) {
-    const { count, startIndex, baseSeed } = workerData;
-    const wins = new Array(BALL_TYPES.length).fill(0);
-    const totalDmg = new Array(BALL_TYPES.length).fill(0);
-    const totalDmgSq = new Array(BALL_TYPES.length).fill(0);
-    const totalKills = new Array(BALL_TYPES.length).fill(0);
-    const totalPlacement = new Array(BALL_TYPES.length).fill(0);
-    const participations = new Array(BALL_TYPES.length).fill(0);
-    let stalemateCount = 0;
-    const outliers = [];
+    (async () => {
+        const { count, startIndex, baseSeed } = workerData;
+        const wins = new Array(BALL_TYPES.length).fill(0);
+        const totalDmg = new Array(BALL_TYPES.length).fill(0);
+        const totalDmgSq = new Array(BALL_TYPES.length).fill(0);
+        const totalKills = new Array(BALL_TYPES.length).fill(0);
+        const totalPlacement = new Array(BALL_TYPES.length).fill(0);
+        const participations = new Array(BALL_TYPES.length).fill(0);
+        let stalemateCount = 0;
+        const outliers = [];
 
-    for (let i = 0; i < count; i++) {
-        const { winnerIdx, damages, kills, placements, grimMirrorStalemate, seed, excludeIdx } = simulate(startIndex + i, baseSeed);
-        if (winnerIdx >= 0) wins[winnerIdx]++;
-        damages.forEach((d, j) => { totalDmg[j] += d; totalDmgSq[j] += d * d; });
-        kills.forEach((k, j) => totalKills[j] += k);
-        placements.forEach((p, j) => totalPlacement[j] += p);
-        const excludeSet = new Set(excludeIdx);
-        for (let j = 0; j < BALL_TYPES.length; j++) {
-            if (!excludeSet.has(j)) participations[j]++;
+        for (let i = 0; i < count; i++) {
+            const { winnerIdx, damages, kills, placements, grimMirrorStalemate, seed, excludeIdx } = await simulate(startIndex + i, baseSeed);
+            if (winnerIdx >= 0) wins[winnerIdx]++;
+            damages.forEach((d, j) => { totalDmg[j] += d; totalDmgSq[j] += d * d; });
+            kills.forEach((k, j) => totalKills[j] += k);
+            placements.forEach((p, j) => totalPlacement[j] += p);
+            const excludeSet = new Set(excludeIdx);
+            for (let j = 0; j < BALL_TYPES.length; j++) {
+                if (!excludeSet.has(j)) participations[j]++;
+            }
+            if (grimMirrorStalemate) stalemateCount++;
+            const maxDmg = Math.max(...damages), minDmg = Math.min(...damages);
+            if (maxDmg > 500 || minDmg < -10) {
+                outliers.push({ seed, excludeIdx, damages: [...damages] });
+            }
         }
-        if (grimMirrorStalemate) stalemateCount++;
-        const maxDmg = Math.max(...damages), minDmg = Math.min(...damages);
-        if (maxDmg > 500 || minDmg < -10) {
-            outliers.push({ seed, excludeIdx, damages: [...damages] });
-        }
-    }
-    parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, participations, count, stalemateCount, outliers, feedMatrix: global.feedMatrix });
+        parentPort.postMessage({ type: 'done', wins, totalDmg, totalDmgSq, totalKills, totalPlacement, participations, count, stalemateCount, outliers, feedMatrix: global.feedMatrix });
+    })();
 } else {
+    console.log(EXCLUSION_SETS.length, "exclusion sets");
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 4;
+    // const NUM_WORKERS = 5;
 
     (async () => {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
@@ -266,12 +266,6 @@ if (!isMainThread) {
             console.log(s.name.padEnd(12) + String(s.wins).padStart(6) + (s.winrate + '%').padStart(10) + String(s.avgDmg).padStart(10) + String(s.stdDmg).padStart(10) + String(s.avgKills).padStart(11) + String(s.avgPlacement).padStart(11));
         });
 
-        // Feed matrix: feedMatrix[victimKey][attackerKey] = number of scaling/growth
-        // hits attackerKey landed on victimKey (see recordFeed() in index.js). Keyed
-        // by each class's constructor name with the "Ball" suffix stripped, which is
-        // how recordFeed() derives its keys - map back to BALL_TYPES via the same
-        // derivation rather than display name, since e.g. "Machine Gun" has a space
-        // that the constructor-derived key doesn't.
         const keyForType = (t) => t.class.name.endsWith("Ball") ? t.class.name.slice(0, -4) : t.class.name;
         const typeForKey = {};
         BALL_TYPES.forEach((t, i) => typeForKey[keyForType(t)] = i);
@@ -299,17 +293,6 @@ if (!isMainThread) {
             console.log(t.name.padEnd(12) + row);
         });
 
-        // Normalized feed matrix: for each attacker (column), each victim's raw feed
-        // count is divided by that attacker's total feed count, then divided again by
-        // the victim's "fair share" of that total - i.e. the fraction of the attacker's
-        // potential victims (weighted by how often each victim actually appeared
-        // alongside that attacker) that this victim represents. This controls for
-        // attackers whose mechanic simply scales far more/less often overall (e.g.
-        // Machine Gun's per-bullet scaling vs. Grimoire's per-summon scaling), isolating
-        // whether a given victim is disproportionately the source of an attacker's
-        // scaling - not just how often that attacker scales in general.
-        // Score of 1.0 = victim feeds this attacker exactly proportional to its own
-        // participation rate; >1.0 = feeds more than its "fair share"; <1.0 = less.
         const totalOtherParticipations = BALL_TYPES.map((t, ai) =>
             BALL_TYPES.reduce((sum, t2, vi) => sum + (vi === ai ? 0 : participations[vi]), 0));
 
