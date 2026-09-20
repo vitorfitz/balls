@@ -2436,9 +2436,7 @@ class BallBattle {
             let start = Infinity;
             if (rewards) {
                 start = rewards.length - fadeOutDur;
-                let searchI = start - fadeOutDelay;
                 for (let i = start - fadeOutDelay; ; i--) {
-                    searchI = i;
                     if (i <= 50 || (rewards[i] < EPS && rewards[i - 1] >= -EPS)) { start = i + fadeOutDelay; break; }
                 }
             }
@@ -2503,7 +2501,7 @@ class BallBattle {
         for (const list of perBody.values()) {
             if (list.length < 2) continue;
             if (list[0].ownerId != null) continue;
-            if (list[0].color == ballClasses[12].color) continue;
+            if (list[0].color == ballClasses[12].color || list[0].color == ballClasses[0].color) continue;
             let cx = 0, cy = 0, wSum = 0;
             for (const p of list) {
                 const w = p.opacity ?? baseOpacity;
@@ -2511,10 +2509,12 @@ class BallBattle {
             }
             if (wSum <= EPS) continue;
             cx /= wSum; cy /= wSum;
-            for (const p of list) spread += Math.hypot(p.x - cx, p.y - cy);
+            for (const p of list) {
+                spread += Math.hypot(p.x - cx, p.y - cy);
+            }
         }
 
-        const drama = Math.sqrt(1 - Math.exp(-spread / (this.mode == DUEL ? 100 : 500)));
+        const drama = Math.sqrt(1 - Math.exp(-spread / (this.mode == DUEL ? 100 : 500))) * Math.min(1, opacityForPath(0) * 5);
         this._ghostSlowFactor = 1 - 0.5 * drama;
 
         const snapshot = [];
@@ -2631,9 +2631,17 @@ class BallBattle {
             if (this.stopped) return;
 
             let drainedFrame = null;
+            let drainedHitEvents = null, drainedFlashEvents = null, drainedDeathEvents = null;
             while (this.frameAccum >= dt && this.frameQueue.length > 0) {
                 drainedFrame = this.frameQueue.shift();
                 // console.log(this.frameQueue.length);
+                // A single rAF callback can need to drain multiple queued frames (e.g.
+                // after jank or a timeScale spike). Accumulate every drained frame's
+                // events here rather than keeping only the last one, so flashes/deaths/
+                // hits from intermediate frames aren't silently dropped.
+                if (drainedFrame.hitEvents?.length) (drainedHitEvents ??= []).push(...drainedFrame.hitEvents);
+                if (drainedFrame.flashEvents?.length) (drainedFlashEvents ??= []).push(...drainedFrame.flashEvents);
+                if (drainedFrame.deathEvents?.length) (drainedDeathEvents ??= []).push(...drainedFrame.deathEvents);
                 this.frameAccum -= dt;
             }
             if (this.frameQueue.length === 0) this.frameAccum = Math.min(this.frameAccum, dt);
@@ -2697,8 +2705,8 @@ class BallBattle {
                     this.ctx.globalAlpha = 1;
                 }
 
-                if (drainedFrame) {
-                    for (const ev of drainedFrame.deathEvents) {
+                if (drainedDeathEvents) {
+                    for (const ev of drainedDeathEvents) {
                         for (let i = 0; i < ev.count; i++) this.particles.push(new DeathParticle(ev.x, ev.y, ev.color));
                     }
                 }
@@ -2711,8 +2719,8 @@ class BallBattle {
 
                 for (const d of frame.dots) d.drawState(this.ctx, d);
 
-                if (drainedFrame) {
-                    for (const ballId of drainedFrame.flashEvents) {
+                if (drainedFlashEvents) {
+                    for (const ballId of drainedFlashEvents) {
                         this.flashState.set(ballId, currentTime + flashDur);
                     }
                 }
@@ -2734,8 +2742,8 @@ class BallBattle {
                     BallBattle.drawState(this.ctx, frame.cloverGhosts, frac, this._cloverGhostFlashTimes, currentTime);
                 }
 
-                if (drainedFrame) {
-                    for (const ev of drainedFrame.hitEvents) {
+                if (drainedHitEvents) {
+                    for (const ev of drainedHitEvents) {
                         const existing = ev.comboGroup == null ? null : this.dmgIndicators.find(
                             d => d.ballId === ev.ballId && d.life > indicatorComboThresh && d.comboGroup === ev.comboGroup && d.isHeal === ev.isHeal
                         );
@@ -2916,6 +2924,8 @@ class BallBattle {
     }
 
     async update() {
+        if (this.headless) this.t++; // if not headless, already updated in physicsLoop
+
         this.colliderCount = this.bodies.filter((x) => !(x instanceof Bullet)).length;
         this.updateArenaShrink();
 
@@ -3175,7 +3185,8 @@ class BallBattle {
             spriteReqs = {};
 
             this.yieldCooldown++;
-            this.t++;
+            this.t++; // have to update t here so that it's correct for updateTimeScale
+
             // Store previous positions before update
             for (const b of this.bodies) {
                 b._segments = [{ x: b.x, y: b.y, f: 0 }];
@@ -3204,7 +3215,7 @@ class BallBattle {
 
 
     async run(dt) {
-        // while (this.t < 9000) {
+        // while (this.t < 7500) {
         //     this.t++;
         //     this.updateTimeScale();
         //     await this.update();
@@ -5535,7 +5546,7 @@ class CloverBall extends Ball {
 
         const lastReward = rewards[rewards.length - 1];
         const winBonus = win ? 100 : 0;
-        const deathPenalty = fSelf.hp <= 0 ? Infinity : 0;
+        const deathPenalty = fSelf.hp <= 0 ? 999999 : 0;
 
         return { score: lastReward + winBonus - deathPenalty, path, rewards, timeScales };
     }
