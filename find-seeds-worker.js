@@ -141,7 +141,7 @@ onmessage = async (e) => {
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             // if (!(key in DRAMATIC_SEEDS)) continue;
-            if (key != "Magnet_Vampire" && key != "Grower_Magnet") continue;
+            // if (key != "Magnet_Vampire" && key != "Grower_Magnet") continue;
             const results = [];
 
             let m = key == "Duplicator_Mirror" ? 0.25 :
