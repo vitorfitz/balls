@@ -1,6 +1,6 @@
 "use strict"
 
-const seedOverride = null; // 113 mg vs dupe
+const seedOverride = null;
 const dramaticCheck = document.getElementById("dramatic-check");
 
 const menuDiv = document.getElementById("menu");
@@ -20,7 +20,6 @@ let mode = 0;
 let battleSeed;
 
 {
-    // const theta0 = 19 * Math.PI / 12;
     const theta0 = 3 * Math.PI / 2;
     for (let i = 0; i < ballClasses.length; i++) {
         const btn = document.createElement("button");
@@ -192,28 +191,37 @@ function drawHealthBar(canvas, hp, maxHp, color, alignRight) {
 function updateBattleUI() {
     if (!battle) return;
 
+    // Read from the buffered/drained frame, not live battle.balls, so displayed
+    // stats never run ahead of what's actually shown on the canvas.
+    const frame = battle._lastFrame;
+    if (!frame) {
+        requestAnimationFrame(updateBattleUI);
+        return;
+    }
+    const bodies = frame.bodies;
+
     hp = {};
-    for (let b of battle.balls) {
-        if (b.owner == null) {
+    for (let b of bodies) {
+        if (!b.hasOwner) {
             hp[b.team] = Math.max(hp[b.team] ?? 0, Math.ceil(b.hp));
         }
     }
 
     if (mode === 1) {
-        updateFFALeaderboard();
+        updateFFALeaderboard(bodies);
         requestAnimationFrame(updateBattleUI);
         return;
     }
 
     if (mode === 2) {
-        updateRaidUI();
+        updateRaidUI(bodies);
         requestAnimationFrame(updateBattleUI);
         return;
     }
 
     [ball1Info, ball2Info].forEach((el, i) => {
         const data = ballClasses[combatants[i]];
-        const b = battle.balls.find(ball => ball.team === data.color && !ball.owner);
+        const b = bodies.find(body => body.team === data.color && !body.hasOwner);
         if (!b) { el.innerHTML = `<div class="name">${data.name}</div><div class="stat"><span class="ded">💀</span></div>`; return; }
 
         let hpCanvas = el.querySelector(".hp-canvas"), hpText = el.querySelector(".hp-text");
@@ -255,13 +263,13 @@ function updateBattleUI() {
     requestAnimationFrame(updateBattleUI);
 }
 
-function updateFFALeaderboard() {
+function updateFFALeaderboard(bodies) {
     const lb = document.getElementById("leaderboard");
 
     // Build sorted list of combatants by HP, freezing dead ball positions
     const entries = ffaCombatants.map(i => {
         const data = ballClasses[i];
-        const b = battle.balls.find(ball => ball.team === data.color && !ball.owner);
+        const b = bodies.find(body => body.team === data.color && !body.hasOwner);
         if (!b && !deathOrder.includes(i)) deathOrder.push(i);
         return { i, data, b, hpPct: b ? hp[b.team] / b.maxHp : 0 };
     });
@@ -317,11 +325,11 @@ function updateFFALeaderboard() {
     });
 }
 
-function updateRaidUI() {
+function updateRaidUI(bodies) {
     const lb = document.getElementById("leaderboard");
 
     // Boss health bar (identified by fixed id, since raiders may share its color/team elsewhere)
-    const boss = battle.balls.find(ball => ball.id === raidBoss.id);
+    const boss = bodies.find(body => body.id === raidBoss.id);
     const bossData = ballClasses[combatants[0]];
     let hpCanvas = raidBossInfo.querySelector(".hp-canvas"), hpText = raidBossInfo.querySelector(".hp-text");
     if (!hpCanvas) {
@@ -372,7 +380,7 @@ function updateRaidUI() {
     // Raider leaderboard, keyed by stable ball id (raiders share one team so they can't be told apart by team/color)
     const entries = raidCombatants.map(({ id, i }) => {
         const data = ballClasses[i];
-        const b = battle.balls.find(ball => ball.id === id);
+        const b = bodies.find(body => body.id === id);
         if (!b && !deathOrder.includes(id)) deathOrder.push(id);
         return { id, i, data, b, hpPct: b ? b.hp / b.maxHp : 0 };
     });
@@ -469,7 +477,7 @@ async function startFFA() {
         console.log("used", battleSeed);
     }
 
-    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, null, 4);
+    const result = createFFABattle(ballClasses, battleSeed, createFFABall, BallBattle, null, 5);
     battle = result.battle;
     ffaCombatants = result.combatants;
     const { armStart, armEnd } = result;
