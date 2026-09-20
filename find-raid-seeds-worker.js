@@ -15,7 +15,6 @@ function simulate(bossIndex, seed) {
     battle.walls = createBorderWalls(size, size);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: size, height: size, style: {} };
-    t = 0;
 
     // Lowest values seen over the whole match (not just at the moment it
     // ends), so e.g. a boss that dropped low and regenerated, or raiders who
@@ -25,7 +24,6 @@ function simulate(bossIndex, seed) {
     let minRaidersHp = Infinity;
 
     for (let i = 0; i < MAX_TICKS; i++) {
-        t++;
         battle.updateTimeScale();
         battle.update();
 
@@ -55,7 +53,7 @@ function simulate(bossIndex, seed) {
             return {
                 winner,
                 winnerHp,
-                ticks: t,
+                ticks: battle.t,
             };
         }
     }

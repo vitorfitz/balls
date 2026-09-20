@@ -11,12 +11,10 @@ function simulate(seed) {
     battle.width = battle.height = size;
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: size, height: size, style: {} };
-    t = 0;
     let runnerUp = null;
     let prevAlive = battle.balls.filter(b => !b.owner);
 
     for (let i = 0; i < MAX_TICKS && battle.balls.filter(b => !b.owner).length > 1; i++) {
-        t++;
         battle.updateTimeScale();
         battle.update();
 
@@ -48,7 +46,7 @@ function simulate(seed) {
     }
 
     const winnerData = ballClasses.find(b => b.color === winner.team);
-    return { winnerName: winnerData.name, hp: Math.ceil(winner.hp), ticks: t, hammerDmg };
+    return { winnerName: winnerData.name, hp: Math.ceil(winner.hp), ticks: battle.t, hammerDmg };
 }
 
 onmessage = (e) => {

@@ -44,7 +44,7 @@ function makeBall(i, pos, rng) {
     return new data.class(pos == 0 ? 50 : 350, 200, Math.cos(theta) * 5, Math.sin(theta) * 5, ...spinArgs, data.hp);
 }
 
-function simulate(t1Idx, t2Idx, seed) {
+async function simulate(t1Idx, t2Idx, seed) {
     const rng = new Math.seedrandom(seed);
     const b1 = makeBall(t1Idx, 0, rng), b2 = makeBall(t2Idx, 1, rng);
     const battle = new BallBattle([b1, b2], seed);
@@ -53,7 +53,6 @@ function simulate(t1Idx, t2Idx, seed) {
     battle.walls = createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: 400, height: 400 };
-    t = 0;
 
     let minHpDiff = 0, maxHpDiff = 0;
     let dupeNearDeath = { [b1.team]: false, [b2.team]: false };
@@ -73,16 +72,11 @@ function simulate(t1Idx, t2Idx, seed) {
     let boxedInSamples = 0, totalSamples = 0;
 
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
-        t++;
         battle.updateTimeScale();
-        battle.update();
+        await battle.update();
         const p1 = battle.balls.find(b => b.team === b1.team && !b.owner);
         const p2 = battle.balls.find(b => b.team === b2.team && !b.owner);
 
-        // Highest HP among a team's real, standalone units this tick — excludes
-        // owned minions (e.g. Grimoire clones) and SnakeSegments (infinite HP),
-        // so a Duplicator swarm's many low-HP children (or a snake's segments)
-        // don't distort what "the team's HP" means.
         const teamMaxHp = (team) => Math.max(...battle.balls.filter(b => b.team === team && !b.owner && !(b instanceof SnakeSegment)).map(b => b.hp));
 
         const maxHp1 = teamMaxHp(b1.team), maxHp2 = teamMaxHp(b2.team);
@@ -93,7 +87,7 @@ function simulate(t1Idx, t2Idx, seed) {
         if (p1) minHpSeen[b1.team] = Math.min(minHpSeen[b1.team], maxHp1);
         if (p2) minHpSeen[b2.team] = Math.min(minHpSeen[b2.team], maxHp2);
 
-        if (isDupeWrench && t % boxedInCheckInterval === 0) {
+        if (isDupeWrench && battle.t % boxedInCheckInterval === 0) {
             const wrenchBall = p1 instanceof WrenchBall ? p1 : (p2 instanceof WrenchBall ? p2 : null);
             if (wrenchBall) {
                 totalSamples++;
@@ -104,7 +98,7 @@ function simulate(t1Idx, t2Idx, seed) {
         if (isSwordDagger || isSwordMagnet) {
             for (const [ball, team] of [[p1, b1.team], [p2, b2.team]]) {
                 if ((ball instanceof DaggerBall || ball instanceof MagnetBall) && dramaticTick[team] == null && ball.hp <= 10) {
-                    dramaticTick[team] = t;
+                    dramaticTick[team] = battle.t;
                 }
             }
         }
@@ -121,11 +115,6 @@ function simulate(t1Idx, t2Idx, seed) {
         const boxedInFraction = totalSamples > 0 ? boxedInSamples / totalSamples : 0;
         const vampLifesteal = b2 instanceof VampireBall ? b2.lifesteal : (b1 instanceof VampireBall ? b1.lifesteal : undefined);
 
-        // winner/loser bookkeeping, shared by both p1-wins and p2-wins below.
-        // hp is minHpSeen[winnerTeam] rather than the winner's current HP: it's
-        // already the min-over-time of the winning team's max HP (see the
-        // per-tick tracking above), which is <= the current tick's value, so
-        // re-deriving it here would be redundant.
         let winnerLabel = null;
         if (p1 && !p2) winnerLabel = 'p1';
         else if (p2 && !p1) winnerLabel = 'p2';
@@ -134,25 +123,25 @@ function simulate(t1Idx, t2Idx, seed) {
             const loserBall = winnerLabel === 'p1' ? b2 : b1;
             const hp = minHpSeen[winnerTeam];
             const hammerDmg = loserBall.weapons?.[0]?.dmg;
-            return { winner: winnerLabel, hp, ticks: t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[winnerTeam], dramaticTick: dramaticTick[winnerTeam], hammerDmg, boxedInFraction, vampLifesteal };
+            return { winner: winnerLabel, hp, ticks: battle.t, hpSwing: maxHpDiff - minHpDiff, dupeNearDeath: dupeNearDeath[winnerTeam], dramaticTick: dramaticTick[winnerTeam], hammerDmg, boxedInFraction, vampLifesteal };
         }
     }
     return { winner: 'draw' };
 }
 
-onmessage = (e) => {
+onmessage = async (e) => {
     const { matches } = e.data;
     const dramaticSeeds = {};
     let progress = '';
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            if (i != 2 || j != 11) continue;
+            // if (i == 0 || i == 12 || i != 14 && j != 14) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
             // if (!(key in DRAMATIC_SEEDS)) continue;
-            // if (key != "Wrench_Mirror" && key != "Mirror_Vampire") continue;
+            if (key != "Magnet_Vampire" && key != "Grower_Magnet") continue;
             const results = [];
 
             let m = key == "Duplicator_Mirror" ? 0.25 :
@@ -165,8 +154,8 @@ onmessage = (e) => {
                                         i == 13 || j == 13 ? 2 :
                                             1;
 
-            for (let seed = 16; seed < matches * m + 16; seed++) {
-                const r = simulate(i, j, seed);
+            for (let seed = 0; seed < matches * m; seed++) {
+                const r = await simulate(i, j, seed);
                 if (r.winner !== 'draw') results.push({ seed, ...r });
             }
 
@@ -189,6 +178,9 @@ onmessage = (e) => {
 
                 const winnerIsDupe = BALL_TYPES[winnerIdx].name === 'Duplicator';
                 const loserIsDupe = BALL_TYPES[loserIdx].name === 'Duplicator';
+                if (loserIsDupe && BALL_TYPES[winnerIdx].name === 'Clover') return true;
+                if (winnerIsDupe && BALL_TYPES[loserIdx].name === 'Magnet') return true;
+
                 const loserIsMirror = BALL_TYPES[loserIdx].name === 'Mirror';
                 const loserIsGrim = BALL_TYPES[loserIdx].name === 'Grimoire';
                 const loserIsHammer = BALL_TYPES[loserIdx].name === 'Hammer';
@@ -207,20 +199,20 @@ onmessage = (e) => {
                 const isGrimVsClub = BALL_TYPES[winnerIdx].name === 'Grimoire' && BALL_TYPES[loserIdx].name === 'Club' || BALL_TYPES[winnerIdx].name === 'Club' && BALL_TYPES[loserIdx].name === 'Grimoire';
                 const isGrimVsVamp = hasVamp && (BALL_TYPES[loserIdx].name === 'Grimoire' || BALL_TYPES[winnerIdx].name === 'Grimoire');
 
-                const isGrowerBeatsMag = BALL_TYPES[winnerIdx].name === 'Grower' && BALL_TYPES[loserIdx].name === 'Magnet';
-                const isVampBeatsMag = BALL_TYPES[winnerIdx].name === 'Vampire' && BALL_TYPES[loserIdx].name === 'Magnet';
+                // const isGrowerBeatsMag = BALL_TYPES[winnerIdx].name === 'Grower' && BALL_TYPES[loserIdx].name === 'Magnet';
+                // const isVampBeatsMag = BALL_TYPES[winnerIdx].name === 'Vampire' && BALL_TYPES[loserIdx].name === 'Magnet';
                 const isMagBeatsDagger = BALL_TYPES[winnerIdx].name === 'Magnet' && BALL_TYPES[loserIdx].name === 'Dagger';
 
                 const threshold = useHammerDmg ? r.hammerDmg :
                     isDupBeatsWrench ? 50 :
                         isWrenchBeatsDupe ? 10 :
                             isGrimVsClub || isGrimVsVamp ? 25 :
-                                isGrowerBeatsMag || isVampBeatsMag ? 20 :
-                                    isMagBeatsDagger ? 5 :
-                                        hasDupe && hasVamp && winnerIsDupe ? 10 :
-                                            (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
-                                                (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
-                                                    10;
+                                /*isGrowerBeatsMag || isVampBeatsMag ? 20 :*/
+                                isMagBeatsDagger ? 5 :
+                                    hasDupe && hasVamp && winnerIsDupe ? 10 :
+                                        (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
+                                            (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
+                                                10;
                 // if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
                 return (r.hp <= threshold || (winnerIsDupe && r.dupeNearDeath))
                     && !(r.dramaticTick !== null && r.ticks - r.dramaticTick <= 100)

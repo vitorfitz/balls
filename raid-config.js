@@ -7,23 +7,24 @@ const RAID_CONFIG = {
     bossSpeed: 2,
     bossScale: 4,
     raidTeam: "sus",
-    positions: [[100, 100], [100, 333], [100, 566], [100, 800], [450, 800], [800, 800], [800, 450], [800, 100], [450, 100]],
+    positions: [[100, 100], [100, 450], [100, 800], [450, 800], [800, 800], [800, 450], [800, 100], [450, 100]],
     shrinkStages: [
         { players: 4, size: 700, zoom: 1.14 },
     ],
     bossHP: {
-        "Sword": 300,
+        "Sword": 250,
         "Dagger": 300,
         "Lance": 300,
         "Wrench": 500,
-        "Grimoire": 600,
+        "Grimoire": 500,
         "Machine Gun": 500,
         "Hammer": 500,
-        "Mirror": 600,
-        "Club": 500,
+        "Mirror": 999,
+        "Club": 400,
         "Snake": 999,
         "Vampire": 500,
         "Magnet": 300,
+        "Clover": 500,
     }
 };
 
@@ -34,28 +35,31 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
 
     const bossName = ballClasses[bossIndex].name;
     const hp = bossHP[bossName] ?? 500;
-    // Grimoire and Mirror are mutually banned as raiders against each other's boss,
-    // to avoid infinite minion-summoning loops (Grimoire clones Mirror's reflect behavior).
-    let bannedNames = bossName === "Grimoire" || bossName === "Mirror" || bossName === "Duplicator" ? ["Grimoire", "Mirror"]
-        : bossName === "Snake" ? ["Grimoire", "Grower"]
-            : bossName === "Vampire" ? ["Lance", "Grimoire"]
-                : bossName === "Magnet" ? ["Grower", "Grimoire"]
-                    : [bossName];
+
+    let bannedNames = bossName === "Grimoire" ? ["Mirror", "Vampire"]
+        : bossName === "Mirror" ? ["Grimoire", "Wrench"]
+            : bossName === "Grower" ? ["Magnet", "Hammer", "Grimoire", "Clover"]
+                : bossName === "Dagger" ? ["Vampire"]
+                    : bossName === "Snake" ? ["Grimoire", "Grower", "Magnet"]
+                        : bossName === "Vampire" ? ["Lance", "Grimoire", "Magnet"]
+                            : bossName === "Magnet" ? ["Grower", "Grimoire", "Vampire"]
+                                : bossName === "Clover" ? ["Mirror", "Grimoire"]
+                                    : [];
     bannedNames.push("Duplicator");
     bannedNames.push("Snake");
-    bannedNames.push("Vampire");
-    bannedNames.push("Magnet");
+    bannedNames.push("Clover");
+    bannedNames.push(bossName);
 
-    const raiderIndices = ballClasses
+    let raiderIndices = ballClasses
         .map((b, i) => i)
         .filter((i) => !bannedNames.includes(ballClasses[i].name));
+    shuffle(raiderIndices, rng);
+    raiderIndices = raiderIndices.slice(0, positions.length);
 
-    // When a combatant is missing (e.g. Grimoire/Mirror mutual ban drops us to 8
-    // raiders instead of 9), collapse the two split side slots into one centered
-    // position so the layout still looks even.
-    const pos = raiderIndices.length < positions.length
-        ? [positions[0], [100, 450], ...positions.slice(3)]
-        : [...positions];
+    // const pos = raiderIndices.length < positions.length
+    //     ? [positions[0], [100, 450], ...positions.slice(3)]
+    //     : [...positions];
+    const pos = positions;
     shuffle(pos, rng);
 
     const raiders = raiderIndices.map((i, j) => {
@@ -89,7 +93,7 @@ function createBossBall(ballClasses, i, pos, speed, hp, scale, rng) {
     b.boostEnergy = 1;
     b.mass = b.baseMass = 5000;
     // b.angVelNerf = data.class == ClubBall || data.class == WrenchBall ? 2.7 : 3;
-    b.angVelNerf = data.class == DaggerBall ? 2.8 : 2.5;
+    b.angVelNerf = data.class == DaggerBall ? 2.66667 : 2.5;
 
     for (const w of b.weapons) {
         if (b instanceof LanceBall) {

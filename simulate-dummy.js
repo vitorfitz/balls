@@ -26,6 +26,7 @@ global.ClubBall = ClubBall;
 global.SnakeBall = SnakeBall;
 global.VampireBall = VampireBall;
 global.MagnetBall = MagnetBall;
+global.CloverBall = CloverBall;
 global.Ball = Ball;
 global.BallBattle = BallBattle;
 global.randomVel = randomVel;
@@ -52,13 +53,14 @@ const BALL_TYPES = [
     { name: 'Snake', create: (rng) => new global.SnakeBall(50, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Vampire', create: (rng) => new global.VampireBall(50, 200, ...global.randomVel(5, rng), 100) },
     { name: 'Magnet', create: (rng) => new global.MagnetBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
+    { name: 'Clover', create: (rng) => new global.CloverBall(50, 200, ...global.randomVel(5, rng), 0, 1, 100) },
 ];
 
 const MAX_TICKS = 50000;
 const MATCHES = 1000;
 const THRESHOLDS = [20, 100, 500];
 
-function simulate(typeIdx) {
+async function simulate(typeIdx) {
     const rng = new Math.seedrandom();
     const attacker = BALL_TYPES[typeIdx].create(rng);
     const dummy = new DummyBall(350, 200);
@@ -68,14 +70,12 @@ function simulate(typeIdx) {
     battle.walls = global.createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: 400, height: 400 };
-    global.t = 0;
 
     const results = [];
     let threshIdx = 0, stunnedTicks = 0;
 
     for (let tick = 1; tick <= MAX_TICKS; tick++) {
-        global.t = tick;
-        battle.update();
+        await battle.update();
         if (dummy.isStunned()) stunnedTicks++;
         while (threshIdx < THRESHOLDS.length && attacker.damageDealt >= THRESHOLDS[threshIdx]) {
             results.push(tick - stunnedTicks);
@@ -89,12 +89,14 @@ function simulate(typeIdx) {
 }
 
 if (!isMainThread) {
-    const { typeIdx, count } = workerData;
-    const times = [];
-    for (let i = 0; i < count; i++) {
-        times.push(simulate(typeIdx));
-    }
-    parentPort.postMessage(times);
+    (async () => {
+        const { typeIdx, count } = workerData;
+        const times = [];
+        for (let i = 0; i < count; i++) {
+            times.push(await simulate(typeIdx));
+        }
+        parentPort.postMessage(times);
+    })();
 } else {
     const NUM_WORKERS = os.cpus().length;
 

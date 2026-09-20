@@ -88,7 +88,7 @@ function findBallIndex(name) {
 
 const selectedIndices = ballNameArgs.map(findBallIndex);
 
-function simulate(t1Idx, t2Idx) {
+async function simulate(t1Idx, t2Idx) {
     const rng = new Math.seedrandom();
     const b1 = BALL_TYPES[t1Idx].create(0, rng), b2 = BALL_TYPES[t2Idx].create(1, rng);
 
@@ -97,11 +97,11 @@ function simulate(t1Idx, t2Idx) {
     battle.walls = createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: 400, height: 400 };
-    global.t = 0;
+    battle.t = 0;
 
     for (let i = 0; i < MAX_TICKS && battle.balls.length > 1; i++) {
-        global.t++;
-        battle.update();
+        battle.t++;
+        await battle.update();
         const p1 = battle.balls.find(b => b.team === b1.team && !b.owner);
         const p2 = battle.balls.find(b => b.team === b2.team && !b.owner);
         if (p1 && !p2) return 'p1';
@@ -112,12 +112,14 @@ function simulate(t1Idx, t2Idx) {
 
 if (!isMainThread) {
     const { t1Idx, t2Idx, count } = workerData;
-    let w1 = 0, w2 = 0, draws = 0;
-    for (let i = 0; i < count; i++) {
-        const r = simulate(t1Idx, t2Idx);
-        if (r === 'p1') w1++; else if (r === 'p2') w2++; else draws++;
-    }
-    parentPort.postMessage({ w1, w2, draws });
+    (async () => {
+        let w1 = 0, w2 = 0, draws = 0;
+        for (let i = 0; i < count; i++) {
+            const r = await simulate(t1Idx, t2Idx);
+            if (r === 'p1') w1++; else if (r === 'p2') w2++; else draws++;
+        }
+        parentPort.postMessage({ w1, w2, draws });
+    })();
 } else {
     const NUM_WORKERS = os.cpus().length;
     // const NUM_WORKERS = 3;
@@ -145,6 +147,10 @@ if (!isMainThread) {
         const results = {};
         BALL_TYPES.forEach(t => results[t.name] = { wins: 0, losses: 0, draws: 0 });
 
+        // winRate[i][j] = i's win rate against j (NaN on the diagonal / unplayed matchups)
+        const n = BALL_TYPES.length;
+        const winRate = Array.from({ length: n }, () => new Array(n).fill(NaN));
+
         console.log(`Simulating ${MATCHES} matches per matchup...\n`);
 
         for (let i = 0; i < BALL_TYPES.length; i++) {
@@ -162,6 +168,10 @@ if (!isMainThread) {
                 results[t1.name].wins += w1; results[t1.name].losses += w2; results[t1.name].draws += draws;
                 results[t2.name].wins += w2; results[t2.name].losses += w1; results[t2.name].draws += draws;
 
+                const played = w1 + w2 + draws;
+                winRate[i][j] = played > 0 ? w1 / played : NaN;
+                winRate[j][i] = played > 0 ? w2 / played : NaN;
+
                 console.log(`${t1.name} vs ${t2.name}: ${w1}-${w2}-${draws}`);
             }
         }
@@ -172,5 +182,57 @@ if (!isMainThread) {
             .map(([name, r]) => ({ name, ...r, score: r.wins - r.losses }))
             .sort((a, b) => b.score - a.score)
             .forEach((r, i) => console.log(`${i + 1}. ${r.name}: ${r.wins}W-${r.losses}L-${r.draws}D (score: ${r.score})`));
+
+        // Similarity matrix: only meaningful in full round-robin mode (no ball names given),
+        // since it needs every ball's win-rate spread against the full field.
+        if (selectedIndices.length === 0) {
+            // Euclidean distance between ball i and ball j's win-rate vectors, comparing
+            // only the opponents both of them actually played (i.e. excluding each
+            // ball's matchup against itself and any skipped matchups).
+            function distance(i, j) {
+                let sumSq = 0, count = 0;
+                for (let k = 0; k < n; k++) {
+                    if (k === i || k === j) continue;
+                    const a = winRate[i][k], b = winRate[j][k];
+                    if (Number.isNaN(a) || Number.isNaN(b)) continue;
+                    const diff = a - b;
+                    sumSq += diff * diff;
+                    count++;
+                }
+                return count > 0 ? Math.sqrt(sumSq) : NaN;
+            }
+
+            const dist = Array.from({ length: n }, () => new Array(n).fill(0));
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    const d = distance(i, j);
+                    dist[i][j] = d;
+                    dist[j][i] = d;
+                }
+            }
+
+            console.log('\n=== SIMILARITY MATRIX (Euclidean distance between win-rate spreads, lower = more similar) ===');
+            const colWidth = Math.max(...BALL_TYPES.map(t => t.name.length)) + 1;
+            const header = ''.padEnd(colWidth) + BALL_TYPES.map(t => t.name.slice(0, 6).padStart(7)).join('');
+            console.log(header);
+            for (let i = 0; i < n; i++) {
+                const row = BALL_TYPES[i].name.padEnd(colWidth) + dist[i].map((d, j) => {
+                    if (i === j) return ''.padStart(7);
+                    return (Number.isNaN(d) ? '-' : d.toFixed(2)).padStart(7);
+                }).join('');
+                console.log(row);
+            }
+
+            console.log('\n=== MOST SIMILAR PAIRS ===');
+            const pairs = [];
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    if (!Number.isNaN(dist[i][j])) pairs.push({ a: BALL_TYPES[i].name, b: BALL_TYPES[j].name, d: dist[i][j] });
+                }
+            }
+            pairs.sort((a, b) => a.d - b.d)
+                .slice(0, 10)
+                .forEach((p, idx) => console.log(`${idx + 1}. ${p.a} & ${p.b}: ${p.d.toFixed(3)}`));
+        }
     })();
 }
