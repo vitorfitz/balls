@@ -5360,7 +5360,7 @@ class VampireBall extends Ball {
         this.bleed(dt);
 
         // Time-saver for simulations
-        if ((typeof global != "undefined" || this.battle.vampDupeFFwd) && this.hp > this.baseHP * 2 && this.battle.balls.every((x) => (x == this) || (x instanceof DuplicatorBall))) {
+        if (this.battle.headless && this.hp > this.baseHP * 2 && this.battle.balls.every((x) => (x == this) || (x instanceof DuplicatorBall))) {
             for (let b of this.battle.balls) {
                 if (b instanceof DuplicatorBall) b.damage(727, this);
             }

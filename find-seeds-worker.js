@@ -48,7 +48,6 @@ async function simulate(t1Idx, t2Idx, seed) {
     const rng = new Math.seedrandom(seed);
     const b1 = makeBall(t1Idx, 0, rng), b2 = makeBall(t2Idx, 1, rng);
     const battle = new BallBattle([b1, b2], seed);
-    battle.vampDupeFFwd = true;
     battle.width = battle.height = 400;
     battle.walls = createBorderWalls(400, 400);
     battle.ctx = new Proxy({}, { get: () => () => { } });
@@ -58,9 +57,6 @@ async function simulate(t1Idx, t2Idx, seed) {
     let dupeNearDeath = { [b1.team]: false, [b2.team]: false };
     let dramaticTick = { [b1.team]: null, [b2.team]: null };
     let dupeReachedMax = false;
-    // Lowest HP seen for each side's "primary" ball over the whole match (not
-    // just at the moment the match ends), so e.g. a Vampire that bled down low
-    // and then healed back up still counts as having been near death.
     let minHpSeen = { [b1.team]: Infinity, [b2.team]: Infinity };
 
     const isSwordDagger = (b1 instanceof SwordBall && b2 instanceof DaggerBall) || (b1 instanceof DaggerBall && b2 instanceof SwordBall);
