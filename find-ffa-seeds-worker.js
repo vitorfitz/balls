@@ -65,7 +65,7 @@ onmessage = async (e) => {
             postMessage({ progress: `Searching... ${seed}/${matches} (found ${dramatic.length})` });
         }
 
-        const result = simulate(seed);
+        const result = await simulate(seed);
         if (result) {
             const effectiveThreshold = result?.hammerDmg ?? threshold * (result.winnerName == "Vampire" ? 2 : 1);
             const tooLong = result.ticks > 15000 && result.winnerName !== "Club";
