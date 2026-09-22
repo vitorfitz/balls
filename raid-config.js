@@ -59,7 +59,7 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
     // const pos = raiderIndices.length < positions.length
     //     ? [positions[0], [100, 450], ...positions.slice(3)]
     //     : [...positions];
-    const pos = positions;
+    const pos = [...positions]; // copy so we don't shuffle RAID_CONFIG.positions in place
     shuffle(pos, rng);
 
     const raiders = raiderIndices.map((i, j) => {

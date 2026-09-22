@@ -157,7 +157,7 @@ if (!isMainThread) {
     })();
 } else {
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 3;
+    // const NUM_WORKERS = 4;
 
     async function runBossMatches(bossIndex) {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);

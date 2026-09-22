@@ -47,8 +47,7 @@ const EXCLUDE_COUNT = 5; // number of ball types sitting out each match (roster 
 // All C(BALL_TYPES.length, EXCLUDE_COUNT) unordered exclusion-sets, enumerated once
 // in a fixed order. Cycling through this list (see `simulate`) gives each ball type
 // exactly the same number of sit-outs over any run that's a multiple of the list's
-// length, the same even-coverage guarantee the old single-index mod trick gave for
-// EXCLUDE_COUNT === 1.
+// length
 function combinations(n, k) {
     const result = [];
     const combo = [];

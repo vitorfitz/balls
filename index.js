@@ -526,8 +526,8 @@ class Ball extends CircleBody {
         delete this._savedMass;
         delete this._savedGravity;
 
-        if (this.wallBoundX && this.vx * this.wallBoundX.normal > 0) this.vx = -this.vx;
-        if (this.wallBoundY && this.vy * this.wallBoundY.normal > 0) this.vy = -this.vy;
+        if (this.wallBoundX && this.vx * this.wallBoundX.normal < 0) this.vx = -this.vx;
+        if (this.wallBoundY && this.vy * this.wallBoundY.normal < 0) this.vy = -this.vy;
 
         this.wallBoundX = null;
         this.wallBoundY = null;
@@ -2276,7 +2276,7 @@ class BallBattle {
         }
         weapon.setIFrames(target, key);
         // if (target instanceof SnakeSegment) console.log(predictedWeaponDist(weapon, target.owner), predictedWeaponDist(weapon, target.owner, true));
-        if ((target instanceof VampireBall && !target.isStunned()) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+        if ((target instanceof VampireBall && !target.isStunned() && !(weapon.ball instanceof MirrorBall && weapon.ball.giga)) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
             target.deferredHits.push({ weaponBall: weapon.ball, weaponIdx: weapon.ball.dmgWeapons.indexOf(weapon), source: weapon.ball, t: 0 });
         }
         else {
@@ -3215,7 +3215,7 @@ class BallBattle {
 
 
     async run(dt) {
-        // while (this.t < 7500) {
+        // while (this.t < 4000) {
         //     this.t++;
         //     this.updateTimeScale();
         //     await this.update();
@@ -5270,7 +5270,7 @@ class VampireBall extends Ball {
     }
 
     bleed(dt) {
-        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5000 : this.giga ? 7200 : 7200);
+        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5000 : this.giga ? 7500 : 7500);
     }
 
     damage(dmg, source, srcType) {
@@ -5386,6 +5386,7 @@ class VampireBall extends Ball {
 
 // Clover: BENDS REALITY, CHANGES FATE
 const cloverCandidateAngles = [-0.021 * Math.PI, -0.012 * Math.PI, 0, 0.012 * Math.PI, 0.021 * Math.PI];
+const ghostDurCap = 300;
 class CloverBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#3fae4a", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -5398,11 +5399,11 @@ class CloverBall extends Ball {
         clover.addCollider(45, 15, 15);
         clover.addSpin(Math.PI * 0.020 * dir);
         clover.addParry();
-        clover.addDamage(4, 23, true, 10);
+        clover.addDamage(4, 24, true, 10);
         clover.ballColFns.push((b, reflector) => {
             this.foresight += this.battle.mode == RAID && !this.giga ? 20 : 10;
-            this.weapons[0].iframes = Math.floor(23 / (1 + this.foresight / (this.giga ? 600 : 200)));
-            if (this.battle.mode == FFA) this.weapons[0].iframes += 17;
+            this.weapons[0].iframes = Math.floor(24 / (1 + this.foresight / (this.giga ? 1000 : 200)));
+            if (this.battle.mode == FFA) this.weapons[0].iframes += 16;
             recordFeed(reflector ?? b, this);
 
             if (reflector) {
@@ -5493,15 +5494,19 @@ class CloverBall extends Ball {
 
         const rewardAt = () => {
             let r = 0;
+            if (this.battle.mode == FFA) r += this.foresight / 10 * 4;
             for (let b of fork.balls) {
                 if (!(b instanceof SnakeSegment)) {
                     let weight = b.hp * (b.owner ? 0.1 : 1);
                     if (b.team == fSelf.team) {
                         r += weight;
                     }
-                    else if (!this.giga) {
+                    else if (this.battle.mode != FFA && !this.giga) {
                         if (this.battle.mode == DUEL && b instanceof HammerBall) weight *= 100;
-                        r -= weight;
+                        r -= weight + 5;
+                    }
+                    else if (this.giga && b instanceof HammerBall) {
+                        r -= weight + 5;
                     }
                 }
             }
@@ -5558,7 +5563,8 @@ class CloverBall extends Ball {
         const pathsByDelta = new Map();
         const yieldState = { ticks: 0 };
 
-        for (const delta of cloverCandidateAngles) {
+        for (let delta of cloverCandidateAngles) {
+            if (this.giga) delta *= 2;
             const { score, path, rewards, timeScales } = await this.scoreCandidate(delta, this.foresight, bounced, yieldState);
             pathsByDelta.set(delta, { path, rewards, timeScales });
             if (score > bestScore + EPS || (Math.abs(score - bestScore) <= EPS && Math.abs(delta) < Math.abs(bestDelta))) {
@@ -5567,13 +5573,12 @@ class CloverBall extends Ball {
             }
         }
 
-        this.cheatCooldown = pathsByDelta.get(bestDelta).path.length;
-        if (bestDelta == 0) this.cheatCooldown = Math.min(this.cheatCooldown, 3000);
+        this.cheatCooldown = Math.min(ghostDurCap, pathsByDelta.get(bestDelta).path.length);
 
         if (bestDelta !== 0 && !this.battle.headless) {
             const chosen = pathsByDelta.get(bestDelta);
             const noCheat = pathsByDelta.get(0);
-            const displayLen = Math.min(noCheat.path.length, chosen.path.length);
+            const displayLen = Math.min(noCheat.path.length, chosen.path.length, ghostDurCap);
             const noCheatPath = noCheat.path.slice(0, displayLen);
             const noCheatRewards = noCheat.rewards.slice(0, displayLen);
             const noCheatTimeScales = noCheat.timeScales.slice(0, displayLen);
