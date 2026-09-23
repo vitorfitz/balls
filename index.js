@@ -3165,7 +3165,7 @@ class BallBattle {
         return false;
     }
 
-    async physicsLoop(dt, maxQueueLen = 100) {
+    async physicsLoop(dt, maxQueueLen = 200) {
         while (!this.stopped) {
             if (!this.headless && this.frameQueue.length >= maxQueueLen) {
                 await cheatYield(this);
