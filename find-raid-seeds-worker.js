@@ -34,7 +34,7 @@ async function simulate(bossIndex, seed) {
             if (raiders.length == 1 && raiders[0] instanceof WrenchBall) raidersHp *= 5;
         }
         else {
-            if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10 || bossIndex == 12) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
+            if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10 || bossIndex == 12 || bossIndex == 13) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
         }
 
         const bossHp = boss ? boss.hp : 0;
