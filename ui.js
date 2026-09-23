@@ -188,14 +188,14 @@ function drawHealthBar(canvas, hp, maxHp, color, alignRight) {
     ctx.fillRect(alignRight ? w - 2 - fillW : 2, 2, fillW, h - 4);
 }
 
-function updateBattleUI() {
-    if (!battle) return;
+function updateBattleUI(forBattle = battle) {
+    if (!battle || battle !== forBattle || forBattle.stopped) return;
 
     // Read from the buffered/drained frame, not live battle.balls, so displayed
     // stats never run ahead of what's actually shown on the canvas.
-    const frame = battle._lastFrame;
+    const frame = forBattle._lastFrame;
     if (!frame) {
-        requestAnimationFrame(updateBattleUI);
+        requestAnimationFrame(() => updateBattleUI(forBattle));
         return;
     }
     const bodies = frame.bodies;
@@ -209,13 +209,13 @@ function updateBattleUI() {
 
     if (mode === 1) {
         updateFFALeaderboard(bodies);
-        requestAnimationFrame(updateBattleUI);
+        requestAnimationFrame(() => updateBattleUI(forBattle));
         return;
     }
 
     if (mode === 2) {
         updateRaidUI(bodies);
-        requestAnimationFrame(updateBattleUI);
+        requestAnimationFrame(() => updateBattleUI(forBattle));
         return;
     }
 
@@ -260,7 +260,7 @@ function updateBattleUI() {
         if (oldInfo) oldInfo.remove();
         if (b.getInfoEl) el.querySelector(".stat").appendChild(b.getInfoEl());
     });
-    requestAnimationFrame(updateBattleUI);
+    requestAnimationFrame(() => updateBattleUI(forBattle));
 }
 
 function updateFFALeaderboard(bodies) {
