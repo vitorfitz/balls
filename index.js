@@ -2538,7 +2538,8 @@ class BallBattle {
             const nextById = next && new Map(next.map(nb => [nb.id, nb]));
 
             ctx.globalAlpha = opacity;
-            for (const body of cur) {
+            const sorted = [...cur].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+            for (const body of sorted) {
                 if (body.hp <= 0) continue;
 
                 if (!body.isBall) {
@@ -5461,6 +5462,7 @@ class CloverBall extends Ball {
                     id: b.id, x: b.x, y: b.y, radius: b.radius, hp: b.hp, color: b.color,
                     ownerId: b.owner ? b.owner.id : null,
                     flashed: !!flashed?.has(b.id),
+                    zIndex: b.getZIndex(),
                     weapons: b.weapons.map(w => ({ theta: w.theta, sprite: w.sprite, scale: w.scale, offset: w.offset, spriteShift: w.spriteShift, rotation: w.rotation }))
                 };
             }
@@ -5472,6 +5474,7 @@ class CloverBall extends Ball {
                 x: b.x, y: b.y,
                 color: rs.color ?? rs.ownerColor,
                 ownerId: b.owner ? b.owner.id : null,
+                zIndex: b.getZIndex(),
                 ...rs,
                 x: b.x, y: b.y,
             };
