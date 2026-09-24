@@ -2531,7 +2531,37 @@ class BallBattle {
         return snapshot;
     }
 
-    static drawState(ctx, snapshot, frac, flashTimes, currentTime) {
+    // A ghost body sitting exactly on top of its real counterpart doesn't
+    // convey any "what could have happened" information and just looks like
+    // a flicker, so it's skipped -- and the real body is reported (via
+    // coincidingIds) so the caller can render it at full opacity instead of
+    // blending with realOpacityForPath. Positions must be known before real
+    // bodies draw (so they can use full opacity), so this is split out from
+    // the actual drawing pass below.
+    static computeCoincidingIds(snapshot, frac, realPosById, coincidingIds) {
+        if (!realPosById) return;
+        const posEps = 0.05;
+        for (const { path, i0 } of snapshot) {
+            const cur = path[i0];
+            const next = frac > 0 ? path[i0 + 1] : null;
+            const nextById = next && new Map(next.map(nb => [nb.id, nb]));
+
+            for (const body of cur) {
+                if (body.hp <= 0) continue;
+                const realPos = realPosById.get(body.id);
+                if (!realPos) continue;
+
+                const nb = nextById?.get(body.id);
+                const lerp = nb && nb.hp > 0 ? frac : 0;
+                const x = lerp ? body.x + (nb.x - body.x) * lerp : body.x;
+                const y = lerp ? body.y + (nb.y - body.y) * lerp : body.y;
+
+                if (Math.hypot(x - realPos.x, y - realPos.y) <= posEps) coincidingIds.add(body.id);
+            }
+        }
+    }
+
+    static drawState(ctx, snapshot, frac, flashTimes, currentTime, coincidingIds) {
         for (const { pathIdx, path, i0, opacity } of snapshot) {
             const cur = path[i0];
             const next = frac > 0 ? path[i0 + 1] : null;
@@ -2541,6 +2571,7 @@ class BallBattle {
             const sorted = [...cur].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
             for (const body of sorted) {
                 if (body.hp <= 0) continue;
+                if (coincidingIds?.has(body.id)) continue;
 
                 if (!body.isBall) {
                     const nb = nextById?.get(body.id);
@@ -2555,15 +2586,16 @@ class BallBattle {
                     continue;
                 }
 
+                const nb = nextById?.get(body.id);
+                const lerp = nb && nb.hp > 0 ? frac : 0;
+                const x = lerp ? body.x + (nb.x - body.x) * lerp : body.x;
+                const y = lerp ? body.y + (nb.y - body.y) * lerp : body.y;
+
                 const flashKey = pathIdx + "-" + body.id;
                 if (body.flashed) {
                     flashTimes.set(flashKey, currentTime + flashDur);
                 }
 
-                const nb = nextById?.get(body.id);
-                const lerp = nb && nb.hp > 0 ? frac : 0;
-                const x = lerp ? body.x + (nb.x - body.x) * lerp : body.x;
-                const y = lerp ? body.y + (nb.y - body.y) * lerp : body.y;
                 const hp = lerp && body.hp != Infinity ? body.hp + (nb.hp - body.hp) * lerp : body.hp;
 
                 for (let wi = 0; wi < body.weapons.length; wi++) {
@@ -2731,8 +2763,24 @@ class BallBattle {
 
                 const bodyById = new Map();
                 const realBodyOpacity = (frame.cloverGhosts && frame.cloverGhosts.length) ? frame.cloverGhosts.realOpacity ?? 1 : 1;
-                this.ctx.globalAlpha = realBodyOpacity;
+
+                let realPosById = null;
+                if (frame.cloverGhosts && frame.cloverGhosts.length && realBodyOpacity < 1) {
+                    realPosById = new Map();
+                    for (const b of drawBodies) {
+                        if (b.id !== undefined) realPosById.set(b.id, { x: b.x, y: b.y });
+                    }
+                }
+
+                this._cloverCoincidingIds ??= new Set();
+                const coincidingIds = this._cloverCoincidingIds;
+                coincidingIds.clear();
+                if (frame.cloverGhosts && frame.cloverGhosts.length) {
+                    BallBattle.computeCoincidingIds(frame.cloverGhosts, frac, realPosById, coincidingIds);
+                }
+
                 for (const b of drawBodies) {
+                    this.ctx.globalAlpha = (coincidingIds.has(b.id)) ? 1 : realBodyOpacity;
                     b.drawState(this.ctx, b, { flashState: this.flashState });
                     if (b.id !== undefined) bodyById.set(b.id, b);
                 }
@@ -2740,9 +2788,8 @@ class BallBattle {
 
                 if (frame.cloverGhosts && frame.cloverGhosts.length) {
                     this._cloverGhostFlashTimes ??= new Map();
-                    BallBattle.drawState(this.ctx, frame.cloverGhosts, frac, this._cloverGhostFlashTimes, currentTime);
+                    BallBattle.drawState(this.ctx, frame.cloverGhosts, frac, this._cloverGhostFlashTimes, currentTime, coincidingIds);
                 }
-
                 if (drainedHitEvents) {
                     for (const ev of drainedHitEvents) {
                         const existing = ev.comboGroup == null ? null : this.dmgIndicators.find(
