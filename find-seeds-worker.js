@@ -132,7 +132,7 @@ onmessage = async (e) => {
 
     for (let i = 0; i < BALL_TYPES.length; i++) {
         for (let j = i + 1; j < BALL_TYPES.length; j++) {
-            // if (i == 0 || i == 12 || i != 14 && j != 14) continue;
+            // if (i != 10 || j != 12) continue;
             if (i == 6 && j == 8) continue;
 
             const key = `${BALL_TYPES[i].name}_${BALL_TYPES[j].name}`;
@@ -187,6 +187,7 @@ onmessage = async (e) => {
                 const isWrenchBeatsDupe = BALL_TYPES[winnerIdx].name === 'Wrench' && loserIsDupe;
                 const isHammerBeatsDupe = BALL_TYPES[winnerIdx].name === 'Hammer' && loserIsDupe;
                 const isHammerBeatsMirror = BALL_TYPES[winnerIdx].name === 'Hammer' && BALL_TYPES[loserIdx].name === 'Mirror';
+                const isSnakeBeatsClub = BALL_TYPES[winnerIdx].name === 'Snake' && BALL_TYPES[loserIdx].name === 'Club';
                 const hammerBeaters = ['Sword', 'Machine Gun', 'Wrench', 'Lance', 'Mirror', 'Grimoire', 'Club', 'Snake'];
                 const useHammerDmg = (loserIsHammer && hammerBeaters.includes(BALL_TYPES[winnerIdx].name)) || isHammerBeatsMirror || (BALL_TYPES[winnerIdx].name === 'Snake' && BALL_TYPES[loserIdx].name === 'Sword');
 
@@ -197,10 +198,11 @@ onmessage = async (e) => {
                     isDupBeatsWrench ? 50 :
                         isWrenchBeatsDupe ? 10 :
                             isGrimVsClub || isGrimVsVamp ? 25 :
-                                hasDupe && hasVamp && winnerIsDupe ? 10 :
-                                    (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
-                                        (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
-                                            10;
+                                isSnakeBeatsClub ? 16 :
+                                    hasDupe && hasVamp && winnerIsDupe ? 10 :
+                                        (isDupBeatsSword || isDupBeatsMG || isHammerBeatsDupe || isDupBeatsClub) ? 3 :
+                                            (loserIsDupe || (winnerIsDupe && (loserIsMirror || loserIsGrim))) ? 5 :
+                                                10;
                 // if (key === "Duplicator_Wrench") console.log(r.seed, "boxedInFraction:", r.boxedInFraction);
                 return (r.hp <= threshold || (winnerIsDupe && r.dupeNearDeath))
                     && !(r.dramaticTick !== null && r.ticks - r.dramaticTick <= 100)

@@ -87,9 +87,6 @@ class Weapon {
             spriteShift: this.spriteShift,
             rotation: this.rotation,
             theta: this.theta,
-            // Non-spinning weapons (e.g. Lance) snap theta to face travel direction
-            // each tick rather than rotating smoothly, so lerping between frames
-            // can produce a jarring flip. Only interpolate weapons with angVel.
             interpolate: !!this.angVel,
         };
     }
@@ -1804,7 +1801,7 @@ class BallBattle {
             }
         }
 
-        this._cloverGhostFrame = this.updateCloverGhosts();
+        this.updateCloverGhosts();
 
         if (this.mode == DUEL) {
             let ts = 1;
@@ -1834,7 +1831,8 @@ class BallBattle {
             }
         }
         else {
-            this.timeScale = this.baseTimeScale;
+            if (this.baseTimeScale <= 1) this.timeScale = Math.min(this.baseTimeScale, this._ghostSlowFactor ?? 1);
+            else this.timeScale = this.baseTimeScale * (this._ghostSlowFactor ?? 1);
         }
         // console.log(this.timeScale);
     }
@@ -2514,8 +2512,42 @@ class BallBattle {
             }
         }
 
-        const drama = Math.sqrt(1 - Math.exp(-spread / (this.mode == DUEL ? 100 : 500))) * Math.min(1, opacityForPath(0) * 5);
+        const drama = Math.sqrt(1 - Math.exp(-spread / (this.mode == DUEL ? 100 : 100))) * Math.min(1, opacityForPath(0) * 5);
         this._ghostSlowFactor = 1 - 0.5 * drama;
+
+        return true;
+    }
+
+    computeCloverGhostFrame() {
+        const ghosts = this.cloverGhosts;
+        if (!ghosts) return null;
+
+        const i0 = Math.max(0, this.t - ghosts.startTick);
+        if (i0 >= Math.max(...ghosts.paths.map(p => p.length), 1) - 1) return null;
+
+        const fadeOutDur = 30, fadeOutDelay = 20;
+        const fadeStartTickFor = (pathIdx) => {
+            const cache = ghosts._fadeStartTick ??= [];
+            if (cache[pathIdx] !== undefined) return cache[pathIdx];
+            const rewards = ghosts.rewards?.[pathIdx];
+            let start = Infinity;
+            if (rewards) {
+                start = rewards.length - fadeOutDur;
+                for (let i = start - fadeOutDelay; ; i--) {
+                    if (i <= 50 || (rewards[i] < EPS && rewards[i - 1] >= -EPS)) { start = i + fadeOutDelay; break; }
+                }
+            }
+            return cache[pathIdx] = start;
+        };
+        const baseOpacity = 1;
+        const opacityForPath = (pathIdx) => {
+            const rewards = ghosts.rewards?.[pathIdx];
+            if (!rewards) return baseOpacity;
+            const fadeStart = fadeStartTickFor(pathIdx);
+            const ticksSinceFade = i0 - fadeStart;
+            return ticksSinceFade <= 0 ? baseOpacity : ticksSinceFade >= fadeOutDur ? 0 : baseOpacity * (1 - ticksSinceFade / fadeOutDur);
+        };
+        const realOpacityForPath = (pathIdx) => 1 - 0.5 * opacityForPath(pathIdx);
 
         const snapshot = [];
         let realOpacity = 0;
@@ -2531,16 +2563,9 @@ class BallBattle {
         return snapshot;
     }
 
-    // A ghost body sitting exactly on top of its real counterpart doesn't
-    // convey any "what could have happened" information and just looks like
-    // a flicker, so it's skipped -- and the real body is reported (via
-    // coincidingIds) so the caller can render it at full opacity instead of
-    // blending with realOpacityForPath. Positions must be known before real
-    // bodies draw (so they can use full opacity), so this is split out from
-    // the actual drawing pass below.
     static computeCoincidingIds(snapshot, frac, realPosById, coincidingIds) {
         if (!realPosById) return;
-        const posEps = 0.05;
+        const posEps = 1;
         for (const { path, i0 } of snapshot) {
             const cur = path[i0];
             const next = frac > 0 ? path[i0 + 1] : null;
@@ -2571,6 +2596,14 @@ class BallBattle {
             const sorted = [...cur].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
             for (const body of sorted) {
                 if (body.hp <= 0) continue;
+
+                if (body.isBall) {
+                    const flashKey = pathIdx + "-" + body.id;
+                    if (body.flashed) {
+                        flashTimes.set(flashKey, currentTime + flashDur);
+                    }
+                }
+
                 if (coincidingIds?.has(body.id)) continue;
 
                 if (!body.isBall) {
@@ -2592,10 +2625,6 @@ class BallBattle {
                 const y = lerp ? body.y + (nb.y - body.y) * lerp : body.y;
 
                 const flashKey = pathIdx + "-" + body.id;
-                if (body.flashed) {
-                    flashTimes.set(flashKey, currentTime + flashDur);
-                }
-
                 const hp = lerp && body.hp != Infinity ? body.hp + (nb.hp - body.hp) * lerp : body.hp;
 
                 for (let wi = 0; wi < body.weapons.length; wi++) {
@@ -2667,11 +2696,6 @@ class BallBattle {
             let drainedHitEvents = null, drainedFlashEvents = null, drainedDeathEvents = null;
             while (this.frameAccum >= dt && this.frameQueue.length > 0) {
                 drainedFrame = this.frameQueue.shift();
-                // console.log(this.frameQueue.length);
-                // A single rAF callback can need to drain multiple queued frames (e.g.
-                // after jank or a timeScale spike). Accumulate every drained frame's
-                // events here rather than keeping only the last one, so flashes/deaths/
-                // hits from intermediate frames aren't silently dropped.
                 if (drainedFrame.hitEvents?.length) (drainedHitEvents ??= []).push(...drainedFrame.hitEvents);
                 if (drainedFrame.flashEvents?.length) (drainedFlashEvents ??= []).push(...drainedFrame.flashEvents);
                 if (drainedFrame.deathEvents?.length) (drainedDeathEvents ??= []).push(...drainedFrame.deathEvents);
@@ -2972,7 +2996,7 @@ class BallBattle {
     }
 
     async update() {
-        if (this.headless) this.t++; // if not headless, already updated in physicsLoop
+        this.t++;
 
         this.colliderCount = this.bodies.filter((x) => !(x instanceof Bullet)).length;
         this.updateArenaShrink();
@@ -3213,7 +3237,7 @@ class BallBattle {
         return false;
     }
 
-    async physicsLoop(dt, maxQueueLen = 300) {
+    async physicsLoop(dt, maxQueueLen = 500) {
         while (!this.stopped) {
             if (!this.headless && this.frameQueue.length >= maxQueueLen) {
                 await cheatYield(this);
@@ -3233,7 +3257,6 @@ class BallBattle {
             spriteReqs = {};
 
             this.yieldCooldown++;
-            this.t++; // have to update t here so that it's correct for updateTimeScale
 
             // Store previous positions before update
             for (const b of this.bodies) {
@@ -3250,6 +3273,7 @@ class BallBattle {
             this.updateTimeScale();
             await this.update();
 
+            this._cloverGhostFrame = this.computeCloverGhostFrame();
             this.renderAlpha = 1;
             this.render();
 
@@ -3263,8 +3287,7 @@ class BallBattle {
 
 
     async run(dt) {
-        // while (this.t < 4000) {
-        //     this.t++;
+        // while (this.t < 7000) {
         //     this.updateTimeScale();
         //     await this.update();
         // }
@@ -5544,7 +5567,7 @@ class CloverBall extends Ball {
 
         const rewardAt = () => {
             let r = 0;
-            if (this.battle.mode == FFA) r += this.foresight / 10 * 4;
+            if (this.battle.mode == FFA) r += fSelf.foresight / 10 * 4;
             for (let b of fork.balls) {
                 if (!(b instanceof SnakeSegment)) {
                     let weight = b.hp * (b.owner ? 0.1 : 1);
@@ -5625,7 +5648,7 @@ class CloverBall extends Ball {
 
         this.cheatCooldown = Math.min(ghostDurCap, pathsByDelta.get(bestDelta).path.length);
 
-        if (bestDelta !== 0 && !this.battle.headless) {
+        if (bestDelta !== 0 && (!this.battle.headless || this.battle.mode != DUEL)) {
             const chosen = pathsByDelta.get(bestDelta);
             const noCheat = pathsByDelta.get(0);
             const displayLen = Math.min(noCheat.path.length, chosen.path.length, ghostDurCap);

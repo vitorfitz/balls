@@ -62,6 +62,7 @@ function combinations(n, k) {
     return result;
 }
 const EXCLUSION_SETS = combinations(BALL_TYPES.length, EXCLUDE_COUNT);
+global.shuffle(EXCLUSION_SETS, seedrandom(727));
 
 async function simulate(matchIndex, baseSeed) {
     const seed = baseSeed + matchIndex;
@@ -69,8 +70,7 @@ async function simulate(matchIndex, baseSeed) {
 
     // Sequential seeds + mod-N exclusion set guarantee an exactly even
     // spread of exclusions across any contiguous run of EXCLUSION_SETS.length
-    // matches (unlike drawing the exclusion from the battle's own seeded
-    // rng, which only converges to even over many trials).
+    // matches
     const excludeIdx = EXCLUSION_SETS[matchIndex % EXCLUSION_SETS.length];
 
     const result = createFFABattle(global.ballClasses, seed, createFFABall, global.BallBattle, excludeIdx);
@@ -180,7 +180,7 @@ if (!isMainThread) {
 } else {
     console.log(EXCLUSION_SETS.length, "exclusion sets");
     const NUM_WORKERS = os.cpus().length;
-    // const NUM_WORKERS = 5;
+    // const NUM_WORKERS = 7;
 
     (async () => {
         const perWorker = Math.floor(MATCHES / NUM_WORKERS);
