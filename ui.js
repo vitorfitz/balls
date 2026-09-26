@@ -1,6 +1,6 @@
 "use strict"
 
-const seedOverride = null; // 157
+const seedOverride = null;
 const dramaticCheck = document.getElementById("dramatic-check");
 
 const menuDiv = document.getElementById("menu");

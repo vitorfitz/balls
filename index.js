@@ -2566,6 +2566,7 @@ class BallBattle {
     static computeCoincidingIds(snapshot, frac, realPosById, coincidingIds) {
         if (!realPosById) return;
         const posEps = 1;
+        const thetaEps = 0.05;
         for (const { path, i0 } of snapshot) {
             const cur = path[i0];
             const next = frac > 0 ? path[i0 + 1] : null;
@@ -2580,8 +2581,19 @@ class BallBattle {
                 const lerp = nb && nb.hp > 0 ? frac : 0;
                 const x = lerp ? body.x + (nb.x - body.x) * lerp : body.x;
                 const y = lerp ? body.y + (nb.y - body.y) * lerp : body.y;
+                if (Math.hypot(x - realPos.x, y - realPos.y) > posEps) continue;
 
-                if (Math.hypot(x - realPos.x, y - realPos.y) <= posEps) coincidingIds.add(body.id);
+                const w = body.weapons?.[0];
+                if (w && realPos.theta !== undefined) {
+                    const nw = nb?.weapons?.[0];
+                    const theta = (nw && lerp) ? w.theta + (nw.theta - w.theta) * lerp : w.theta;
+                    let diff = (theta - realPos.theta) % (2 * Math.PI);
+                    if (diff > Math.PI) diff -= 2 * Math.PI;
+                    else if (diff < -Math.PI) diff += 2 * Math.PI;
+                    if (Math.abs(diff) > thetaEps) continue;
+                }
+
+                coincidingIds.add(body.id);
             }
         }
     }
@@ -2792,7 +2804,7 @@ class BallBattle {
                 if (frame.cloverGhosts && frame.cloverGhosts.length && realBodyOpacity < 1) {
                     realPosById = new Map();
                     for (const b of drawBodies) {
-                        if (b.id !== undefined) realPosById.set(b.id, { x: b.x, y: b.y });
+                        if (b.id !== undefined) realPosById.set(b.id, { x: b.x, y: b.y, theta: b.weapons?.[0]?.theta });
                     }
                 }
 
@@ -3003,7 +3015,7 @@ class BallBattle {
 
         for (const b of this.bodies) {
             b.slowAtFrameStart = b.slowTime > 0 ? b.slowFactor : 1;
-            const asdf = 1 + 0.05 * (1 / this.timeScale);
+            const asdf = 1 + 0.05 * (1 / this.baseTimeScale);
             // if (b == this.bodies[0]) console.log(mult, asdf, this.timeScale, this.baseTimeScale);
             b.slowFactor = Math.min(1, b.slowFactor * asdf);
             b.hpAtFrameStart = b.hp;
@@ -3287,7 +3299,7 @@ class BallBattle {
 
 
     async run(dt) {
-        // while (this.t < 7000) {
+        // while (this.t < 8000) {
         //     this.updateTimeScale();
         //     await this.update();
         // }
@@ -4533,7 +4545,7 @@ class GrimoireBall extends Ball {
             minion.lifesteal = target.lifesteal;
         }
         else if (target instanceof CloverBall) {
-            minion.foresight = target.foresight / (this.battle.mode == DUEL ? 10 : 1);
+            minion.foresight = target.foresight / 10;
         }
 
         minion.battle = target.battle;
@@ -5509,7 +5521,7 @@ class CloverBall extends Ball {
         if (bounced == null) return;
         if (this._bounceCount) this._bounceCount; this._bounceCount++;
 
-        if (!(bounced instanceof Turret)) {
+        if (!(bounced instanceof Turret || bounced instanceof Bullet)) {
             this.battle._pendingCloverCheats ??= [];
             this.battle._pendingCloverCheats.push({ clover: this, bounced });
         }
@@ -5624,7 +5636,7 @@ class CloverBall extends Ball {
 
         const lastReward = rewards[rewards.length - 1];
         const winBonus = win ? 100 : 0;
-        const deathPenalty = fSelf.hp <= 0 ? 999999 : 0;
+        const deathPenalty = fSelf.hp <= 0 ? 676767 : 0;
 
         return { score: lastReward + winBonus - deathPenalty, path, rewards, timeScales };
     }
