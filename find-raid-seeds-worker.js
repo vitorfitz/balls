@@ -1,14 +1,16 @@
 importScripts('seedrandom.js', 'index.js', 'ffa-config.js', 'raid-config.js');
 
 const MAX_TICKS = 30000;
-const BOSS_TYPES = ballClasses.filter(b => b.name !== "Duplicator");
+const BOSS_TYPES = ballClasses;
+const DUPLICATOR_BOSS_HP_SUM_THRESHOLD = 500;
 
 async function simulate(bossIndex, seed) {
     const { size } = RAID_CONFIG;
 
     const result = createRaidBattle(ballClasses, seed, bossIndex, createFFABall, BallBattle);
     const battle = result.battle;
-    const bossId = result.boss.id;
+    const bossTeam = result.boss.team;
+    const isDuplicatorBoss = result.boss instanceof DuplicatorBall;
     const raidTeam = RAID_CONFIG.raidTeam;
 
     battle.width = battle.height = size;
@@ -16,10 +18,6 @@ async function simulate(bossIndex, seed) {
     battle.ctx = new Proxy({}, { get: () => () => { } });
     battle.canvas = { width: size, height: size, style: {} };
 
-    // Lowest values seen over the whole match (not just at the moment it
-    // ends), so e.g. a boss that dropped low and regenerated, or raiders who
-    // dropped low and got healed/regrew, still count as having been near
-    // defeat/wipeout.
     let minBossHpFrac = Infinity;
     let minRaidersHp = Infinity;
 
@@ -27,29 +25,27 @@ async function simulate(bossIndex, seed) {
         battle.updateTimeScale();
         await battle.update();
 
-        const boss = battle.balls.find(b => b.id === bossId);
+        const bossBodies = battle.balls.filter(b => b.team === bossTeam && !b.owner);
         const raiders = battle.balls.filter(b => b.team === raidTeam && !b.owner);
-        let raidersHp = raiders.reduce((sum, b) => sum + b.hp, 0);
-        if (bossIndex == 11) {
-            if (raiders.length == 1 && raiders[0] instanceof WrenchBall) raidersHp *= 5;
+        const raidersHp = raiders.reduce((sum, b) => sum + b.hp, 0);
+
+        const bossAlive = bossBodies.length > 0;
+        const raidersAlive = raiders.length > 0;
+
+        if (bossAlive && !isDuplicatorBoss) {
+            const boss = bossBodies[0];
+            minBossHpFrac = Math.min(minBossHpFrac, boss.hp / boss.maxHp);
         }
-        else {
-            if (raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 7 || bossIndex == 10 || bossIndex == 12 || bossIndex == 13) && raiders[0] instanceof DaggerBall))) raidersHp *= 5;
-        }
-
-        const bossHp = boss ? boss.hp : 0;
-
-        const bossAlive = !!boss;
-        const raidersAlive = battle.balls.some(b => b.team === raidTeam && !b.owner);
-
-        if (bossAlive) minBossHpFrac = Math.min(minBossHpFrac, bossHp / boss.maxHp);
         if (raidersAlive) minRaidersHp = Math.min(minRaidersHp, raidersHp);
 
         if (!bossAlive || !raidersAlive) {
             const winner = bossAlive ? 'boss' : 'raiders';
-            const winnerHp = bossAlive
-                ? Math.min(bossHp / boss.maxHp, minBossHpFrac)
+            let winnerHp = bossAlive
+                ? (isDuplicatorBoss ? bossBodies.reduce((sum, b) => sum + b.hp, 0) : Math.min(bossBodies[0].hp / bossBodies[0].maxHp, minBossHpFrac))
                 : Math.min(raidersHp, minRaidersHp);
+            if (!bossAlive && raiders.length == 1 && (raiders[0] instanceof MirrorBall || ((bossIndex == 8 || bossIndex == 11 || bossIndex == 13 || bossIndex == 14) && raiders[0] instanceof DaggerBall) || (bossIndex == 0 && raiders[0] instanceof HammerBall) || (bossIndex == 12 && raiders[0] instanceof WrenchBall))) {
+                winnerHp *= 5;
+            }
             return {
                 winner,
                 winnerHp,
@@ -75,19 +71,20 @@ onmessage = async (e) => {
     let progress = '';
 
     for (let bi = 0; bi < BOSS_TYPES.length; bi++) {
-        // if (bi != 10) continue;
+        // if (bi != 0) continue;
 
         const bossName = BOSS_TYPES[bi].name;
         const bossIndex = ballClasses.indexOf(BOSS_TYPES[bi]);
+        const isDuplicatorBoss = bossName === "Duplicator";
         const results = [];
 
-        for (let seed = 0; seed < (bi == 12 ? matches * 2 : matches); seed++) {
+        for (let seed = 0; seed < (bi == 13 ? matches * 2 : matches); seed++) {
             const r = await simulate(bossIndex, seed);
             if (r.winner !== 'draw') results.push({ seed, ...r });
         }
 
         const bossWinSeeds = results
-            .filter(r => r.winner === 'boss' && r.winnerHp <= bossHpThreshold)
+            .filter(r => r.winner === 'boss' && (isDuplicatorBoss ? r.winnerHp <= DUPLICATOR_BOSS_HP_SUM_THRESHOLD : r.winnerHp <= bossHpThreshold))
             .map(r => r.seed);
 
         const raiderWinSeeds = results

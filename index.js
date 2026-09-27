@@ -386,7 +386,9 @@ class Ball extends CircleBody {
         if (source) {
             const credit = Math.max(0, Math.min(dmg, hpBefore));
             if (!this.owner) {
-                source.getRootOwner().damageDealt += credit;
+                const root = source.getRootOwner();
+                root.damageDealt += credit;
+                this.battle.damageDealtByTeam[root.team] = (this.battle.damageDealtByTeam[root.team] ?? 0) + credit;
                 if (this.hp <= 0) this.killer = source;
             }
         }
@@ -1678,6 +1680,7 @@ class BallBattle {
         this._hitEvents = [];
         this._flashEvents = [];
         this._deathEvents = [];
+        this.damageDealtByTeam = {};
         this.gravity = gravity;
         this.mode = mode;
         this.headless = headless;
@@ -1762,7 +1765,7 @@ class BallBattle {
                 let count = 0;
                 for (let i = 0; i < this.balls.length; i++) {
                     if (!this.balls[i].isStunned() && !(this.balls[i] instanceof SnakeSegment)) {
-                        count += (this.balls[i] instanceof DuplicatorBall ? 0.1 : 1) * (this.balls[i].owner && !this.balls[i].owner.giga ? 0.5 : 1);
+                        count += (this.balls[i] instanceof DuplicatorBall ? 0.04 : 1) * (this.balls[i].owner && !this.balls[i].owner.giga ? 0.5 : 1);
                     }
                 }
                 if (this.mode == FFA) this.targetTimeScale = 0.92 ** Math.max(0, count - 2);
@@ -2691,6 +2694,7 @@ class BallBattle {
             hitEvents: this._hitEvents,
             flashEvents: this._flashEvents,
             deathEvents: this._deathEvents,
+            damageDealtByTeam: { ...this.damageDealtByTeam },
         });
         this._hitEvents = [];
         this._flashEvents = [];
@@ -3015,7 +3019,7 @@ class BallBattle {
 
         for (const b of this.bodies) {
             b.slowAtFrameStart = b.slowTime > 0 ? b.slowFactor : 1;
-            const asdf = 1 + 0.05 * (1 / this.baseTimeScale);
+            const asdf = 1 + 0.05 * (1 / (this.mode == DUEL ? this.timeScale : this.baseTimeScale));
             // if (b == this.bodies[0]) console.log(mult, asdf, this.timeScale, this.baseTimeScale);
             b.slowFactor = Math.min(1, b.slowFactor * asdf);
             b.hpAtFrameStart = b.hp;
@@ -3206,7 +3210,7 @@ class BallBattle {
 
         this.teamCount = {};
         this.balls.forEach((b) => {
-            if (b instanceof SnakeSegment) return; // don't count toward population caps (dupeLimit, Grimoire's 40-cap)
+            if (b instanceof SnakeSegment) return; // don't count toward population caps
             this.teamCount[b.team] = (this.teamCount[b.team] ?? 0) + 1
         });
 
@@ -3463,7 +3467,7 @@ function recordFeed(from, to) {
 }
 
 // Duplicator: Reproduces on hit
-const dmgCooldown = 10, dupeCooldown = 10, dupeLimit = 25;
+const dmgCooldown = 10, dupeCooldown = 10;
 class DuplicatorBall extends Ball {
     constructor(x, y, vx, vy, hp = 100, radius = 20, color = "#f86ffa", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -3484,7 +3488,7 @@ class DuplicatorBall extends Ball {
         if (reflector && reflector.dmgCooldown == null) reflector.extraUpdates.push(this.handleUpdate.bind(reflector));
         owner.dmgCooldown = dmgCooldown;
 
-        if ((this.battle.teamCount[owner.team] ?? 0) >= dupeLimit || owner.hpAtFrameStart <= 1 || owner.dupeCooldown > EPS) return;
+        if ((this.battle.teamCount[owner.team] ?? 0) >= this.getDupeLimit() || owner.hpAtFrameStart <= 1 || owner.dupeCooldown > EPS) return;
 
         // if (!(b instanceof DuplicatorBall)) this.battle.dupeCooldown[this.team] = 1;
         owner.dupeCooldown = dupeCooldown;
@@ -3510,6 +3514,8 @@ class DuplicatorBall extends Ball {
         child.team = owner.team;
         child.color = owner.color;
         child.radius = this.radius;
+        child.boostEnergy = this.boostEnergy;
+        child.mass = this.mass;
         child.owner = owner.owner;
         this.battle.addBall(child);
         if (!this.battle.headless) this.battle._flashEvents?.push(child.id);
@@ -3528,9 +3534,13 @@ class DuplicatorBall extends Ball {
         }
     }
 
+    getDupeLimit() {
+        return this.battle.mode == DUEL ? 25 : 727;
+    }
+
     getInfoEl(stats) {
         return this.propsToList({
-            "Population": { text: stats.population + "/" + dupeLimit, grad: { from: 1, to: 25 } },
+            "Population": { text: stats.population + (this.battle.mode != DUEL ? "" : "/" + this.getDupeLimit()), grad: { from: 1, to: this.battle.mode == DUEL ? this.getDupeLimit() : 100 } },
         });
     }
 }
@@ -4383,7 +4393,7 @@ class GrimoireBall extends Ball {
             recordFeed(reflector ?? target, this);
 
             if (target instanceof SnakeSegment && this.battle.mode == FFA) return;
-            if (target instanceof DuplicatorBall && (this.battle.teamCount[this.team] ?? 0) >= dupeLimit) return;
+            if (target instanceof DuplicatorBall && (this.battle.teamCount[this.team] ?? 0) >= target.getDupeLimit()) return;
             if (this.summonCooldown > EPS) return;
 
             const minion = this.createMinion(target, reflector);
@@ -4973,7 +4983,7 @@ class HammerBall extends Ball {
             this.weapons[0].iframes = 40;
 
             if (!this.isStunned()) {
-                this.antiSwarmBoost += (this.battle.mode == DUEL ? 1 : this.giga ? 0 : 0) + (this.antiSwarmBoost / (4 + 0.1 * this.antiSwarmBoost));
+                this.antiSwarmBoost += (this.battle.mode == DUEL || this.battle.balls[0] instanceof DuplicatorBall ? 1 : 0) + (this.antiSwarmBoost / (4 + (this.battle.mode == DUEL ? 0.1 : 0.15) * this.antiSwarmBoost));
             }
         });
 
@@ -4983,9 +4993,9 @@ class HammerBall extends Ball {
     handleUpdate(dt) {
         const ceiling = 20 * Math.sqrt(this.spinRate);
         const m = (ceiling - this.power);
-        if (m < 0) console.warn(t, "asdasdas");
+        if (m < 0) console.warn(this.battle.t, "asdasdas");
 
-        this.power += hammerAccel * m * dt * (this.giga ? 2.64 : this.battle.mode == RAID ? 0.8 : this.battle.mode == FFA ? 0.88 : 1);
+        this.power += hammerAccel * m * dt * (this.giga ? 2.64 : this.battle.mode == RAID ? 0.8 : this.battle.mode == FFA ? 0.88 : 0.96);
 
         this.antiSwarmBoost = Math.max(0, this.antiSwarmBoost - 0.0037 * dt);
         const oldAntiSwarm = this.antiSwarmBoost;

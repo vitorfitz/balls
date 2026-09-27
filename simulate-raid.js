@@ -40,7 +40,7 @@ eval(code);
 const { RAID_CONFIG, createRaidBattle } = require('./raid-config.js');
 const { createFFABall } = require('./ffa-config.js');
 
-const ALL_BALL_TYPES = global.ballClasses.filter(b => b.name != "Duplicator");
+const ALL_BALL_TYPES = global.ballClasses;
 const MAX_TICKS = 30000;
 
 const cliArgs = process.argv.slice(2);
@@ -81,7 +81,7 @@ async function simulate(bossIndex) {
 
     const result = createRaidBattle(global.ballClasses, seed, bossIndex, createFFABall, global.BallBattle);
     const battle = result.battle;
-    const bossId = result.boss.id;
+    const bossTeam = result.boss.team;
     const raiderIndices = result.raiderIndices;
 
     battle.width = battle.height = size;
@@ -96,8 +96,8 @@ async function simulate(bossIndex) {
         battle.updateTimeScale();
         await battle.update();
 
-        const bossAlive = battle.balls.some(b => b.id === bossId);
-        const raidersAlive = battle.balls.some(b => !b.owner && b.id !== bossId);
+        const bossAlive = battle.balls.some(b => b.team === bossTeam && !b.owner);
+        const raidersAlive = battle.balls.some(b => !b.owner && b.team !== bossTeam);
 
         for (const b of battle.bodies) {
             if (isNaN(b.x) || isNaN(b.y)) throw new Error(`NaN position on ${b.constructor.name}#${b.id} at t=${battle.t} seed=${seed}`);
