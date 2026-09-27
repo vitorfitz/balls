@@ -128,20 +128,12 @@ for (let i = 0; i < modeBtns.length; i++) {
         }
 
         const duplicatorIdx = ballClasses.findIndex(b => b.name === "Duplicator");
-        if (i == 1 || i == 2) {
+        if (i == 1) {
             ballBtns[duplicatorIdx].dataset.disabled = "";
         }
         else {
             delete ballBtns[duplicatorIdx].dataset.disabled;
         }
-
-        // const snakeIdx = ballClasses.findIndex(b => b.name === "Snake");
-        // if (i == 2) {
-        //     ballBtns[snakeIdx].dataset.disabled = "";
-        // }
-        // else {
-        //     delete ballBtns[snakeIdx].dataset.disabled;
-        // }
     });
 }
 
@@ -214,7 +206,7 @@ function updateBattleUI(forBattle = battle) {
     }
 
     if (mode === 2) {
-        updateRaidUI(bodies);
+        updateRaidUI(bodies, frame.damageDealtByTeam);
         requestAnimationFrame(() => updateBattleUI(forBattle));
         return;
     }
@@ -325,11 +317,13 @@ function updateFFALeaderboard(bodies) {
     });
 }
 
-function updateRaidUI(bodies) {
+function updateRaidUI(bodies, damageDealtByTeam) {
     const lb = document.getElementById("leaderboard");
 
-    // Boss health bar (identified by fixed id, since raiders may share its color/team elsewhere)
-    const boss = bodies.find(body => body.id === raidBoss.id);
+    const bossBodies = bodies.filter(body => body.team === raidBoss.team && !body.hasOwner);
+    const boss = bossBodies.find(body => body.id === raidBoss.id) ?? bossBodies[0];
+    const bossHpSum = bossBodies.reduce((max, b) => Math.max(max, Math.ceil(b.hp)), 0);
+    const bossDmgSum = damageDealtByTeam[raidBoss.team] ?? 0;
     const bossData = ballClasses[combatants[0]];
     let hpCanvas = raidBossInfo.querySelector(".hp-canvas"), hpText = raidBossInfo.querySelector(".hp-text");
     if (!hpCanvas) {
@@ -354,17 +348,16 @@ function updateRaidUI(bodies) {
         statLine.className = "stat-line";
         const dmgSpan = document.createElement("span");
         dmgSpan.className = "dmg";
-        dmgSpan.innerHTML = `<span style="margin-right:4px">🗡️</span>${Math.round(boss?.damageDealt ?? 0)}`;
+        dmgSpan.innerHTML = `<span style="margin-right:4px">🗡️</span>${Math.round(bossDmgSum)}`;
         if (boss?.getInfoEl) statLine.appendChild(boss.getInfoEl());
         statLine.appendChild(dmgSpan);
         raidBossInfo.querySelector(".stat").appendChild(statLine);
     }
 
     const bossKey = "raid-boss";
-    const bossHp = boss ? Math.ceil(boss.hp) : 0;
-    if (!(bossKey in displayedHP)) displayedHP[bossKey] = bossHp;
-    displayedHP[bossKey] += (bossHp - displayedHP[bossKey]) * 0.05;
-    hpText.textContent = bossHp;
+    if (!(bossKey in displayedHP)) displayedHP[bossKey] = bossHpSum;
+    displayedHP[bossKey] += (bossHpSum - displayedHP[bossKey]) * 0.05;
+    hpText.textContent = bossHpSum;
     hpText.style.color = displayedHP[bossKey] / raidBoss.maxHp < 0.25 ? "#fff" : "#333";
     drawHealthBar(hpCanvas, displayedHP[bossKey], raidBoss.maxHp, bossData.color, false);
 
@@ -374,7 +367,7 @@ function updateRaidUI(bodies) {
         const oldInfo = statLine.querySelector(":not(.dmg)");
         if (oldInfo) oldInfo.remove();
         if (boss?.getInfoEl) statLine.insertBefore(boss.getInfoEl(), statLine.firstChild);
-        statLine.querySelector(".dmg").lastChild.textContent = Math.round(boss?.damageDealt ?? 0);
+        statLine.querySelector(".dmg").lastChild.textContent = Math.round(bossDmgSum);
     }
 
     // Raider leaderboard, keyed by stable ball id (raiders share one team so they can't be told apart by team/color)
