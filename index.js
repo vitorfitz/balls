@@ -2284,6 +2284,8 @@ class BallBattle {
             const bounceThresh = weapon.ball instanceof MagnetBall ? (weapon.ball.giga ? 1.5 : 1) : 1;
             precomputedBounce = bounceOffWeaponFace(weapon, weapon.ball, target, bounceThresh);
             const cache = weapon._bounceCache ??= {};
+            (cache[target.id] ??= []).push({ ...precomputedBounce, t: this.t });
+
             const maxAge = 10;
             for (const id in cache) {
                 const q = cache[id];
