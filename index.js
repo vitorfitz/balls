@@ -2277,8 +2277,25 @@ class BallBattle {
         }
         weapon.setIFrames(target, key);
         // if (target instanceof SnakeSegment) console.log(predictedWeaponDist(weapon, target.owner), predictedWeaponDist(weapon, target.owner, true));
-        if ((target instanceof VampireBall && !target.isStunned() && !(weapon.ball instanceof MirrorBall && weapon.ball.giga)) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
-            target.deferredHits.push({ weaponBall: weapon.ball, weaponIdx: weapon.ball.dmgWeapons.indexOf(weapon), source: weapon.ball, t: 0 });
+        const isVampireTarget = target instanceof VampireBall && !target.isStunned() && !(weapon.ball instanceof MirrorBall && weapon.ball.giga);
+
+        let precomputedBounce = null;
+        if (isVampireTarget && (weapon.ball instanceof MirrorBall || weapon.ball instanceof MagnetBall)) {
+            const bounceThresh = weapon.ball instanceof MagnetBall ? (weapon.ball.giga ? 1.5 : 1) : 1;
+            precomputedBounce = bounceOffWeaponFace(weapon, weapon.ball, target, bounceThresh);
+            const cache = weapon._bounceCache ??= {};
+            const maxAge = 10;
+            for (const id in cache) {
+                const q = cache[id];
+                while (q.length && this.t - q[0].t > maxAge) q.shift();
+                if (q.length === 0) delete cache[id];
+            }
+        }
+
+        if (isVampireTarget && !(precomputedBounce && precomputedBounce.bounced) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+            if (!(isVampireTarget && target.dmgBlock > EPS)) {
+                target.deferredHits.push({ weaponBall: weapon.ball, weaponIdx: weapon.ball.dmgWeapons.indexOf(weapon), source: weapon.ball, t: 0 });
+            }
         }
         else {
             weapon.ballColFns.forEach(fn => fn(target));
@@ -3303,7 +3320,7 @@ class BallBattle {
 
 
     async run(dt) {
-        // while (this.t < 8000) {
+        // while (this.t < 2700) {
         //     this.updateTimeScale();
         //     await this.update();
         // }
@@ -3546,7 +3563,7 @@ class DuplicatorBall extends Ball {
 }
 
 // Dagger: Spins faster
-const baseSpin = Math.PI * 0.097;
+const baseSpin = Math.PI * 0.098;
 class DaggerBall extends Ball {
     constructor(x, y, vx, vy, theta, dir = 1, hp = 100, radius = 25, color = "#89d721", mass = radius * radius) {
         super(x, y, vx, vy, hp, radius, color, mass);
@@ -4872,13 +4889,17 @@ class MirrorBall extends Ball {
         mirror.DoT = true;
         mirror._inContact = {};
         mirror.ballColFns.push((b) => {
-            const { freshHit, bounced } = bounceOffWeaponFace(this.weapons[0], this, b);
+            const cached = mirror._bounceCache?.[b.id]?.shift();
+            if (mirror._bounceCache?.[b.id]?.length === 0) delete mirror._bounceCache[b.id];
+            // See MagnetBall's identical comment: always trust a cached verdict
+            // (computed at the actual contact tick) over recomputing now.
+            const { freshHit, bounced } = cached ?? bounceOffWeaponFace(this.weapons[0], this, b);
 
             if (b.dmgWeapons.length === 0 && b.team !== this.team) {
                 const nColl = Math.max(+freshHit, +bounced, this.collsThisFrame[b.id] ?? 0);
                 // if (nColl > 0) console.log(+freshOrBounced, this.collsThisFrame[b.id] ?? 0);
                 for (let i = 0; i < nColl; i++) {
-                    b.handleCollision(b, this);
+                    b.handleCollision(b, this, bounced);
                     applyPendingSlam(b);
                     if (b._pendingGrow) {
                         b._pendingGrow.grower.applyGrow(b);
@@ -5094,7 +5115,9 @@ class MagnetBall extends Ball {
         magnet._inContact = {};
 
         magnet.ballColFns.push((b, reflector) => {
-            const { freshHit, bounced } = bounceOffWeaponFace(magnet, this, b, this.giga ? 1.5 : 1);
+            const cached = magnet._bounceCache?.[b.id]?.shift();
+            if (magnet._bounceCache?.[b.id]?.length === 0) delete magnet._bounceCache[b.id];
+            const { freshHit, bounced } = cached ?? bounceOffWeaponFace(magnet, this, b, this.giga ? 1.5 : 1);
             // if (b instanceof GrowerBall) console.log(`[t=${this.battle.t}] MAGNET-WEAPON-HIT-GROWER: freshHit=${freshHit} bounced=${bounced} magnet.pos=(${this.x.toFixed(1)},${this.y.toFixed(1)}) magnet.vel=(${this.vx.toFixed(3)},${this.vy.toFixed(3)}) grower.r=${b.radius.toFixed(1)} dist=${Math.hypot(this.x - b.x, this.y - b.y).toFixed(2)}`);
             if (!freshHit && !bounced) return;
             // if (freshHit) magnet.changeDir();
@@ -5106,7 +5129,7 @@ class MagnetBall extends Ball {
             }
 
             const source = reflector || this;
-            b.damage(magnet.dmg, source, "weapon");
+            b.damage(magnet.dmg, source, "weapon", bounced);
             addToHitHistory([source, b], this.battle.mode != DUEL || this.owner ? 3 : !b.owner && !(b instanceof DuplicatorBall) ? 5 : 1);
         });
 
@@ -5366,26 +5389,55 @@ class VampireBall extends Ball {
         this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5000 : this.giga ? 7500 : 7500);
     }
 
-    damage(dmg, source, srcType) {
+    damage(dmg, source, srcType, bounced = false) {
         if (source instanceof GrowerBall) {
             this.deferredHits = this.deferredHits.filter((x) => !(x.source === source && x.vsGrower && x.t > 0));
         }
 
-        if (this.dmgBlock <= EPS && (this.healBlock > EPS || this.inDeferred || srcType == "bullet" || source instanceof MirrorBall)) {
+        const willApply = this.dmgBlock <= EPS && (this.healBlock > EPS || this.inDeferred || srcType == "bullet" || bounced);
+        if (willApply) {
             super.damage(dmg, source);
         }
         this.healBlock = this.freshHealBlock;
+        if (srcType == "weapon") this.healBlock -= this.getTimeScale();
     }
 
-    handleCollision(b, reflector) {
+    handleCollision(b, reflector, bounced = false) {
         const owner = reflector || this;
         if ((!reflector && b.team == this.team) || !(b instanceof Ball)) return;
 
-        if (!this.healCooldown[b.id] && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked))) {
+        // Two opposing Vampires colliding both get their own handleCollision
+        // call this same tick (see resolveCollision: b1.onCollision(b2) then
+        // b2.onCollision(b1)). If each independently ran applyLifesteal in
+        // that order, the first one's call would damage the second, which
+        // (as a side effect of VampireBall.damage()) sets the second one's
+        // healBlock fresh -- locking it out of healing on its own turn purely
+        // due to call order, not its actual pre-collision state. Resolve both
+        // sides' outcomes together, once, from pre-collision state: each
+        // Vampire heals by its own lifesteal if it isn't heal-blocked,
+        // otherwise it takes damage equal to the other's lifesteal instead.
+        // Either outcome refreshes healBlock. Gated by id so only one side
+        // (arbitrarily, the lower id) performs the combined resolution.
+        if (!reflector && b instanceof VampireBall) {
+            if (this.id < b.id) {
+                const meCanHeal = !this.healCooldown[b.id] && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked));
+                const themCanHeal = !b.healCooldown[this.id] && (b.healBlock <= EPS || (b.healBlock == b.freshHealBlock && !b.wasHealBlocked));
+                if (meCanHeal) this.applyLifesteal(b, undefined, bounced);
+                else this.damage(b.lifesteal, b, "weapon", bounced);
+                if (themCanHeal) b.applyLifesteal(this, undefined, bounced);
+                else b.damage(this.lifesteal, this, "weapon", bounced);
+            }
+            // else: the lower-id Vampire's handleCollision (called first or
+            // second, order doesn't matter) already resolved this pair.
+            return;
+        }
+
+        const canHeal = !this.healCooldown[b.id] && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked));
+        if (canHeal) {
             if (b instanceof GrowerBall) {
                 this.deferredHits.push({ source: b, reflector, t: 0, threshold: (this.battle.mode == FFA ? 4 : 6), vsGrower: true });
             } else {
-                this.applyLifesteal(b, reflector);
+                this.applyLifesteal(b, reflector, bounced);
             }
         }
 
@@ -5395,9 +5447,9 @@ class VampireBall extends Ball {
         // }
     }
 
-    applyLifesteal(b, reflector) {
+    applyLifesteal(b, reflector, bounced = false) {
         const owner = reflector || this;
-        b.damage(this.lifesteal, owner, "weapon");
+        b.damage(this.lifesteal, owner, "weapon", bounced);
 
         if (!(b instanceof SnakeSegment) && !(this.battle.mode == FFA && reflector)) {
             // Not the final hit of a simulated battle. Healing there would affect dramatic seed calculation
@@ -5416,8 +5468,8 @@ class VampireBall extends Ball {
         recordFeed(reflector ?? b, this);
         this.wasHealBlocked = true;
 
-        if (this.battle.mode == FFA) this.healBlock = this.freshHealBlock;
-        else this.healCooldown[b.id] = 4;
+        // if (this.battle.mode == FFA) this.healBlock = this.freshHealBlock;else
+        this.healCooldown[b.id] = 5;
     }
 
     handleUpdate(dt) {
@@ -5425,7 +5477,7 @@ class VampireBall extends Ball {
         let left = [];
         for (let d of this.deferredHits) {
             d.t += dt;
-            if (d.source instanceof MagnetBall || d.t >= (d.threshold ?? (this.battle.mode == DUEL ? 1 : this.giga && d.source instanceof DaggerBall ? 4 : 2))) {
+            if (d.t >= (d.threshold ?? (this.battle.mode == DUEL ? 2 : this.giga && d.source instanceof DaggerBall ? 4 : 2))) {
                 if (this.dmgBlock <= EPS) {
                     if (d.vsGrower) this.applyLifesteal(d.source, d.reflector);
                     else {

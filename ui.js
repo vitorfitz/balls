@@ -2,7 +2,6 @@
 
 const seedOverride = null;
 const dramaticCheck = document.getElementById("dramatic-check");
-
 const menuDiv = document.getElementById("menu");
 const fightBtn = document.getElementById("start");
 const ballPicker = document.getElementById("balls");
