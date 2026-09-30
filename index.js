@@ -2294,7 +2294,7 @@ class BallBattle {
             }
         }
 
-        if (isVampireTarget && !(precomputedBounce && precomputedBounce.bounced) || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+        if (isVampireTarget /*&& !(precomputedBounce && precomputedBounce.bounced)*/ || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
             if (!(isVampireTarget && target.dmgBlock > EPS)) {
                 target.deferredHits.push({ weaponBall: weapon.ball, weaponIdx: weapon.ball.dmgWeapons.indexOf(weapon), source: weapon.ball, t: 0 });
             }
@@ -5388,7 +5388,7 @@ class VampireBall extends Ball {
     }
 
     bleed(dt) {
-        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5000 : this.giga ? 7500 : 7500);
+        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5500 : this.giga ? 8250 : 8250);
     }
 
     damage(dmg, source, srcType, bounced = false) {
@@ -5479,7 +5479,8 @@ class VampireBall extends Ball {
         let left = [];
         for (let d of this.deferredHits) {
             d.t += dt;
-            if (d.t >= (d.threshold ?? (this.battle.mode == DUEL ? 2 : this.giga && d.source instanceof DaggerBall ? 4 : 2))) {
+            // console.log(d.source.weapons[0].angVel);
+            if (d.t >= (d.threshold ?? (this.giga ? 2 : 1) * (d.source.weapons[0].angVel > Math.PI / 5 ? 2 : 1))) {
                 if (this.dmgBlock <= EPS) {
                     if (d.vsGrower) this.applyLifesteal(d.source, d.reflector);
                     else {

@@ -25,6 +25,7 @@ const RAID_CONFIG = {
         "Vampire": 500,
         "Magnet": 300,
         "Clover": 500,
+        "Duplicator": 420,
     }
 };
 
@@ -44,7 +45,8 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
                         : bossName === "Vampire" ? ["Lance", "Grimoire", "Magnet"]
                             : bossName === "Magnet" ? ["Grower", "Grimoire", "Vampire"]
                                 : bossName === "Clover" ? ["Mirror", "Grimoire"]
-                                    : [];
+                                    : bossName === "Duplicator" ? ["Mirror", "Grimoire", "Wrench", "Vampire"]
+                                        : [];
     bannedNames.push("Duplicator");
     bannedNames.push("Snake");
     bannedNames.push("Clover");
@@ -67,7 +69,7 @@ function createRaidBattle(ballClasses, seed, bossIndex, createBallFn, BallBattle
         b.team = raidTeam; // shared team disables friendly fire between raiders
         return b;
     });
-    const boss = createBossBall(ballClasses, bossIndex, [size / 2, size / 2], bossSpeed, hp, bossScale * (bossName == "Duplicator" ? 0.5 : 1), rng);
+    const boss = createBossBall(ballClasses, bossIndex, [size / 2, size / 2], bossSpeed, hp, bossScale * (bossName == "Duplicator" ? 0.25 : 1), rng);
 
     const battle = new BallBattle([boss, ...raiders], seed, gravity, RAID);
     battle.isDuel = false;
@@ -89,7 +91,7 @@ function createBossBall(ballClasses, i, pos, speed, hp, scale, rng) {
 
     const b = new data.class(pos[0], pos[1], Math.cos(theta) * speed, Math.sin(theta) * speed, ...spinArgs, hp, radius, data.color);
     b.maxHp = hp;
-    b.giga = true;
+    b.giga = data.class != DuplicatorBall;
     b.boostEnergy = 1;
     b.mass = b.baseMass = 5000;
     // b.angVelNerf = data.class == ClubBall || data.class == WrenchBall ? 2.7 : 3;
