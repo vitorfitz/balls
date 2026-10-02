@@ -3839,7 +3839,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = (this.giga ? 1.33333 : this.battle.mode == DUEL ? 1 : this.battle.mode == RAID ? 2 : 1.66667) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (this.giga ? 1.33333 : this.battle.mode == DUEL ? 1 : this.battle.mode == RAID && !(this.battle.balls[0] instanceof DuplicatorBall) ? 2 : 1.66667) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -5011,7 +5011,7 @@ class HammerBall extends Ball {
             this.weapons[0].iframes = 40;
 
             if (!this.isStunned()) {
-                this.antiSwarmBoost += (this.battle.mode == DUEL || this.battle.balls[0] instanceof DuplicatorBall ? 1 : 0) + (this.antiSwarmBoost / (4 + (this.battle.mode == DUEL ? 0.1 : 0.15) * this.antiSwarmBoost));
+                this.antiSwarmBoost += (this.battle.mode == DUEL || this.battle.balls[0] instanceof DuplicatorBall ? 1 : 0) + (this.antiSwarmBoost / (4 + (this.battle.mode == DUEL ? 0.1 : 0.16667) * this.antiSwarmBoost));
             }
         });
 
