@@ -2294,9 +2294,14 @@ class BallBattle {
             }
         }
 
-        if (isVampireTarget /*&& !(precomputedBounce && precomputedBounce.bounced)*/ || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+        if (isVampireTarget || target instanceof SnakeSegment && (weapon.ball instanceof SwordBall || weapon.ball instanceof ClubBall || weapon.ball instanceof CloverBall) && (predictedWeaponDist(weapon, target.owner) <= target.owner.radius + 12.5 || predictedWeaponDist(weapon, target.owner, true) <= target.owner.radius + 12.5)) {
+            let threshold = isVampireTarget ? target.getHitDefer(weapon) : null;
+            // console.log(threshold);
             if (!(isVampireTarget && target.dmgBlock > EPS)) {
-                target.deferredHits.push({ weaponBall: weapon.ball, weaponIdx: weapon.ball.dmgWeapons.indexOf(weapon), source: weapon.ball, t: 0 });
+                if (threshold <= 0) weapon.ballColFns.forEach(fn => fn(target));
+                else {
+                    target.deferredHits.push({ weaponBall: weapon.ball, weaponIdx: weapon.ball.dmgWeapons.indexOf(weapon), source: weapon.ball, t: 0, threshold });
+                }
             }
         }
         else {
@@ -3710,7 +3715,7 @@ class LanceBall extends Ball {
             if (target.segments) {
                 lance.iFrames["snake" + target.id] = snakeIFrames;
             }
-            target.damage(this.damageThisTick, source);
+            target.damage(this.damageThisTick, source, "weapon");
 
             const speed2 = this.vx ** 2 + this.vy ** 2;
             let slowness = (10 / this.battle.baseTimeScale) * Math.sqrt(this.startSpeed) / speed2;
@@ -3834,7 +3839,7 @@ class MachineGunBall extends Ball {
             }
 
             this.ammoUse += 1 / this.bulletsPerRound;
-            let fd = (this.giga ? 1.33333 : this.battle.mode == DUEL ? 1 : 1.66667) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
+            let fd = (this.giga ? 1.33333 : this.battle.mode == DUEL ? 1 : this.battle.mode == RAID ? 2 : 1.66667) * 110 / (110 * 0.266667 + 0.733333 * this.bulletsPerRound);
             this.fireDelay += fd;
         }
 
@@ -4706,7 +4711,7 @@ class GrowerBall extends Ball {
         if (b.isStunned()) return;
 
         const speedBefore = Math.hypot(b.vx, b.vy);
-        let boost = ((speed + 1) * source.mass / ((source.giga ? 7.2 : (0.36 + 0.01 * (b.segments ? b.segments.length : 0))) * b.mass)) * Math.max(1 - speedBefore / 100, 0);
+        let boost = ((speed + 1) * source.mass / ((source.giga ? 6.9 : (0.36 + 0.01 * (b.segments ? b.segments.length : 0))) * b.mass)) * Math.max(1 - speedBefore / 100, 0);
         // let boost = (speed + 1) * source.mass / 1800;
         const vDotN = b.vx * nx + b.vy * ny;
         boost = Math.max(boost, -2 * vDotN);
@@ -5388,38 +5393,25 @@ class VampireBall extends Ball {
     }
 
     bleed(dt) {
-        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 5500 : this.giga ? 8250 : 8250);
+        this.hp -= dt * this.baseHP / (this.battle.mode == DUEL ? 7000 : this.giga ? 8800 : 9600);
     }
 
-    damage(dmg, source, srcType, bounced = false) {
+    damage(dmg, source, srcType) {
         if (source instanceof GrowerBall) {
             this.deferredHits = this.deferredHits.filter((x) => !(x.source === source && x.vsGrower && x.t > 0));
         }
 
-        const willApply = this.dmgBlock <= EPS && (this.healBlock > EPS || this.inDeferred || srcType == "bullet" || bounced);
+        const willApply = this.dmgBlock <= EPS && (this.healBlock > EPS || srcType == "weapon" || srcType == "bullet");
         if (willApply) {
             super.damage(dmg, source);
         }
-        this.healBlock = this.freshHealBlock;
-        if (srcType == "weapon") this.healBlock -= this.getTimeScale();
+        this.healBlock = this.freshHealBlock - (srcType == "weapon" ? EPS : 0);
     }
 
     handleCollision(b, reflector, bounced = false) {
         const owner = reflector || this;
         if ((!reflector && b.team == this.team) || !(b instanceof Ball)) return;
 
-        // Two opposing Vampires colliding both get their own handleCollision
-        // call this same tick (see resolveCollision: b1.onCollision(b2) then
-        // b2.onCollision(b1)). If each independently ran applyLifesteal in
-        // that order, the first one's call would damage the second, which
-        // (as a side effect of VampireBall.damage()) sets the second one's
-        // healBlock fresh -- locking it out of healing on its own turn purely
-        // due to call order, not its actual pre-collision state. Resolve both
-        // sides' outcomes together, once, from pre-collision state: each
-        // Vampire heals by its own lifesteal if it isn't heal-blocked,
-        // otherwise it takes damage equal to the other's lifesteal instead.
-        // Either outcome refreshes healBlock. Gated by id so only one side
-        // (arbitrarily, the lower id) performs the combined resolution.
         if (!reflector && b instanceof VampireBall) {
             if (this.id < b.id) {
                 const meCanHeal = !this.healCooldown[b.id] && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked));
@@ -5474,13 +5466,18 @@ class VampireBall extends Ball {
         this.healCooldown[b.id] = 5;
     }
 
+    // Anti-cheese mechanic so that a fast-spinning weapon doesn't completely invalidate Vampire
+    getHitDefer(weapon) {
+        return weapon.angVel == null ? 0 : (this.giga ? 2.5 : 1) * (3 - (3 * Math.PI) / (12 * Math.abs(weapon.angVel) ** 2 + 1 * Math.PI)) - this.getTimeScale();
+    }
+
     handleUpdate(dt) {
         this.inDeferred = true;
         let left = [];
         for (let d of this.deferredHits) {
             d.t += dt;
             // console.log(d.source.weapons[0].angVel);
-            if (d.t >= (d.threshold ?? (this.giga ? 2 : 1) * (d.source.weapons[0].angVel > Math.PI / 5 ? 2 : 1))) {
+            if (d.t >= d.threshold) {
                 if (this.dmgBlock <= EPS) {
                     if (d.vsGrower) this.applyLifesteal(d.source, d.reflector);
                     else {

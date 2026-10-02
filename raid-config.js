@@ -95,7 +95,7 @@ function createBossBall(ballClasses, i, pos, speed, hp, scale, rng) {
     b.boostEnergy = 1;
     b.mass = b.baseMass = 5000;
     // b.angVelNerf = data.class == ClubBall || data.class == WrenchBall ? 2.7 : 3;
-    b.angVelNerf = data.class == DaggerBall ? 2.66667 : 2.5;
+    b.angVelNerf = data.class == DaggerBall ? 2.77777 : 2.5;
 
     for (const w of b.weapons) {
         if (b instanceof LanceBall) {
