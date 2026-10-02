@@ -25,7 +25,7 @@ const RAID_CONFIG = {
         "Vampire": 500,
         "Magnet": 300,
         "Clover": 500,
-        "Duplicator": 420,
+        "Duplicator": 400,
     }
 };
 
