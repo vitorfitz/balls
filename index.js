@@ -2435,6 +2435,42 @@ class BallBattle {
         return ghosts.timeScales[Math.min(tickPos, ghosts.timeScales.length - 1)];
     }
 
+    cloverGhostFade(ghosts, i0) {
+        const fadeOutDur = 30; // ticks
+        const fadeOutDelay = 20;
+        const baseOpacity = 1;
+
+        const fadeStartTickFor = (pathIdx) => {
+            const cache = ghosts._fadeStartTick ??= [];
+            if (cache[pathIdx] !== undefined) return cache[pathIdx];
+            const rewards = ghosts.rewards?.[pathIdx];
+            let start = Infinity;
+            if (rewards) {
+                start = rewards.length - fadeOutDur;
+                for (let i = start - fadeOutDelay; ; i--) {
+                    if (i <= 50 || (rewards[i] < EPS && rewards[i - 1] >= -EPS)) {
+                        start = i + fadeOutDelay;
+                        // console.log(`[t=${this.t}] ${i} <= 50 || (${rewards[i]} < EPS && ${rewards[i - 1]} >= -EPS)`);
+                        break;
+                    }
+                }
+            }
+            return cache[pathIdx] = start;
+        };
+
+        const opacityForPath = (pathIdx) => {
+            const rewards = ghosts.rewards?.[pathIdx];
+            if (!rewards) return baseOpacity;
+            const ticksSinceFade = i0 - fadeStartTickFor(pathIdx);
+            return ticksSinceFade <= 0 ? baseOpacity : ticksSinceFade >= fadeOutDur ? 0 : baseOpacity * (1 - ticksSinceFade / fadeOutDur);
+        };
+        // Real timeline's opacity: starts hidden while the ghost shows the
+        // un-cheated path, then fades in exactly as the ghost fades out.
+        const realOpacityForPath = (pathIdx) => 1 - 0.5 * opacityForPath(pathIdx);
+
+        return { baseOpacity, opacityForPath, realOpacityForPath };
+    }
+
     updateCloverGhosts() {
         const ghosts = this.cloverGhosts;
         if (!ghosts) {
@@ -2452,37 +2488,7 @@ class BallBattle {
             return null;
         }
 
-        const fadeOutDur = 30; // ticks
-        const fadeOutDelay = 20;
-        const fadeStartTickFor = (pathIdx) => {
-            const cache = ghosts._fadeStartTick ??= [];
-            if (cache[pathIdx] !== undefined) return cache[pathIdx];
-            const rewards = ghosts.rewards?.[pathIdx];
-            let start = Infinity;
-            if (rewards) {
-                start = rewards.length - fadeOutDur;
-                for (let i = start - fadeOutDelay; ; i--) {
-                    if (i <= 50 || (rewards[i] < EPS && rewards[i - 1] >= -EPS)) { start = i + fadeOutDelay; break; }
-                }
-            }
-            return cache[pathIdx] = start;
-        };
-
-        // Ghost (the un-cheated "what would have happened") renders at full
-        // opacity while destiny is still being rewritten, then fades out as the
-        // real timeline fades in (see realOpacityForPath below) to take its place.
-        const baseOpacity = 1;
-        const opacityForPath = (pathIdx) => {
-            const rewards = ghosts.rewards?.[pathIdx];
-            if (!rewards) return baseOpacity;
-            const fadeStart = fadeStartTickFor(pathIdx);
-            const ticksSinceFade = i0 - fadeStart;
-            const opacity = ticksSinceFade <= 0 ? baseOpacity : ticksSinceFade >= fadeOutDur ? 0 : baseOpacity * (1 - ticksSinceFade / fadeOutDur);
-            return opacity;
-        };
-        // Real timeline's opacity: starts hidden while the ghost shows the
-        // un-cheated path, then fades in exactly as the ghost fades out.
-        const realOpacityForPath = (pathIdx) => 1 - 0.5 * opacityForPath(pathIdx);
+        const { baseOpacity, opacityForPath } = this.cloverGhostFade(ghosts, i0);
 
         const keep = [];
         for (let pathIdx = 0; pathIdx < ghosts.paths.length; pathIdx++) {
@@ -2539,8 +2545,8 @@ class BallBattle {
             }
         }
 
-        const drama = Math.sqrt(1 - Math.exp(-spread / (this.mode == DUEL ? 100 : 100))) * Math.min(1, opacityForPath(0) * 5);
-        this._ghostSlowFactor = 1 - 0.5 * drama;
+        const drama = Math.sqrt(1 - Math.exp(-spread / (this.mode == FFA ? 100 : 100))) * Math.min(1, opacityForPath(0) * 5);
+        this._ghostSlowFactor = 1 - (this.mode == FFA ? 0.5 : 0.5) * drama;
 
         return true;
     }
@@ -2552,29 +2558,7 @@ class BallBattle {
         const i0 = Math.max(0, this.t - ghosts.startTick);
         if (i0 >= Math.max(...ghosts.paths.map(p => p.length), 1) - 1) return null;
 
-        const fadeOutDur = 30, fadeOutDelay = 20;
-        const fadeStartTickFor = (pathIdx) => {
-            const cache = ghosts._fadeStartTick ??= [];
-            if (cache[pathIdx] !== undefined) return cache[pathIdx];
-            const rewards = ghosts.rewards?.[pathIdx];
-            let start = Infinity;
-            if (rewards) {
-                start = rewards.length - fadeOutDur;
-                for (let i = start - fadeOutDelay; ; i--) {
-                    if (i <= 50 || (rewards[i] < EPS && rewards[i - 1] >= -EPS)) { start = i + fadeOutDelay; break; }
-                }
-            }
-            return cache[pathIdx] = start;
-        };
-        const baseOpacity = 1;
-        const opacityForPath = (pathIdx) => {
-            const rewards = ghosts.rewards?.[pathIdx];
-            if (!rewards) return baseOpacity;
-            const fadeStart = fadeStartTickFor(pathIdx);
-            const ticksSinceFade = i0 - fadeStart;
-            return ticksSinceFade <= 0 ? baseOpacity : ticksSinceFade >= fadeOutDur ? 0 : baseOpacity * (1 - ticksSinceFade / fadeOutDur);
-        };
-        const realOpacityForPath = (pathIdx) => 1 - 0.5 * opacityForPath(pathIdx);
+        const { opacityForPath, realOpacityForPath } = this.cloverGhostFade(ghosts, i0);
 
         const snapshot = [];
         let realOpacity = 0;
@@ -3327,7 +3311,7 @@ class BallBattle {
 
 
     async run(dt) {
-        // while (this.t < 2700) {
+        // while (this.t < 5000) {
         //     this.updateTimeScale();
         //     await this.update();
         // }
