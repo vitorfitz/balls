@@ -2440,7 +2440,8 @@ class BallBattle {
         const fadeOutDelay = 20;
         const baseOpacity = 1;
 
-        const fadeStartTickFor = (pathIdx) => {
+        // Reward-based fade start (cached per path; independent of spread).
+        const rewardFadeStartTickFor = (pathIdx) => {
             const cache = ghosts._fadeStartTick ??= [];
             if (cache[pathIdx] !== undefined) return cache[pathIdx];
             const rewards = ghosts.rewards?.[pathIdx];
@@ -2458,9 +2459,12 @@ class BallBattle {
             return cache[pathIdx] = start;
         };
 
+        // The fade also starts as soon as the ghosts' spread first reached the
+        // threshold (latched in updateCloverGhosts), if that's earlier.
+        const fadeStartTickFor = (pathIdx) =>
+            Math.min(rewardFadeStartTickFor(pathIdx), ghosts.spreadFadeTick ?? Infinity);
+
         const opacityForPath = (pathIdx) => {
-            const rewards = ghosts.rewards?.[pathIdx];
-            if (!rewards) return baseOpacity;
             const ticksSinceFade = i0 - fadeStartTickFor(pathIdx);
             return ticksSinceFade <= 0 ? baseOpacity : ticksSinceFade >= fadeOutDur ? 0 : baseOpacity * (1 - ticksSinceFade / fadeOutDur);
         };
@@ -2545,8 +2549,15 @@ class BallBattle {
             }
         }
 
-        const drama = Math.sqrt(1 - Math.exp(-spread / (this.mode == FFA ? 100 : 100))) * Math.min(1, opacityForPath(0) * 5);
-        this._ghostSlowFactor = 1 - (this.mode == FFA ? 0.5 : 0.5) * drama;
+        // Too cluttered: once spread first reaches the threshold, start the
+        // normal fade-out from this tick (picked up by cloverGhostFade).
+        const spreadFadeThreshold = 69;
+        if (ghosts.spreadFadeTick === undefined && spread >= spreadFadeThreshold) {
+            ghosts.spreadFadeTick = i0 + 20;
+        }
+
+        const drama = Math.sqrt(1 - Math.exp(-spread / 69)) * Math.min(1, opacityForPath(0) * 5);
+        this._ghostSlowFactor = 1 - 0.5 * drama;
 
         return true;
     }
