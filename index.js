@@ -640,7 +640,6 @@ class Wall {
                 const t1 = (-bq - sqrtDisc) / (2 * a);
                 const t2 = (-bq + sqrtDisc) / (2 * a);
                 const t = (t1 > EPS && t1 <= dt) ? t1 : t2;
-                // if (tee >= 10469 && tee <= 10470 && b.id === 4630 && this.axis === 0) console.log(`[t=${tee}] H wall tCol: t1=${t1.toFixed(6)} t2=${t2.toFixed(6)} chosen=${t.toFixed(6)} vy=${vy.toFixed(4)} target=${target.toFixed(4)} b.y=${b.y.toFixed(4)} wall.pos=${this.pos.toFixed(4)} wall.vel=${this.velocity} normal=${this.normal} min=${this.min.toFixed(1)} max=${this.max.toFixed(1)} dt=${dt}`);
                 if (t <= EPS || t > dt) return Infinity;
                 const xAtT = b.x + b.vx * s * t;
                 if (xAtT < this.min - 69 * EPS || xAtT > this.max + 69 * EPS) return Infinity;
@@ -1828,7 +1827,7 @@ class BallBattle {
                     this.nyooooom = 1;
                 }
                 else if (hp >= 200 || this.nyooooom > 1) {
-                    this.nyooooom = this.nyooooom * 1.001 * (1 + this.nyooooom / 500);
+                    this.nyooooom = this.nyooooom * 1.002 * (1 + this.nyooooom / 10000);
                     this.timeScale += this.nyooooom - 1;
                 }
             }
@@ -2549,10 +2548,8 @@ class BallBattle {
             }
         }
 
-        // Too cluttered: once spread first reaches the threshold, start the
-        // normal fade-out from this tick (picked up by cloverGhostFade).
         const spreadFadeThreshold = 69;
-        if (ghosts.spreadFadeTick === undefined && spread >= spreadFadeThreshold) {
+        if (ghosts.spreadFadeTick == null && spread >= spreadFadeThreshold) {
             ghosts.spreadFadeTick = i0 + 20;
         }
 
@@ -5411,10 +5408,25 @@ class VampireBall extends Ball {
             if (this.id < b.id) {
                 const meCanHeal = !this.healCooldown[b.id] && (this.healBlock <= EPS || (this.healBlock == this.freshHealBlock && !this.wasHealBlocked));
                 const themCanHeal = !b.healCooldown[this.id] && (b.healBlock <= EPS || (b.healBlock == b.freshHealBlock && !b.wasHealBlocked));
-                if (meCanHeal) this.applyLifesteal(b, undefined, bounced);
-                else this.damage(b.lifesteal, b, "weapon", bounced);
-                if (themCanHeal) b.applyLifesteal(this, undefined, bounced);
-                else b.damage(this.lifesteal, this, "weapon", bounced);
+                // When both heal, apply each side's dmgBlock up front. Otherwise
+                // applyLifesteal only sets dmgBlock after dealing its damage, so the
+                // lower-id Vampire's bite would land on the higher-id one before it
+                // was protected, and it would heal and take damage in the same hit.
+                if (meCanHeal && themCanHeal) {
+                    this.dmgBlock = this.freshDmgBlock;
+                    b.dmgBlock = b.freshDmgBlock;
+                    this.applyLifesteal(b, undefined, bounced);
+                    b.applyLifesteal(this, undefined, bounced);
+                }
+                // Exactly one side heals: its applyLifesteal already deals the damage
+                // to the other, so the other must not be damaged a second time.
+                else if (meCanHeal) this.applyLifesteal(b, undefined, bounced);
+                else if (themCanHeal) b.applyLifesteal(this, undefined, bounced);
+                // Neither side can heal: each takes the other's lifesteal as damage.
+                else {
+                    this.damage(b.lifesteal, b, "weapon", bounced);
+                    b.damage(this.lifesteal, this, "weapon", bounced);
+                }
             }
             // else: the lower-id Vampire's handleCollision (called first or
             // second, order doesn't matter) already resolved this pair.
@@ -5518,7 +5530,7 @@ class VampireBall extends Ball {
     }
 
     onLoad() {
-        this.baseHP = this.battle.mode == DUEL || !this.owner ? this.hp : 100;
+        this.baseHP = this.owner ? 100 : this.hp;
         this.freshDmgBlock = this.giga ? 10 : 5;
         this.freshHealBlock = this.battle.mode == DUEL || this.giga ? 20 : 20;
     }
