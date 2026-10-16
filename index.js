@@ -3319,7 +3319,7 @@ class BallBattle {
 
 
     async run(dt) {
-        // while (this.t < 5000) {
+        // while (this.t < 5200) {
         //     this.updateTimeScale();
         //     await this.update();
         // }
@@ -4871,6 +4871,7 @@ class MirrorBall extends Ball {
             // Use attacker's ballColFns against themselves
             if (!(attacker.id in otherWeapon.iFrames)) {
                 otherWeapon.setIFrames(attacker);
+                if (otherWeapon.angVel) (otherWeapon._iFrameHitTheta ??= {})[iframeKeyFor(attacker)] = otherWeapon.theta;
                 const mySeg = this.weapons[0].getHitSegment();
                 const theirSeg = otherWeapon.getHitSegment();
                 const contactPoint = segmentToSegmentContactPoint(

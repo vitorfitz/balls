@@ -19,7 +19,7 @@ const RAID_CONFIG = {
         "Grimoire": 500,
         "Machine Gun": 500,
         "Hammer": 500,
-        "Mirror": 999,
+        "Mirror": 750,
         "Club": 400,
         "Snake": 999,
         "Vampire": 500,
